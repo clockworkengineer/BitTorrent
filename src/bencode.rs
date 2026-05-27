@@ -149,9 +149,19 @@ impl<'a> Parser<'a> {
                 "Unterminated integer".into(),
             ));
         }
-        let number = self.buffer[start..end].to_vec();
+        let number_bytes = &self.buffer[start..end];
+        let number_str = std::str::from_utf8(number_bytes)
+            .map_err(|e| BitTorrentError::InvalidBencode(e.to_string()))?;
+        if number_str.is_empty()
+            || (number_str.starts_with('0') && number_str.len() > 1)
+            || number_str == "-0"
+        {
+            return Err(BitTorrentError::InvalidBencode(
+                "Invalid integer format".into(),
+            ));
+        }
         self.position += 1;
-        Ok(BNode::Number(number))
+        Ok(BNode::Number(number_bytes.to_vec()))
     }
 
     fn decode_string(&mut self) -> Result<Vec<u8>, BitTorrentError> {
@@ -169,6 +179,11 @@ impl<'a> Parser<'a> {
         }
         let length_bytes = std::str::from_utf8(&self.buffer[start..self.position])
             .map_err(|e| BitTorrentError::InvalidBencode(e.to_string()))?;
+        if length_bytes.is_empty() || (length_bytes.starts_with('0') && length_bytes != "0") {
+            return Err(BitTorrentError::InvalidBencode(
+                "Invalid string length".into(),
+            ));
+        }
         let length = length_bytes
             .parse::<usize>()
             .map_err(BitTorrentError::from)?;
@@ -193,7 +208,9 @@ fn encode_node(node: &BNode, output: &mut Vec<u8>) {
     match node {
         BNode::Dictionary(dict) => {
             output.push(b'd');
-            for (key, value) in dict {
+            let mut entries: Vec<&(Vec<u8>, BNode)> = dict.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            for (key, value) in entries {
                 output.extend_from_slice(key.len().to_string().as_bytes());
                 output.push(b':');
                 output.extend_from_slice(key);

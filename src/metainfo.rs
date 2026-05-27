@@ -47,19 +47,19 @@ impl MetaInfoFile {
             ));
         }
 
-        self.get_string_or_numeric(&root, "announce")?;
+        self.require_string_or_numeric(&root, "announce")?;
         self.get_list_of_strings(&root, "announce-list")?;
         self.get_string_or_numeric(&root, "comment")?;
         self.get_string_or_numeric(&root, "created by")?;
         self.get_string_or_numeric(&root, "creation date")?;
-        self.get_string_or_numeric(&root, "name")?;
-        self.get_string_or_numeric(&root, "piece length")?;
-        self.get_string_or_numeric(&root, "pieces")?;
+        self.require_string_or_numeric(&root, "name")?;
+        self.require_string_or_numeric(&root, "piece length")?;
+        self.require_string_or_numeric(&root, "pieces")?;
         self.get_string_or_numeric(&root, "private")?;
         self.get_string_or_numeric(&root, "url-list")?;
 
         if Bencode::get_dictionary_entry(&root, b"files").is_none() {
-            self.get_string_or_numeric(&root, "length")?;
+            self.require_string_or_numeric(&root, "length")?;
             self.get_string_or_numeric(&root, "md5sum")?;
         } else {
             self.get_list_of_dictionarys(&root, "files")?;
@@ -210,15 +210,28 @@ impl MetaInfoFile {
         Ok(())
     }
 
+    fn require_string_or_numeric(&mut self, root: &BNode, field: &str) -> Result<(), BitTorrentError> {
+        if Bencode::get_dictionary_entry(root, field.as_bytes()).is_none() {
+            return Err(BitTorrentError::MissingField(field.to_string()));
+        }
+        self.get_string_or_numeric(root, field)
+    }
+
     fn get_list_of_strings(&mut self, root: &BNode, field: &str) -> Result<(), BitTorrentError> {
         if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
             if let BNode::List(list) = entry {
                 let mut values = Vec::new();
                 for item in list {
-                    if let BNode::List(inner) = item {
-                        if let Some(BNode::String(bytes)) = inner.get(0) {
+                    match item {
+                        BNode::String(bytes) => {
                             values.push(String::from_utf8_lossy(bytes).to_string());
                         }
+                        BNode::List(inner) => {
+                            if let Some(BNode::String(bytes)) = inner.get(0) {
+                                values.push(String::from_utf8_lossy(bytes).to_string());
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 self.meta_info_dict
