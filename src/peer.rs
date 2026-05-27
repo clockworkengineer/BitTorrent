@@ -1,0 +1,163 @@
+use crate::average::Average;
+use crate::manual_reset_event::ManualResetEvent;
+use crate::peer_network::PeerNetwork;
+use crate::torrent_context::TorrentContext;
+use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
+
+pub struct Peer {
+    network: Option<PeerNetwork>,
+    pub packet_response_timer: Option<std::time::Instant>,
+    pub average_packet_response: Average,
+    pub connected: bool,
+    pub remote_peer_id: Option<Vec<u8>>,
+    pub tc: Option<Arc<Mutex<TorrentContext>>>,
+    pub remote_piece_bitfield: Vec<u8>,
+    pub ip: String,
+    pub port: u16,
+    pub am_interested: bool,
+    pub am_choking: bool,
+    pub peer_choking: ManualResetEvent,
+    pub peer_interested: bool,
+    pub number_of_missing_pieces: usize,
+    pub outstanding_requests_count: usize,
+}
+
+impl Peer {
+    pub fn new(ip: String, port: u16, stream: TcpStream) -> Self {
+        Peer {
+            network: Some(PeerNetwork::new(stream)),
+            packet_response_timer: None,
+            average_packet_response: Average::default(),
+            connected: false,
+            remote_peer_id: None,
+            tc: None,
+            remote_piece_bitfield: Vec::new(),
+            ip,
+            port,
+            am_interested: false,
+            am_choking: true,
+            peer_choking: ManualResetEvent::new(false),
+            peer_interested: false,
+            number_of_missing_pieces: 0,
+            outstanding_requests_count: 0,
+        }
+    }
+
+    pub fn set_torrent_context(&mut self, tc: Arc<Mutex<TorrentContext>>) {
+        self.tc = Some(tc.clone());
+        let tc_guard = tc.lock().unwrap();
+        self.number_of_missing_pieces = tc_guard.number_of_pieces as usize;
+        self.remote_piece_bitfield = vec![0u8; tc_guard.bitfield.len()];
+    }
+
+    pub fn write(&self, buffer: &[u8]) -> std::io::Result<usize> {
+        if let Some(net) = &self.network {
+            net.write(buffer)
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No network available",
+            ))
+        }
+    }
+
+    pub fn read(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(net) = &self.network {
+            net.read(buffer, buffer.len())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No network available",
+            ))
+        }
+    }
+
+    pub fn handshake(&mut self, _manager: &crate::manager::Manager) -> std::io::Result<Vec<u8>> {
+        self.connected = true;
+        if let Some(net) = &self.network {
+            net.start_reads();
+        }
+        Ok(vec![0u8; 20])
+    }
+
+    pub fn close(&mut self) {
+        if self.connected {
+            if let Some(tc) = &self.tc {
+                tc.lock().unwrap().unmerge_piece_bitfield(self);
+            }
+            self.connected = false;
+        }
+        if let Some(net) = &self.network {
+            net.close();
+        }
+        self.network = None;
+    }
+
+    pub fn is_piece_on_remote_peer(&self, piece_number: u32) -> bool {
+        let byte_index = (piece_number >> 3) as usize;
+        let bit_mask = 0x80 >> (piece_number & 0x7);
+        if let Some(_) = self.tc {
+            if byte_index < self.remote_piece_bitfield.len() {
+                return (self.remote_piece_bitfield[byte_index] & bit_mask) != 0;
+            }
+            return false;
+        }
+        false
+    }
+
+    pub fn set_piece_on_remote_peer(&mut self, piece_number: u32) {
+        if !self.is_piece_on_remote_peer(piece_number) {
+            let byte_index = (piece_number >> 3) as usize;
+            let bit_mask = 0x80 >> (piece_number & 0x7);
+            if byte_index < self.remote_piece_bitfield.len() {
+                self.remote_piece_bitfield[byte_index] |= bit_mask;
+            }
+            if let Some(tc) = &self.tc {
+                tc.lock().unwrap().increment_peer_count(piece_number);
+            }
+            self.number_of_missing_pieces = self.number_of_missing_pieces.saturating_sub(1);
+        }
+    }
+
+    pub fn place_block_into_piece(&mut self, piece_number: u32, block_offset: u32) {
+        if let Some(tc) = &self.tc {
+            let tc_guard = tc.lock().unwrap();
+            let mut assembly_data = tc_guard.assembly_data.lock().unwrap();
+            if let Some(piece_buffer) = assembly_data.piece_buffer.clone() {
+                let mut buffer_lock = piece_buffer.lock().unwrap();
+                if piece_number == buffer_lock.number {
+                    let block_number = block_offset / crate::constants::BLOCK_SIZE as u32;
+                    let should_decrement = !buffer_lock.blocks_present()[block_number as usize];
+                    {
+                        let _guard = assembly_data.guard_mutex.lock().unwrap();
+                        buffer_lock.add_block_from_packet(&self.read_buffer(), block_number);
+                    }
+                    if should_decrement {
+                        assembly_data.current_block_requests = assembly_data.current_block_requests.saturating_sub(1);
+                    }
+                    if assembly_data.current_block_requests == 0 {
+                        assembly_data.block_requests_done.set();
+                    }
+                    self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    pub fn get_packet_length(&self) -> usize {
+        if let Some(net) = &self.network {
+            net.packet_length
+        } else {
+            0
+        }
+    }
+
+    pub fn read_buffer(&self) -> Vec<u8> {
+        if let Some(net) = &self.network {
+            net.read_buffer.clone()
+        } else {
+            Vec::new()
+        }
+    }
+}

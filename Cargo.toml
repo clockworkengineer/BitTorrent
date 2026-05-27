@@ -1,0 +1,13 @@
+[package]
+name = "bittorrent-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sha1 = "0.10"
+hex = "0.4"
+rand = "0.8"
+base64 = "0.21"
+ureq = "2.7"
+urlencoding = "2.1"
+url = "2.4"
