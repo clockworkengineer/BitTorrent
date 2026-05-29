@@ -19,7 +19,7 @@ cargo test
 Run the example downloader:
 
 ```bash
-cargo run -p bittorrent_rs_example --release -- <torrent-file> <download-dir>
+cargo run -p torrent_session_example --release -- <torrent-file> <download-dir>
 ```
 
 Replace `<torrent-file>` with the path to a `.torrent` file and `<download-dir>` with the local directory where files should be created.

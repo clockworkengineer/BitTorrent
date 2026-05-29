@@ -34,13 +34,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bittorrent_rs_example"
-version = "0.1.0"
-dependencies = [
- "bittorrent-rs",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -524,6 +517,13 @@ checksum = "c8323304221c2a851516f22236c5722a72eaa19749016521d6dff0824447d96d"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "torrent_session_example"
+version = "0.1.0"
+dependencies = [
+ "bittorrent-rs",
 ]
 
 [[package]]

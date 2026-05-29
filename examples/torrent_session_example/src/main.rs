@@ -6,10 +6,10 @@ fn main() {
     let mut args = env::args().skip(1);
     let torrent_path = args
         .next()
-        .expect("Usage: bittorrent_rs_example <torrent-file> <download-dir>");
+        .expect("Usage: torrent_session_example <torrent-file> <download-dir>");
     let download_dir = args
         .next()
-        .expect("Usage: bittorrent_rs_example <torrent-file> <download-dir>");
+        .expect("Usage: torrent_session_example <torrent-file> <download-dir>");
 
     let torrent_path = PathBuf::from(torrent_path);
     let download_dir = PathBuf::from(download_dir);
