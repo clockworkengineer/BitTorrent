@@ -17,6 +17,7 @@ pub mod selector;
 pub mod torrent_context;
 pub mod tracker;
 pub mod util;
+pub mod session;
 
 pub use average::Average;
 pub use bencode::{BNode, Bencode};
@@ -26,5 +27,6 @@ pub use metainfo::{FileDetails, MetaInfoFile};
 pub use peer::Peer;
 pub use peer_id::get as get_peer_id;
 pub use selector::Selector;
+pub use session::TorrentSession;
 pub use torrent_context::{TorrentContext, TorrentStatus};
 pub use tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus};

@@ -95,7 +95,11 @@ impl TorrentContext {
             total_bytes_downloaded: 0,
             total_bytes_to_download: total_download_length,
             total_bytes_uploaded: 0,
-            status: TorrentStatus::Initialised,
+            status: if seeding {
+                TorrentStatus::Seeding
+            } else {
+                TorrentStatus::Initialised
+            },
             file_name: torrent_meta_info.torrent_file_name.to_string_lossy().to_string(),
             main_tracker: None,
             callback_data: None,
@@ -130,6 +134,93 @@ impl TorrentContext {
             context.total_bytes_downloaded = 0;
         }
         Ok(context)
+    }
+
+    pub fn validate(&self) -> Result<(), crate::error::BitTorrentError> {
+        if self.number_of_pieces == 0 {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent must contain at least one piece.".to_string(),
+            ));
+        }
+        if self.piece_length == 0 {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent piece length must be greater than zero.".to_string(),
+            ));
+        }
+        if self.files_to_download.is_empty() {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent contains no files to download.".to_string(),
+            ));
+        }
+        if self.pieces_info_hash.len() != self.number_of_pieces * crate::constants::HASH_LENGTH {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent pieces hash list length does not match number of pieces.".to_string(),
+            ));
+        }
+        let expected_bitfield_length = (self.number_of_pieces + 7) / 8;
+        if self.bitfield.len() != expected_bitfield_length {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent bitfield length is invalid.".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn start_downloading(&mut self) -> Result<(), crate::error::BitTorrentError> {
+        if self.status == TorrentStatus::Downloading {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent is already downloading.".to_string(),
+            ));
+        }
+        if self.status == TorrentStatus::Ended {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Cannot restart a finished torrent.".to_string(),
+            ));
+        }
+        self.status = TorrentStatus::Downloading;
+        Ok(())
+    }
+
+    pub fn pause(&mut self) -> Result<(), crate::error::BitTorrentError> {
+        if self.status != TorrentStatus::Downloading {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent can only be paused while downloading.".to_string(),
+            ));
+        }
+        self.status = TorrentStatus::Paused;
+        self.paused.set();
+        Ok(())
+    }
+
+    pub fn resume(&mut self) -> Result<(), crate::error::BitTorrentError> {
+        if self.status != TorrentStatus::Paused {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent can only be resumed when paused.".to_string(),
+            ));
+        }
+        self.status = TorrentStatus::Downloading;
+        self.paused.reset();
+        Ok(())
+    }
+
+    pub fn stop(&mut self) -> Result<(), crate::error::BitTorrentError> {
+        if self.status == TorrentStatus::Ended {
+            return Err(crate::error::BitTorrentError::Parse(
+                "Torrent has already been stopped.".to_string(),
+            ));
+        }
+        self.status = TorrentStatus::Ended;
+        self.download_finished.set();
+        Ok(())
+    }
+
+    pub fn progress_percent(&self) -> f32 {
+        if self.total_bytes_to_download == 0 {
+            return 100.0;
+        }
+
+        let percent = self.total_bytes_downloaded as f64 / self.total_bytes_to_download as f64 * 100.0;
+        percent.min(100.0) as f32
     }
 
     pub fn mark_piece_local(&mut self, piece_number: u32, local: bool) {

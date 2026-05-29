@@ -121,6 +121,41 @@ impl MetaInfoFile {
             .ok_or_else(|| BitTorrentError::MissingField("pieces".into()))
     }
 
+    pub fn validate(&self) -> Result<(), BitTorrentError> {
+        if !self.parsed {
+            return Err(BitTorrentError::NotParsed(
+                "File has not been parsed.".into(),
+            ));
+        }
+
+        let piece_length = self.get_piece_length()?;
+        if piece_length == 0 {
+            return Err(BitTorrentError::Parse(
+                "Torrent piece length must be greater than zero.".into(),
+            ));
+        }
+
+        let pieces = self.get_pieces_info_hash()?;
+        if pieces.is_empty() || pieces.len() % crate::constants::HASH_LENGTH != 0 {
+            return Err(BitTorrentError::Parse(
+                "Invalid torrent pieces hash length.".into(),
+            ));
+        }
+
+        let tracker = self.get_tracker()?;
+        url::Url::parse(&tracker)
+            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+
+        let files = self.local_files_to_download_list(Path::new("."))?.1;
+        if files.is_empty() {
+            return Err(BitTorrentError::Parse(
+                "Torrent contains no file entries.".into(),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn local_files_to_download_list(
         &self,
         download_path: impl AsRef<Path>,
@@ -145,6 +180,7 @@ impl MetaInfoFile {
                 .get("length")
                 .ok_or_else(|| BitTorrentError::MissingField("length".into()))?;
             let name = String::from_utf8_lossy(name_bytes);
+            Self::validate_relative_path(&name)?;
             let length = String::from_utf8_lossy(length_bytes).parse::<u64>()?;
             let file_path = download_path.join(name.as_ref());
             files_to_download.push(FileDetails {
@@ -176,8 +212,9 @@ impl MetaInfoFile {
                 let path_value = parts.get(0).copied().unwrap_or("");
                 let length_value = parts.get(1).copied().unwrap_or("0");
                 let md5sum_value = parts.get(2).copied().unwrap_or("");
-                let path_value = path_value.trim_start_matches(['/', '\\'].as_ref());
-                let file_path = directory.join(path_value);
+                let trimmed_path = path_value.trim_start_matches(['/', '\\'].as_ref());
+                Self::validate_relative_path(trimmed_path)?;
+                let file_path = directory.join(trimmed_path);
                 let length = length_value.parse::<u64>()?;
                 files_to_download.push(FileDetails {
                     name: file_path.to_string_lossy().into_owned(),
@@ -299,6 +336,32 @@ impl MetaInfoFile {
         let digest = hasher.finalize();
         self.meta_info_dict
             .insert("info hash".to_string(), digest.to_vec());
+        Ok(())
+    }
+
+    fn validate_relative_path(path: &str) -> Result<(), BitTorrentError> {
+        if path.is_empty() {
+            return Err(BitTorrentError::Parse(
+                "Torrent file path cannot be empty.".into(),
+            ));
+        }
+        if path.starts_with('/') || path.starts_with('\\') {
+            return Err(BitTorrentError::Parse(
+                "Torrent file paths must be relative.".into(),
+            ));
+        }
+        for segment in path.split(|c| c == '/' || c == '\\') {
+            if segment.is_empty() {
+                return Err(BitTorrentError::Parse(
+                    "Torrent file path contains an empty path segment.".into(),
+                ));
+            }
+            if segment == "." || segment == ".." {
+                return Err(BitTorrentError::Parse(
+                    "Torrent file path contains invalid relative segments.".into(),
+                ));
+            }
+        }
         Ok(())
     }
 }
