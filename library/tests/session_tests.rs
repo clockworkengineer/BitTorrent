@@ -24,10 +24,12 @@ fn test_create_session_for_download() {
         .expect("Failed to create torrent session");
 
     assert_eq!(session.status(), TorrentStatus::Initialised);
-    assert!(session.context.files_to_download.len() >= 1);
+    assert!(session.context.lock().unwrap().files_to_download.len() >= 1);
     assert!(
         session
             .context
+            .lock()
+            .unwrap()
             .files_to_download
             .iter()
             .all(|f| std::path::Path::new(&f.name).exists())

@@ -1,17 +1,24 @@
 use crate::peer::Peer;
 use crate::torrent_context::TorrentContext;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 use std::collections::HashSet;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Selector {
-    random_seed: rand::rngs::ThreadRng,
+    random_seed: StdRng,
+}
+
+impl Default for Selector {
+    fn default() -> Self {
+        Selector::new()
+    }
 }
 
 impl Selector {
     pub fn new() -> Self {
         Selector {
-            random_seed: rand::thread_rng(),
+            random_seed: StdRng::from_entropy(),
         }
     }
 

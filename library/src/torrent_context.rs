@@ -327,6 +327,17 @@ impl TorrentContext {
         }
     }
 
+    pub fn is_download_complete(&self) -> bool {
+        self.bytes_left_to_download().unwrap_or(1) == 0
+    }
+
+    pub fn try_complete_download(&mut self) {
+        if self.status == TorrentStatus::Downloading && self.is_download_complete() {
+            self.status = TorrentStatus::Seeding;
+            self.download_finished.set();
+        }
+    }
+
     pub fn process_piece_block(
         &mut self,
         disk_io: &DiskIO,
@@ -367,6 +378,7 @@ impl TorrentContext {
                     &finished_piece,
                     finished_piece.len() as u32,
                 );
+                self.try_complete_download();
                 self.clear_piece_requests(piece_number);
                 let mut assembly_data = self.assembly_data.lock().unwrap();
                 assembly_data.piece_buffer = None;
@@ -382,6 +394,27 @@ impl TorrentContext {
         }
 
         Ok(false)
+    }
+
+    pub fn add_peer(&self, peer: Arc<Mutex<Peer>>) -> bool {
+        let ip = peer.lock().unwrap().ip.clone();
+        if self.is_space_in_swarm(&ip) {
+            self.peer_swarm.write().unwrap().insert(ip, peer).is_none()
+        } else {
+            false
+        }
+    }
+
+    pub fn remove_peer(&self, ip: &str) {
+        self.peer_swarm.write().unwrap().remove(ip);
+    }
+
+    pub fn disconnect_all_peers(&self) {
+        let mut swarm = self.peer_swarm.write().unwrap();
+        for peer in swarm.values() {
+            peer.lock().unwrap().close();
+        }
+        swarm.clear();
     }
 
     pub fn unmerge_piece_bitfield(&mut self, remote_peer: &Peer) {

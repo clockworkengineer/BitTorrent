@@ -1,6 +1,7 @@
 use crate::average::Average;
 use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
+use crate::disk_io::DiskIO;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;
@@ -185,6 +186,79 @@ impl Peer {
             }
             self.number_of_missing_pieces = self.number_of_missing_pieces.saturating_sub(1);
         }
+    }
+
+    pub fn set_remote_bitfield(&mut self, bitfield: Vec<u8>) {
+        let previous_bitfield = self.remote_piece_bitfield.clone();
+        self.remote_piece_bitfield = bitfield;
+        if let Some(tc) = &self.tc {
+            let tc_guard = tc.lock().unwrap();
+            let number_of_pieces = tc_guard.number_of_pieces as u32;
+            drop(tc_guard);
+            for piece_number in 0..number_of_pieces {
+                if self.is_piece_on_remote_peer(piece_number)
+                    && !Peer::bitfield_has_piece(&previous_bitfield, piece_number)
+                {
+                    self.set_piece_on_remote_peer(piece_number);
+                }
+            }
+        }
+    }
+
+    pub fn is_remote_interesting(&self, tc: &TorrentContext) -> bool {
+        for piece_number in 0..tc.number_of_pieces as u32 {
+            if !tc.is_piece_local(piece_number) && self.is_piece_on_remote_peer(piece_number) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn handle_peer_message(
+        &mut self,
+        message: PeerMessage,
+        tc: &mut TorrentContext,
+        disk_io: &DiskIO,
+    ) -> Result<(), BitTorrentError> {
+        match message {
+            PeerMessage::KeepAlive => {}
+            PeerMessage::Choke => {
+                self.peer_choking.reset();
+            }
+            PeerMessage::Unchoke => {
+                self.peer_choking.set();
+            }
+            PeerMessage::Interested => {
+                self.peer_interested = true;
+            }
+            PeerMessage::NotInterested => {
+                self.peer_interested = false;
+            }
+            PeerMessage::Have(index) => {
+                self.set_piece_on_remote_peer(index);
+            }
+            PeerMessage::Bitfield(bitfield) => {
+                self.set_remote_bitfield(bitfield);
+            }
+            PeerMessage::Piece {
+                index,
+                begin,
+                block,
+            } => {
+                tc.process_piece_block(disk_io, index, begin, &block)?;
+            }
+            PeerMessage::Cancel { .. } | PeerMessage::Request { .. } | PeerMessage::Port(_) => {}
+        }
+        Ok(())
+    }
+
+    fn bitfield_has_piece(bitfield: &[u8], piece_number: u32) -> bool {
+        let byte_index = (piece_number >> 3) as usize;
+        let bit_mask = 0x80 >> (piece_number & 0x7);
+        if byte_index >= bitfield.len() {
+            return false;
+        }
+        bitfield[byte_index] & bit_mask != 0
     }
 
     pub fn place_block_into_piece(&mut self, piece_number: u32, block_offset: u32) {
