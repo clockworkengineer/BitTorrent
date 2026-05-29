@@ -1,12 +1,15 @@
 use crate::peer::Peer;
+use crate::tracker::PeerDetails;
 use crate::torrent_context::TorrentContext;
 use crate::util::info_hash_to_string;
 use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 
 pub struct Manager {
     torrents: RwLock<HashMap<String, Arc<Mutex<TorrentContext>>>>,
     dead_peers: RwLock<HashSet<String>>,
+    peer_discovery_queue: RwLock<Option<Sender<PeerDetails>>>,
 }
 
 impl Manager {
@@ -14,6 +17,7 @@ impl Manager {
         Manager {
             torrents: RwLock::new(HashMap::new()),
             dead_peers: RwLock::new(HashSet::new()),
+            peer_discovery_queue: RwLock::new(None),
         }
     }
 
@@ -51,5 +55,22 @@ impl Manager {
 
     pub fn is_peer_dead(&self, ip: &str) -> bool {
         self.dead_peers.read().unwrap().contains(ip)
+    }
+
+    pub fn set_peer_discovery_queue(&self, sender: Sender<PeerDetails>) {
+        *self.peer_discovery_queue.write().unwrap() = Some(sender);
+    }
+
+    pub fn clear_peer_discovery_queue(&self) {
+        *self.peer_discovery_queue.write().unwrap() = None;
+    }
+
+    pub fn queue_peer_for_discovery(&self, peer_details: PeerDetails) {
+        if self.is_peer_dead(&peer_details.ip) {
+            return;
+        }
+        if let Some(sender) = &*self.peer_discovery_queue.read().unwrap() {
+            let _ = sender.send(peer_details);
+        }
     }
 }

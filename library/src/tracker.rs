@@ -1,6 +1,7 @@
 use crate::announcer::{Announcer, AnnouncerFactory};
 use crate::error::BitTorrentError;
 use crate::host;
+use crate::manager::Manager;
 use crate::peer_id;
 use crate::torrent_context::TorrentContext;
 use std::sync::mpsc::Sender;
@@ -136,6 +137,7 @@ pub struct Tracker {
     pub event: TrackerEvent,
     pub callback: Option<TrackerCallback>,
     pub peer_swarm_queue: Option<Sender<PeerDetails>>,
+    pub peer_manager: Option<Arc<Manager>>,
     pub last_response: AnnounceResponse,
 }
 
@@ -209,12 +211,48 @@ impl Tracker {
             event: TrackerEvent::None,
             callback: None,
             peer_swarm_queue: None,
+            peer_manager: None,
+            last_response: AnnounceResponse::default(),
+        })
+    }
+
+    pub fn new_with_announcer(
+        tc: Arc<Mutex<TorrentContext>>,
+        announcer: Box<dyn Announcer>,
+    ) -> Result<Self, BitTorrentError> {
+        let guard = tc.lock().unwrap();
+        let info_hash = guard.info_hash.clone();
+        let tracker_url = guard.tracker_url.clone();
+        Ok(Tracker {
+            tc: tc.clone(),
+            announcer,
+            peer_id: peer_id::get(),
+            port: 6881,
+            ip: host::get_ip(),
+            compact: true,
+            no_peer_id: false,
+            key: None,
+            tracker_id: None,
+            num_wanted: 5,
+            info_hash,
+            tracker_url,
+            interval: 2000,
+            min_interval: 0,
+            tracker_status: TrackerStatus::Stopped,
+            event: TrackerEvent::None,
+            callback: None,
+            peer_swarm_queue: None,
+            peer_manager: None,
             last_response: AnnounceResponse::default(),
         })
     }
 
     pub fn set_peer_swarm_queue(&mut self, sender: Sender<PeerDetails>) {
         self.peer_swarm_queue = Some(sender);
+    }
+
+    pub fn set_peer_manager(&mut self, manager: Arc<Manager>) {
+        self.peer_manager = Some(manager);
     }
 
     pub fn downloaded(&self) -> u64 {
@@ -268,14 +306,29 @@ impl Tracker {
         Ok(response)
     }
 
+    pub fn last_peer_list(&self) -> Vec<PeerDetails> {
+        self.last_response.peer_list.clone()
+    }
+
     fn queue_new_peers(&self, response: &AnnounceResponse) {
+        if response.failure {
+            return;
+        }
+
+        if self.tc.lock().unwrap().status != crate::torrent_context::TorrentStatus::Downloading {
+            return;
+        }
+
         if let Some(sender) = &self.peer_swarm_queue {
-            if self.tc.lock().unwrap().status == crate::torrent_context::TorrentStatus::Downloading
-                && !response.failure
-            {
-                for peer_details in &response.peer_list {
-                    let _ = sender.send(peer_details.clone());
-                }
+            for peer_details in &response.peer_list {
+                let _ = sender.send(peer_details.clone());
+            }
+            return;
+        }
+
+        if let Some(manager) = &self.peer_manager {
+            for peer_details in &response.peer_list {
+                manager.queue_peer_for_discovery(peer_details.clone());
             }
         }
     }
@@ -298,9 +351,25 @@ impl Tracker {
         let response = self.announce_once()?;
         self.event = TrackerEvent::None;
         if !response.failure {
-            self.tracker_status = TrackerStatus::Running;
+            if event == TrackerEvent::Stopped {
+                self.tracker_status = TrackerStatus::Stopped;
+            } else {
+                self.tracker_status = TrackerStatus::Running;
+            }
         }
         Ok(response)
+    }
+
+    pub fn announce_started(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
+        self.change_status(TrackerEvent::Started)
+    }
+
+    pub fn announce_completed(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
+        self.change_status(TrackerEvent::Completed)
+    }
+
+    pub fn announce_stopped(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
+        self.change_status(TrackerEvent::Stopped)
     }
 
     pub fn start_announcing(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
@@ -310,14 +379,14 @@ impl Tracker {
         if self.tc.lock().unwrap().bytes_left_to_download()? == 0 {
             self.tc.lock().unwrap().total_bytes_downloaded = 0;
             self.tc.lock().unwrap().total_bytes_to_download = 0;
-            self.change_status(TrackerEvent::None)
+            self.announce_completed()
         } else {
-            self.change_status(TrackerEvent::Started)
+            self.announce_started()
         }
     }
 
-    pub fn stop_announcing(&mut self) {
-        self.tracker_status = TrackerStatus::Stopped;
+    pub fn stop_announcing(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
+        self.announce_stopped()
     }
 
     pub fn set_seeding_interval(&mut self, seeding_interval: usize) -> Result<(), BitTorrentError> {
