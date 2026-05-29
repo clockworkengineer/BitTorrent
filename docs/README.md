@@ -7,3 +7,7 @@ This folder contains planning and design documents for the BitTorrent library.
 - `api-proposal.md` — proposed public API for torrent download usage
 
 Use these documents as the guide for the next development milestones.
+
+## Getting started
+
+For usage and example code, see the root `README.md` and the `examples/` package.

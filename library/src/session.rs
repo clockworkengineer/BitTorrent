@@ -2,7 +2,7 @@ use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
 use crate::manager::Manager;
 use crate::metainfo::MetaInfoFile;
-use crate::peer::{Peer};
+use crate::peer::Peer;
 use crate::peer_id;
 use crate::selector::Selector;
 use crate::torrent_context::{TorrentContext, TorrentStatus};
@@ -142,10 +142,12 @@ impl TorrentSession {
             block,
         } = message
         {
-            self.context
-                .lock()
-                .unwrap()
-                .process_piece_block(&self.disk_io, index, begin, &block)?;
+            self.context.lock().unwrap().process_piece_block(
+                &self.disk_io,
+                index,
+                begin,
+                &block,
+            )?;
         }
         Ok(())
     }
@@ -262,13 +264,14 @@ impl TorrentSession {
                     break;
                 }
 
-                if peer_guard.peer_choking.wait_one(0)
-                    && ctx.status == TorrentStatus::Downloading
-                {
+                if peer_guard.peer_choking.wait_one(0) && ctx.status == TorrentStatus::Downloading {
                     if let Some((piece_number, begin, length)) =
                         ctx.next_block_request_for_peer(&peer_guard)
                     {
-                        if peer_guard.send_request(piece_number, begin, length).is_err() {
+                        if peer_guard
+                            .send_request(piece_number, begin, length)
+                            .is_err()
+                        {
                             if let Some(manager) = &manager_clone {
                                 manager.add_to_dead_peer_list(&peer_details.ip);
                             }
