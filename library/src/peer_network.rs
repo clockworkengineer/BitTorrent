@@ -1,3 +1,5 @@
+use crate::error::BitTorrentError;
+use crate::peer_message::PeerMessage;
 use std::io::{Read, Result as IoResult, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -29,8 +31,51 @@ impl PeerNetwork {
         Ok(read)
     }
 
+    pub fn read_exact(&self, buffer: &mut [u8]) -> IoResult<()> {
+        let mut lock = self.stream.lock().unwrap();
+        lock.read_exact(buffer)
+    }
+
+    pub fn write_handshake(
+        &self,
+        info_hash: &[u8],
+        peer_id: &[u8],
+    ) -> Result<usize, BitTorrentError> {
+        let buffer = PeerMessage::handshake_encode(info_hash, peer_id)?;
+        Ok(self.write(&buffer)?)
+    }
+
+    pub fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>), BitTorrentError> {
+        let mut buffer = [0u8; crate::constants::INITIAL_HANDSHAKE_LENGTH];
+        self.read_exact(&mut buffer)?;
+        PeerMessage::handshake_decode(&buffer)
+    }
+
+    pub fn write_message(&self, message: PeerMessage) -> Result<usize, BitTorrentError> {
+        let buffer = message.encode();
+        Ok(self.write(&buffer)?)
+    }
+
+    pub fn read_message(&mut self) -> Result<PeerMessage, BitTorrentError> {
+        let mut length_buf = [0u8; 4];
+        self.read_exact(&mut length_buf)?;
+        let length = u32::from_be_bytes(length_buf) as usize;
+        if length == 0 {
+            self.packet_length = 0;
+            self.read_buffer[..4].copy_from_slice(&length_buf);
+            return Ok(PeerMessage::KeepAlive);
+        }
+        if length > self.read_buffer.len() {
+            self.read_buffer.resize(length, 0);
+        }
+        let mut lock = self.stream.lock().unwrap();
+        lock.read_exact(&mut self.read_buffer[..length])?;
+        self.packet_length = length;
+        PeerMessage::decode(&self.read_buffer[..length])
+    }
+
     pub fn start_reads(&self) {
-        // Placeholder: background message processing can be added later.
+        // current implementation reads on demand through read_message()
     }
 
     pub fn close(&self) {

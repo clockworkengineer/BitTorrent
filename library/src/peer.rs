@@ -1,5 +1,7 @@
 use crate::average::Average;
 use crate::manual_reset_event::ManualResetEvent;
+use crate::error::BitTorrentError;
+use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;
 use std::net::TcpStream;
@@ -73,12 +75,64 @@ impl Peer {
         }
     }
 
-    pub fn handshake(&mut self, _manager: &crate::manager::Manager) -> std::io::Result<Vec<u8>> {
-        self.connected = true;
-        if let Some(net) = &self.network {
-            net.start_reads();
+    pub fn handshake(&mut self, info_hash: &[u8], local_peer_id: &[u8]) -> Result<Vec<u8>, BitTorrentError> {
+        let net = self.network.as_ref().ok_or_else(|| {
+            BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No network available",
+            ))
+        })?;
+        net.write_handshake(info_hash, local_peer_id)?;
+        let (remote_info_hash, remote_peer_id) = net.read_handshake()?;
+        if remote_info_hash != info_hash {
+            return Err(BitTorrentError::Parse(
+                "Peer handshake info hash mismatch".into(),
+            ));
         }
-        Ok(vec![0u8; 20])
+        self.connected = true;
+        self.remote_peer_id = Some(remote_peer_id.clone());
+        net.start_reads();
+        Ok(remote_peer_id)
+    }
+
+    pub fn send_message(&self, message: PeerMessage) -> Result<usize, BitTorrentError> {
+        let net = self.network.as_ref().ok_or_else(|| {
+            BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No network available",
+            ))
+        })?;
+        net.write_message(message)
+    }
+
+    pub fn read_message(&mut self) -> Result<PeerMessage, BitTorrentError> {
+        let net = self.network.as_mut().ok_or_else(|| {
+            BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No network available",
+            ))
+        })?;
+        net.read_message()
+    }
+
+    pub fn send_interested(&self) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Interested)
+    }
+
+    pub fn send_not_interested(&self) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::NotInterested)
+    }
+
+    pub fn send_request(&self, index: u32, begin: u32, length: u32) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Request { index, begin, length })
+    }
+
+    pub fn send_have(&self, piece_index: u32) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Have(piece_index))
+    }
+
+    pub fn send_bitfield(&self, bitfield: Vec<u8>) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Bitfield(bitfield))
     }
 
     pub fn close(&mut self) {

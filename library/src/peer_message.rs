@@ -1,0 +1,213 @@
+use crate::constants::{HASH_LENGTH, PEER_ID_LENGTH, SIZE_OF_U32};
+use crate::error::BitTorrentError;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PeerMessage {
+    KeepAlive,
+    Choke,
+    Unchoke,
+    Interested,
+    NotInterested,
+    Have(u32),
+    Bitfield(Vec<u8>),
+    Request {
+        index: u32,
+        begin: u32,
+        length: u32,
+    },
+    Piece {
+        index: u32,
+        begin: u32,
+        block: Vec<u8>,
+    },
+    Cancel {
+        index: u32,
+        begin: u32,
+        length: u32,
+    },
+    Port(u16),
+}
+
+impl PeerMessage {
+    pub fn encode(&self) -> Vec<u8> {
+        match self {
+            PeerMessage::KeepAlive => 0u32.to_be_bytes().to_vec(),
+            PeerMessage::Choke => [1u32.to_be_bytes().as_ref(), &[0u8]].concat(),
+            PeerMessage::Unchoke => [1u32.to_be_bytes().as_ref(), &[1u8]].concat(),
+            PeerMessage::Interested => [1u32.to_be_bytes().as_ref(), &[2u8]].concat(),
+            PeerMessage::NotInterested => [1u32.to_be_bytes().as_ref(), &[3u8]].concat(),
+            PeerMessage::Have(index) => {
+                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + SIZE_OF_U32);
+                buffer.extend_from_slice(&(1 + SIZE_OF_U32 as u32).to_be_bytes());
+                buffer.push(4);
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer
+            }
+            PeerMessage::Bitfield(bitfield) => {
+                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + bitfield.len());
+                buffer.extend_from_slice(&((1 + bitfield.len()) as u32).to_be_bytes());
+                buffer.push(5);
+                buffer.extend_from_slice(bitfield);
+                buffer
+            }
+            PeerMessage::Request {
+                index,
+                begin,
+                length,
+            } => {
+                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 12);
+                buffer.extend_from_slice(&((1 + 12) as u32).to_be_bytes());
+                buffer.push(6);
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer.extend_from_slice(&begin.to_be_bytes());
+                buffer.extend_from_slice(&length.to_be_bytes());
+                buffer
+            }
+            PeerMessage::Piece {
+                index,
+                begin,
+                block,
+            } => {
+                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 8 + block.len());
+                buffer.extend_from_slice(&((1 + 8 + block.len()) as u32).to_be_bytes());
+                buffer.push(7);
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer.extend_from_slice(&begin.to_be_bytes());
+                buffer.extend_from_slice(block);
+                buffer
+            }
+            PeerMessage::Cancel {
+                index,
+                begin,
+                length,
+            } => {
+                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 12);
+                buffer.extend_from_slice(&((1 + 12) as u32).to_be_bytes());
+                buffer.push(8);
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer.extend_from_slice(&begin.to_be_bytes());
+                buffer.extend_from_slice(&length.to_be_bytes());
+                buffer
+            }
+            PeerMessage::Port(port) => {
+                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 2);
+                buffer.extend_from_slice(&((1 + 2) as u32).to_be_bytes());
+                buffer.push(9);
+                buffer.extend_from_slice(&port.to_be_bytes());
+                buffer
+            }
+        }
+    }
+
+    pub fn decode(buffer: &[u8]) -> Result<Self, BitTorrentError> {
+        if buffer.is_empty() {
+            return Ok(PeerMessage::KeepAlive);
+        }
+        let message_id = buffer[0];
+        let payload = &buffer[1..];
+        match message_id {
+            0 => Ok(PeerMessage::Choke),
+            1 => Ok(PeerMessage::Unchoke),
+            2 => Ok(PeerMessage::Interested),
+            3 => Ok(PeerMessage::NotInterested),
+            4 => {
+                if payload.len() != SIZE_OF_U32 {
+                    return Err(BitTorrentError::Parse("Invalid HAVE payload length".into()));
+                }
+                let index = u32::from_be_bytes(payload.try_into().unwrap());
+                Ok(PeerMessage::Have(index))
+            }
+            5 => Ok(PeerMessage::Bitfield(payload.to_vec())),
+            6 => {
+                if payload.len() != 12 {
+                    return Err(BitTorrentError::Parse(
+                        "Invalid REQUEST payload length".into(),
+                    ));
+                }
+                let index = u32::from_be_bytes(payload[0..4].try_into().unwrap());
+                let begin = u32::from_be_bytes(payload[4..8].try_into().unwrap());
+                let length = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+                Ok(PeerMessage::Request {
+                    index,
+                    begin,
+                    length,
+                })
+            }
+            7 => {
+                if payload.len() < 8 {
+                    return Err(BitTorrentError::Parse(
+                        "Invalid PIECE payload length".into(),
+                    ));
+                }
+                let index = u32::from_be_bytes(payload[0..4].try_into().unwrap());
+                let begin = u32::from_be_bytes(payload[4..8].try_into().unwrap());
+                let block = payload[8..].to_vec();
+                Ok(PeerMessage::Piece {
+                    index,
+                    begin,
+                    block,
+                })
+            }
+            8 => {
+                if payload.len() != 12 {
+                    return Err(BitTorrentError::Parse(
+                        "Invalid CANCEL payload length".into(),
+                    ));
+                }
+                let index = u32::from_be_bytes(payload[0..4].try_into().unwrap());
+                let begin = u32::from_be_bytes(payload[4..8].try_into().unwrap());
+                let length = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+                Ok(PeerMessage::Cancel {
+                    index,
+                    begin,
+                    length,
+                })
+            }
+            9 => {
+                if payload.len() != 2 {
+                    return Err(BitTorrentError::Parse("Invalid PORT payload length".into()));
+                }
+                let port = u16::from_be_bytes(payload.try_into().unwrap());
+                Ok(PeerMessage::Port(port))
+            }
+            _ => Err(BitTorrentError::Parse("Unknown peer message ID".into())),
+        }
+    }
+
+    pub fn handshake_encode(info_hash: &[u8], peer_id: &[u8]) -> Result<Vec<u8>, BitTorrentError> {
+        if info_hash.len() != HASH_LENGTH {
+            return Err(BitTorrentError::Parse("Info hash must be 20 bytes".into()));
+        }
+        if peer_id.len() != PEER_ID_LENGTH {
+            return Err(BitTorrentError::Parse("Peer ID must be 20 bytes".into()));
+        }
+
+        let mut buffer = Vec::with_capacity(crate::constants::INITIAL_HANDSHAKE_LENGTH);
+        buffer.push(19);
+        buffer.extend_from_slice(b"BitTorrent protocol");
+        buffer.extend_from_slice(&[0u8; 8]);
+        buffer.extend_from_slice(info_hash);
+        buffer.extend_from_slice(peer_id);
+        Ok(buffer)
+    }
+
+    pub fn handshake_decode(buffer: &[u8]) -> Result<(Vec<u8>, Vec<u8>), BitTorrentError> {
+        if buffer.len() != crate::constants::INITIAL_HANDSHAKE_LENGTH {
+            return Err(BitTorrentError::Parse("Invalid handshake length".into()));
+        }
+        let pstrlen = buffer[0];
+        if pstrlen != 19 {
+            return Err(BitTorrentError::Parse(
+                "Invalid handshake protocol length".into(),
+            ));
+        }
+        if &buffer[1..20] != b"BitTorrent protocol" {
+            return Err(BitTorrentError::Parse(
+                "Invalid handshake protocol string".into(),
+            ));
+        }
+        let info_hash = buffer[28..48].to_vec();
+        let peer_id = buffer[48..68].to_vec();
+        Ok((info_hash, peer_id))
+    }
+}
