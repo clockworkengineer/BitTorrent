@@ -1,6 +1,6 @@
 use crate::average::Average;
-use crate::manual_reset_event::ManualResetEvent;
 use crate::error::BitTorrentError;
+use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;
@@ -75,7 +75,11 @@ impl Peer {
         }
     }
 
-    pub fn handshake(&mut self, info_hash: &[u8], local_peer_id: &[u8]) -> Result<Vec<u8>, BitTorrentError> {
+    pub fn handshake(
+        &mut self,
+        info_hash: &[u8],
+        local_peer_id: &[u8],
+    ) -> Result<Vec<u8>, BitTorrentError> {
         let net = self.network.as_ref().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -123,8 +127,17 @@ impl Peer {
         self.send_message(PeerMessage::NotInterested)
     }
 
-    pub fn send_request(&self, index: u32, begin: u32, length: u32) -> Result<usize, BitTorrentError> {
-        self.send_message(PeerMessage::Request { index, begin, length })
+    pub fn send_request(
+        &self,
+        index: u32,
+        begin: u32,
+        length: u32,
+    ) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Request {
+            index,
+            begin,
+            length,
+        })
     }
 
     pub fn send_have(&self, piece_index: u32) -> Result<usize, BitTorrentError> {
@@ -188,12 +201,14 @@ impl Peer {
                         buffer_lock.add_block_from_packet(&self.read_buffer(), block_number);
                     }
                     if should_decrement {
-                        assembly_data.current_block_requests = assembly_data.current_block_requests.saturating_sub(1);
+                        assembly_data.current_block_requests =
+                            assembly_data.current_block_requests.saturating_sub(1);
                     }
                     if assembly_data.current_block_requests == 0 {
                         assembly_data.block_requests_done.set();
                     }
-                    self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
+                    self.outstanding_requests_count =
+                        self.outstanding_requests_count.saturating_sub(1);
                 }
             }
         }

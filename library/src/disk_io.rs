@@ -2,8 +2,8 @@ use crate::error::BitTorrentError;
 use crate::piece_buffer::PieceBuffer;
 use crate::piece_request::PieceRequest;
 use crate::torrent_context::TorrentContext;
-use std::fs::{create_dir_all, File};
-use std::io::Read;
+use std::fs::{File, OpenOptions, create_dir_all};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
@@ -33,7 +33,10 @@ impl DiskIO {
         }
     }
 
-    pub fn create_local_torrent_structure(&self, tc: &TorrentContext) -> Result<(), BitTorrentError> {
+    pub fn create_local_torrent_structure(
+        &self,
+        tc: &TorrentContext,
+    ) -> Result<(), BitTorrentError> {
         for file in &tc.files_to_download {
             let path = Path::new(&file.name);
             if let Some(dir) = path.parent() {
@@ -61,7 +64,11 @@ impl DiskIO {
                 }
                 bytes_in_buffer += bytes_read;
                 if bytes_in_buffer == piece_buffer.len() {
-                    tc.update_bitfield_from_buffer(piece_number, &piece_buffer, bytes_in_buffer as u32);
+                    tc.update_bitfield_from_buffer(
+                        piece_number,
+                        &piece_buffer,
+                        bytes_in_buffer as u32,
+                    );
                     bytes_in_buffer = 0;
                     piece_number += 1;
                 }
@@ -73,7 +80,51 @@ impl DiskIO {
         Ok(())
     }
 
-    pub fn fully_downloaded_torrent_bitfield(&self, tc: &mut TorrentContext) -> Result<(), BitTorrentError> {
+    pub fn write_piece(
+        &self,
+        tc: &TorrentContext,
+        piece_number: u32,
+        piece_data: &[u8],
+    ) -> Result<(), BitTorrentError> {
+        let mut remaining = piece_data.len();
+        let mut data_offset = 0usize;
+        let mut piece_offset = piece_number as u64 * tc.piece_length as u64;
+
+        for file in &tc.files_to_download {
+            if piece_offset >= file.length {
+                piece_offset -= file.length;
+                continue;
+            }
+
+            let write_start = piece_offset as u64;
+            let write_size = std::cmp::min(remaining as u64, file.length - write_start) as usize;
+            let mut handle = OpenOptions::new().write(true).open(&file.name)?;
+            handle.seek(SeekFrom::Start(write_start))?;
+            handle.write_all(&piece_data[data_offset..data_offset + write_size])?;
+
+            remaining -= write_size;
+            data_offset += write_size;
+            piece_offset = 0;
+
+            if remaining == 0 {
+                break;
+            }
+        }
+
+        if remaining > 0 {
+            return Err(BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Not enough space in torrent files to write the piece",
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub fn fully_downloaded_torrent_bitfield(
+        &self,
+        tc: &mut TorrentContext,
+    ) -> Result<(), BitTorrentError> {
         let mut total_bytes_to_download = tc.total_bytes_to_download as i64;
         for piece_number in 0..tc.number_of_pieces as u32 {
             tc.mark_piece_local(piece_number, true);

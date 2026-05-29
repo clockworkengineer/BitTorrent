@@ -15,7 +15,9 @@ fn cleanup_download_path(download_path: &PathBuf) {
 
 #[test]
 fn test_create_session_for_download() {
-    let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("session_download");
+    let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("session_download");
     cleanup_download_path(&download_path);
 
     let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
@@ -23,11 +25,13 @@ fn test_create_session_for_download() {
 
     assert_eq!(session.status(), TorrentStatus::Initialised);
     assert!(session.context.files_to_download.len() >= 1);
-    assert!(session
-        .context
-        .files_to_download
-        .iter()
-        .all(|f| std::path::Path::new(&f.name).exists()));
+    assert!(
+        session
+            .context
+            .files_to_download
+            .iter()
+            .all(|f| std::path::Path::new(&f.name).exists())
+    );
 
     session.start_download().expect("Failed to start download");
     assert_eq!(session.status(), TorrentStatus::Downloading);
@@ -47,7 +51,9 @@ fn test_create_session_for_download() {
 
 #[test]
 fn test_create_session_for_seeding() {
-    let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("session_seeding");
+    let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("session_seeding");
     cleanup_download_path(&download_path);
 
     let session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, true)

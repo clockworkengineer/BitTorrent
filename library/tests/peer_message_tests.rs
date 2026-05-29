@@ -28,7 +28,9 @@ fn test_peer_message_encode_decode() {
 #[test]
 fn test_peer_handshake_round_trip() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
-    let addr = listener.local_addr().expect("Failed to get listener address");
+    let addr = listener
+        .local_addr()
+        .expect("Failed to get listener address");
     let info_hash = vec![1u8; 20];
     let info_hash_clone = info_hash.clone();
     let local_peer_id = *b"-RS0001-1234567890ab";
@@ -37,7 +39,9 @@ fn test_peer_handshake_round_trip() {
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("Failed to accept connection");
         let mut buf = [0u8; 68];
-        stream.read_exact(&mut buf).expect("Failed to read handshake");
+        stream
+            .read_exact(&mut buf)
+            .expect("Failed to read handshake");
         assert_eq!(buf[0], 19);
         assert_eq!(&buf[1..20], b"BitTorrent protocol");
         assert_eq!(&buf[28..48], &info_hash_clone[..]);
@@ -55,8 +59,13 @@ fn test_peer_handshake_round_trip() {
 
     let stream = TcpStream::connect(addr).expect("Failed to connect to listener");
     let mut peer = Peer::new("127.0.0.1".to_string(), addr.port(), stream);
-    let received_peer_id = peer.handshake(&info_hash, &local_peer_id).expect("Handshake failed");
+    let received_peer_id = peer
+        .handshake(&info_hash, &local_peer_id)
+        .expect("Handshake failed");
     assert_eq!(received_peer_id, remote_peer_id.to_vec());
-    assert_eq!(peer.remote_peer_id.as_deref(), Some(&remote_peer_id.to_vec()[..]));
+    assert_eq!(
+        peer.remote_peer_id.as_deref(),
+        Some(&remote_peer_id.to_vec()[..])
+    );
     handle.join().expect("Server thread panicked");
 }

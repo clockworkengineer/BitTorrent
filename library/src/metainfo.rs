@@ -143,8 +143,7 @@ impl MetaInfoFile {
         }
 
         let tracker = self.get_tracker()?;
-        url::Url::parse(&tracker)
-            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+        url::Url::parse(&tracker).map_err(|err| BitTorrentError::Parse(err.to_string()))?;
 
         let files = self.local_files_to_download_list(Path::new("."))?.1;
         if files.is_empty() {
@@ -247,7 +246,11 @@ impl MetaInfoFile {
         Ok(())
     }
 
-    fn require_string_or_numeric(&mut self, root: &BNode, field: &str) -> Result<(), BitTorrentError> {
+    fn require_string_or_numeric(
+        &mut self,
+        root: &BNode,
+        field: &str,
+    ) -> Result<(), BitTorrentError> {
         if Bencode::get_dictionary_entry(root, field.as_bytes()).is_none() {
             return Err(BitTorrentError::MissingField(field.to_string()));
         }

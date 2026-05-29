@@ -32,11 +32,15 @@ fn test_next_block_request_from_peer_reserves_request() {
     context.status = bittorrent_rs::torrent_context::TorrentStatus::Downloading;
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
-    let addr = listener.local_addr().expect("Failed to get listener address");
+    let addr = listener
+        .local_addr()
+        .expect("Failed to get listener address");
     let handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("Failed to accept connection");
         let mut buffer = [0u8; 17];
-        stream.read_exact(&mut buffer).expect("Failed to read request");
+        stream
+            .read_exact(&mut buffer)
+            .expect("Failed to read request");
         assert_eq!(u32::from_be_bytes(buffer[0..4].try_into().unwrap()), 13);
         assert_eq!(buffer[4], 6);
     });
@@ -55,7 +59,8 @@ fn test_next_block_request_from_peer_reserves_request() {
     assert_eq!(peer.outstanding_requests_count, 0);
 
     let (_, begin, length) = request;
-    peer.send_request(0, begin, length).expect("Failed to send request");
+    peer.send_request(0, begin, length)
+        .expect("Failed to send request");
     peer.outstanding_requests_count = peer.outstanding_requests_count.saturating_add(1);
 
     assert_eq!(peer.outstanding_requests_count, 1);

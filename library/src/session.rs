@@ -96,13 +96,34 @@ impl TorrentSession {
         &self.download_path
     }
 
-    pub fn request_next_block_from_peer(&mut self, peer: &mut crate::peer::Peer) -> Result<Option<(u32, u32, u32)>, BitTorrentError> {
-        if let Some((piece_number, begin, length)) = self.context.next_block_request_for_peer(peer) {
+    pub fn request_next_block_from_peer(
+        &mut self,
+        peer: &mut crate::peer::Peer,
+    ) -> Result<Option<(u32, u32, u32)>, BitTorrentError> {
+        if let Some((piece_number, begin, length)) = self.context.next_block_request_for_peer(peer)
+        {
             peer.send_request(piece_number, begin, length)?;
             peer.outstanding_requests_count = peer.outstanding_requests_count.saturating_add(1);
             Ok(Some((piece_number, begin, length)))
         } else {
             Ok(None)
         }
+    }
+
+    pub fn process_peer_message(
+        &mut self,
+        _peer: &mut crate::peer::Peer,
+        message: crate::peer_message::PeerMessage,
+    ) -> Result<(), BitTorrentError> {
+        if let crate::peer_message::PeerMessage::Piece {
+            index,
+            begin,
+            block,
+        } = message
+        {
+            self.context
+                .process_piece_block(&self.disk_io, index, begin, &block)?;
+        }
+        Ok(())
     }
 }

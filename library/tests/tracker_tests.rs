@@ -3,12 +3,12 @@ use bittorrent_rs::disk_io::DiskIO;
 use bittorrent_rs::manager::Manager;
 use bittorrent_rs::metainfo::MetaInfoFile;
 use bittorrent_rs::selector::Selector;
+use bittorrent_rs::torrent_context::{TorrentContext, TorrentStatus};
 use bittorrent_rs::tracker::PeerDetails;
 use bittorrent_rs::tracker::Tracker;
-use bittorrent_rs::torrent_context::{TorrentContext, TorrentStatus};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{mpsc::channel, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc::channel};
 use std::time::Duration;
 
 struct FakeAnnouncer;
@@ -17,7 +17,8 @@ impl Announcer for FakeAnnouncer {
     fn announce(
         &mut self,
         tracker: &bittorrent_rs::tracker::TrackerAnnounceContext,
-    ) -> Result<bittorrent_rs::tracker::AnnounceResponse, bittorrent_rs::error::BitTorrentError> {
+    ) -> Result<bittorrent_rs::tracker::AnnounceResponse, bittorrent_rs::error::BitTorrentError>
+    {
         let mut response = bittorrent_rs::tracker::AnnounceResponse::default();
         response.status_message = format!("event={}", tracker.event.as_str());
         response.interval = 30;
@@ -45,7 +46,8 @@ fn test_tracker_started_and_peer_list() {
         .join("tracker_started_test");
     let _ = fs::remove_dir_all(&download_path);
 
-    let mut meta = MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
+    let mut meta =
+        MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
     meta.parse().expect("Failed to parse torrent");
     let disk_io = DiskIO::new();
     let selector = Selector::new();
@@ -58,11 +60,16 @@ fn test_tracker_started_and_peer_list() {
 
     context.lock().unwrap().status = TorrentStatus::Downloading;
 
-    let response = tracker.announce_started().expect("Tracker announce started failed");
+    let response = tracker
+        .announce_started()
+        .expect("Tracker announce started failed");
     assert_eq!(response.status_message, "event=started");
     assert_eq!(tracker.last_peer_list().len(), 1);
     assert_eq!(tracker.last_peer_list()[0].ip, "1.2.3.4");
-    assert_eq!(tracker.last_peer_list()[0].peer_id.as_deref(), Some("FAKE_PEER"));
+    assert_eq!(
+        tracker.last_peer_list()[0].peer_id.as_deref(),
+        Some("FAKE_PEER")
+    );
 
     let _ = fs::remove_dir_all(&download_path);
 }
@@ -81,7 +88,9 @@ fn test_manager_peer_discovery_queue_receives_peers() {
     };
 
     manager.queue_peer_for_discovery(peer_details.clone());
-    let received = receiver.recv_timeout(Duration::from_secs(1)).expect("No peer received");
+    let received = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("No peer received");
     assert_eq!(received.ip, peer_details.ip);
     assert_eq!(received.port, peer_details.port);
 }
@@ -93,7 +102,8 @@ fn test_tracker_can_use_manager_queue() {
         .join("tracker_manager_queue_test");
     let _ = fs::remove_dir_all(&download_path);
 
-    let mut meta = MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
+    let mut meta =
+        MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
     meta.parse().expect("Failed to parse torrent");
     let disk_io = DiskIO::new();
     let selector = Selector::new();
@@ -110,9 +120,13 @@ fn test_tracker_can_use_manager_queue() {
     tracker.set_peer_manager(manager.clone());
 
     context.lock().unwrap().status = TorrentStatus::Downloading;
-    tracker.announce_started().expect("Failed to announce started");
+    tracker
+        .announce_started()
+        .expect("Failed to announce started");
 
-    let received = receiver.recv_timeout(Duration::from_secs(1)).expect("No peer received from manager queue");
+    let received = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("No peer received from manager queue");
     assert_eq!(received.ip, "1.2.3.4");
 
     let _ = fs::remove_dir_all(&download_path);

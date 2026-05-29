@@ -327,6 +327,63 @@ impl TorrentContext {
         }
     }
 
+    pub fn process_piece_block(
+        &mut self,
+        disk_io: &DiskIO,
+        piece_number: u32,
+        begin: u32,
+        block_data: &[u8],
+    ) -> Result<bool, crate::error::BitTorrentError> {
+        let piece_length = self.get_piece_length(piece_number);
+        let block_index = begin / BLOCK_SIZE as u32;
+
+        let mut assembly_data = self.assembly_data.lock().unwrap();
+        if assembly_data
+            .piece_buffer
+            .as_ref()
+            .map(|buffer| buffer.lock().unwrap().number != piece_number)
+            .unwrap_or(true)
+        {
+            assembly_data.piece_buffer = Some(Arc::new(Mutex::new(PieceBuffer::new(
+                piece_number,
+                piece_length,
+            ))));
+        }
+
+        let piece_buffer_arc = assembly_data.piece_buffer.as_ref().unwrap().clone();
+        let mut piece_buffer = piece_buffer_arc.lock().unwrap();
+        piece_buffer.add_block(block_data, block_index);
+        let piece_complete = piece_buffer.all_blocks_there();
+
+        if piece_complete {
+            let finished_piece = piece_buffer.buffer.clone();
+            drop(piece_buffer);
+            drop(assembly_data);
+
+            if self.check_piece_hash(piece_number, &finished_piece, finished_piece.len() as u32) {
+                disk_io.write_piece(self, piece_number, &finished_piece)?;
+                self.update_bitfield_from_buffer(
+                    piece_number,
+                    &finished_piece,
+                    finished_piece.len() as u32,
+                );
+                self.clear_piece_requests(piece_number);
+                let mut assembly_data = self.assembly_data.lock().unwrap();
+                assembly_data.piece_buffer = None;
+                return Ok(true);
+            } else {
+                self.clear_piece_requests(piece_number);
+                let mut assembly_data = self.assembly_data.lock().unwrap();
+                assembly_data.piece_buffer = None;
+                return Err(crate::error::BitTorrentError::Parse(
+                    "Piece failed hash verification".to_string(),
+                ));
+            }
+        }
+
+        Ok(false)
+    }
+
     pub fn unmerge_piece_bitfield(&mut self, remote_peer: &Peer) {
         let mut piece_number = 0u32;
         for byte in &remote_peer.remote_piece_bitfield {
