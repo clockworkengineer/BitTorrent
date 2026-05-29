@@ -1,13 +1,15 @@
 use crate::average::Average;
+use crate::constants::BLOCK_SIZE;
 use crate::disk_io::DiskIO;
 use crate::manual_reset_event::ManualResetEvent;
+use crate::metainfo::FileDetails;
+use crate::metainfo::MetaInfoFile;
 use crate::peer::Peer;
 use crate::piece_buffer::PieceBuffer;
 use crate::selector::Selector;
-use crate::metainfo::FileDetails;
-use crate::metainfo::MetaInfoFile;
 use sha1::Digest;
-use std::collections::HashMap;
+use std::cmp::min;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Clone)]
@@ -61,6 +63,7 @@ pub struct TorrentContext {
     pub missing_pieces_count: usize,
     pub maximum_swarm_size: usize,
     pub assembly_data: Mutex<AssemblerData>,
+    pub requested_blocks: RwLock<HashSet<(u32, u32)>>,
     pieces_missing: Vec<u8>,
     piece_data: Vec<PieceInfo>,
 }
@@ -82,7 +85,13 @@ impl TorrentContext {
         let number_of_pieces = pieces_info_hash.len() / crate::constants::HASH_LENGTH;
         let bitfield = vec![0u8; (number_of_pieces + 7) / 8];
         let pieces_missing = vec![0u8; bitfield.len()];
-        let piece_data = vec![PieceInfo { peer_count: 0, piece_length }; number_of_pieces];
+        let piece_data = vec![
+            PieceInfo {
+                peer_count: 0,
+                piece_length
+            };
+            number_of_pieces
+        ];
 
         let mut context = TorrentContext {
             info_hash,
@@ -100,7 +109,10 @@ impl TorrentContext {
             } else {
                 TorrentStatus::Initialised
             },
-            file_name: torrent_meta_info.torrent_file_name.to_string_lossy().to_string(),
+            file_name: torrent_meta_info
+                .torrent_file_name
+                .to_string_lossy()
+                .to_string(),
             main_tracker: None,
             callback_data: None,
             call_back: None,
@@ -118,6 +130,7 @@ impl TorrentContext {
                 average_assembly_time: Average::default(),
                 total_timeouts: 0,
             }),
+            requested_blocks: RwLock::new(HashSet::new()),
             pieces_missing,
             piece_data,
         };
@@ -219,7 +232,8 @@ impl TorrentContext {
             return 100.0;
         }
 
-        let percent = self.total_bytes_downloaded as f64 / self.total_bytes_to_download as f64 * 100.0;
+        let percent =
+            self.total_bytes_downloaded as f64 / self.total_bytes_to_download as f64 * 100.0;
         percent.min(100.0) as f32
     }
 
@@ -318,10 +332,10 @@ impl TorrentContext {
         for byte in &remote_peer.remote_piece_bitfield {
             for bit in &[0x80u8, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01] {
                 if byte & bit != 0 {
-                    self.piece_data[piece_number as usize].peer_count =
-                        self.piece_data[piece_number as usize]
-                            .peer_count
-                            .saturating_sub(1);
+                    self.piece_data[piece_number as usize].peer_count = self.piece_data
+                        [piece_number as usize]
+                        .peer_count
+                        .saturating_sub(1);
                 }
                 piece_number += 1;
                 if piece_number as usize >= self.number_of_pieces {
@@ -349,6 +363,74 @@ impl TorrentContext {
             && self.peer_swarm.read().unwrap().len() < self.maximum_swarm_size
     }
 
+    pub fn next_pending_block(&self, piece_number: u32) -> Option<(u32, u32)> {
+        let piece_length = self.get_piece_length(piece_number);
+        let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
+        for block_index in 0..block_count {
+            if !self.is_block_requested(piece_number, block_index) {
+                let begin = block_index * BLOCK_SIZE as u32;
+                let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));
+                return Some((begin, length));
+            }
+        }
+        None
+    }
+
+    pub fn is_block_requested(&self, piece_number: u32, block_index: u32) -> bool {
+        self.requested_blocks
+            .read()
+            .unwrap()
+            .contains(&(piece_number, block_index))
+    }
+
+    pub fn reserve_block_request(&self, piece_number: u32, block_index: u32) -> bool {
+        self.requested_blocks
+            .write()
+            .unwrap()
+            .insert((piece_number, block_index))
+    }
+
+    pub fn release_block_request(&self, piece_number: u32, block_index: u32) {
+        self.requested_blocks
+            .write()
+            .unwrap()
+            .remove(&(piece_number, block_index));
+    }
+
+    pub fn clear_piece_requests(&self, piece_number: u32) {
+        self.requested_blocks
+            .write()
+            .unwrap()
+            .retain(|(piece, _)| *piece != piece_number);
+    }
+
+    pub fn select_next_piece_for_peer(&mut self, remote_peer: &Peer) -> Option<u32> {
+        let mut candidates: Vec<(usize, u32)> = (0..self.number_of_pieces as u32)
+            .filter(|piece| {
+                !self.is_piece_local(*piece) && remote_peer.is_piece_on_remote_peer(*piece)
+            })
+            .map(|piece| (self.piece_data[piece as usize].peer_count, piece))
+            .collect();
+
+        candidates.sort_by_key(|(count, piece)| (*count, *piece));
+        candidates.into_iter().map(|(_, piece)| piece).next()
+    }
+
+    pub fn next_block_request_for_peer(&mut self, peer: &Peer) -> Option<(u32, u32, u32)> {
+        if self.status != TorrentStatus::Downloading {
+            return None;
+        }
+        if let Some(piece_number) = self.select_next_piece_for_peer(peer) {
+            if let Some((begin, length)) = self.next_pending_block(piece_number) {
+                let block_index = begin / BLOCK_SIZE as u32;
+                if self.reserve_block_request(piece_number, block_index) {
+                    return Some((piece_number, begin, length));
+                }
+            }
+        }
+        None
+    }
+
     pub fn increment_peer_count(&mut self, piece_number: u32) {
         self.piece_data[piece_number as usize].peer_count += 1;
     }
@@ -370,7 +452,13 @@ impl TorrentContext {
     }
 
     pub fn bytes_per_second(&self) -> i64 {
-        let seconds = self.assembly_data.lock().unwrap().average_assembly_time.get() as f64 / 1000.0;
+        let seconds = self
+            .assembly_data
+            .lock()
+            .unwrap()
+            .average_assembly_time
+            .get() as f64
+            / 1000.0;
         if seconds != 0.0 {
             (self.piece_length as f64 / seconds) as i64
         } else {
