@@ -1,0 +1,8 @@
+[package]
+name = "torrent_client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = "0.28"
+bittorrent_rs = { path = "../../library", package = "bittorrent-rs" }

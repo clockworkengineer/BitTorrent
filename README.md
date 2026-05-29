@@ -22,6 +22,12 @@ Run the example downloader:
 cargo run -p torrent_session_example --release -- <torrent-file> <download-dir>
 ```
 
+Run the desktop client UI:
+
+```bash
+cargo run -p torrent_client --release -- <torrent-file> <download-dir>
+```
+
 Replace `<torrent-file>` with the path to a `.torrent` file and `<download-dir>` with the local directory where files should be created.
 
 ## Project structure

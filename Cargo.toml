@@ -1,3 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["library", "examples/torrent_session_example"]
+members = [
+    "library",
+    "examples/torrent_session_example",
+    "clients/torrent_client",
+]
