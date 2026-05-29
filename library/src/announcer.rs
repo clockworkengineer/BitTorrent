@@ -56,7 +56,7 @@ impl HttpAnnouncer {
                     }
                     crate::bencode::BNode::List(list) => {
                         for item in list {
-                            if let crate::bencode::BNode::Dictionary(peer_dict) = item {
+                            if let crate::bencode::BNode::Dictionary(_peer_dict) = item {
                                 let mut peer = PeerDetails {
                                     info_hash: tracker.info_hash.clone(),
                                     peer_id: None,
@@ -178,7 +178,6 @@ impl Announcer for HttpAnnouncer {
 
 pub struct UdpAnnouncer {
     socket: UdpSocket,
-    remote_addr: SocketAddr,
     connected: bool,
     connection_id: u64,
 }
@@ -192,7 +191,7 @@ impl UdpAnnouncer {
         let port = parsed
             .port_or_known_default()
             .ok_or_else(|| BitTorrentError::Parse("UDP tracker port missing".to_string()))?;
-        let remote_addr = format!("{}:{}", host, port)
+        let remote_addr: SocketAddr = format!("{}:{}", host, port)
             .parse()
             .map_err(|err: std::net::AddrParseError| BitTorrentError::Parse(err.to_string()))?;
         let socket = UdpSocket::bind("0.0.0.0:0").map_err(BitTorrentError::Io)?;
@@ -202,7 +201,6 @@ impl UdpAnnouncer {
         socket.connect(remote_addr).map_err(BitTorrentError::Io)?;
         Ok(UdpAnnouncer {
             socket,
-            remote_addr,
             connected: false,
             connection_id: 0,
         })
