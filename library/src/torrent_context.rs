@@ -43,6 +43,7 @@ pub enum TorrentStatus {
 pub struct TorrentContext {
     pub info_hash: Vec<u8>,
     pub tracker_url: String,
+    pub tracker_urls: Vec<String>,
     pub number_of_pieces: usize,
     pub piece_length: u32,
     pub pieces_info_hash: Vec<u8>,
@@ -77,7 +78,11 @@ impl TorrentContext {
         seeding: bool,
     ) -> Result<Self, crate::error::BitTorrentError> {
         let info_hash = torrent_meta_info.get_info_hash()?;
-        let tracker_url = torrent_meta_info.get_tracker()?;
+        let tracker_urls = torrent_meta_info.get_tracker_urls()?;
+        let tracker_url = tracker_urls
+            .get(0)
+            .cloned()
+            .ok_or_else(|| crate::error::BitTorrentError::Parse("Torrent contains no tracker URLs.".into()))?;
         let (total_download_length, all_files_to_download) =
             torrent_meta_info.local_files_to_download_list(download_path)?;
         let piece_length = torrent_meta_info.get_piece_length()?;
@@ -113,6 +118,7 @@ impl TorrentContext {
                 .torrent_file_name
                 .to_string_lossy()
                 .to_string(),
+            tracker_urls,
             main_tracker: None,
             callback_data: None,
             call_back: None,

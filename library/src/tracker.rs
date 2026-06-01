@@ -131,6 +131,7 @@ pub struct Tracker {
     pub num_wanted: usize,
     pub info_hash: Vec<u8>,
     pub tracker_url: String,
+    pub tracker_urls: Vec<String>,
     pub interval: usize,
     pub min_interval: usize,
     pub tracker_status: TrackerStatus,
@@ -191,6 +192,7 @@ impl Tracker {
         let guard = tc.lock().unwrap();
         let info_hash = guard.info_hash.clone();
         let tracker_url = guard.tracker_url.clone();
+        let tracker_urls = guard.tracker_urls.clone();
         let announcer = AnnouncerFactory::create(&tracker_url)?;
         Ok(Tracker {
             tc: tc.clone(),
@@ -205,6 +207,7 @@ impl Tracker {
             num_wanted: 5,
             info_hash,
             tracker_url,
+            tracker_urls,
             interval: 2000,
             min_interval: 0,
             tracker_status: TrackerStatus::Stopped,
@@ -223,6 +226,7 @@ impl Tracker {
         let guard = tc.lock().unwrap();
         let info_hash = guard.info_hash.clone();
         let tracker_url = guard.tracker_url.clone();
+        let tracker_urls = guard.tracker_urls.clone();
         Ok(Tracker {
             tc: tc.clone(),
             announcer,
@@ -236,6 +240,7 @@ impl Tracker {
             num_wanted: 5,
             info_hash,
             tracker_url,
+            tracker_urls,
             interval: 2000,
             min_interval: 0,
             tracker_status: TrackerStatus::Stopped,
@@ -292,12 +297,42 @@ impl Tracker {
         }
     }
 
+    fn announce_with_fallback(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
+        let mut last_error = None;
+        let original_tracker_url = self.tracker_url.clone();
+        for tracker_url in &self.tracker_urls {
+            self.tracker_url = tracker_url.clone();
+            if tracker_url != &original_tracker_url {
+                self.announcer = AnnouncerFactory::create(tracker_url)?;
+            }
+            let announce_context = self.build_announce_context();
+            let response = self.announcer.announce(&announce_context);
+            match response {
+                Ok(response) => {
+                    if response.failure {
+                        last_error = Some(BitTorrentError::Parse(
+                            response.status_message.clone(),
+                        ));
+                        continue;
+                    }
+                    return Ok(response);
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                    continue;
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            BitTorrentError::Parse("No tracker URLs could be reached.".to_string())
+        }))
+    }
+
     pub fn announce_once(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
         if self.tracker_status == TrackerStatus::Stalled {
             return Err(BitTorrentError::Parse("Tracker is stalled".to_string()));
         }
-        let announce_context = self.build_announce_context();
-        let response = self.announcer.announce(&announce_context)?;
+        let response = self.announce_with_fallback()?;
         if !response.failure {
             self.update_running_status_from_announce(&response);
             self.queue_new_peers(&response);
