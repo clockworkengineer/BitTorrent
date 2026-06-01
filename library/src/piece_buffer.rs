@@ -24,7 +24,10 @@ impl PieceBuffer {
 
     pub fn add_block(&mut self, block_data: &[u8], block_number: u32) {
         let block_offset = (block_number as usize) * BLOCK_SIZE;
-        let block_length = std::cmp::min(self.length as usize - block_offset, BLOCK_SIZE);
+        let block_length = std::cmp::min(
+            std::cmp::min(self.length as usize - block_offset, BLOCK_SIZE),
+            block_data.len(),
+        );
         self.buffer[block_offset..block_offset + block_length]
             .copy_from_slice(&block_data[..block_length]);
         if !self.present_blocks[block_number as usize] {
@@ -35,7 +38,11 @@ impl PieceBuffer {
 
     pub fn add_block_from_packet(&mut self, packet_buffer: &[u8], block_number: u32) {
         let block_offset = (block_number as usize) * BLOCK_SIZE;
-        let block_length = std::cmp::min(self.length as usize - block_offset, BLOCK_SIZE);
+        let payload_length = packet_buffer.len().saturating_sub(9);
+        let block_length = std::cmp::min(
+            std::cmp::min(self.length as usize - block_offset, BLOCK_SIZE),
+            payload_length,
+        );
         self.buffer[block_offset..block_offset + block_length]
             .copy_from_slice(&packet_buffer[9..9 + block_length]);
         if !self.present_blocks[block_number as usize] {

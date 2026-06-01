@@ -22,7 +22,8 @@ impl PeerNetwork {
 
     pub fn write(&self, buffer: &[u8]) -> IoResult<usize> {
         let mut lock = self.stream.lock().unwrap();
-        lock.write(buffer)
+        lock.write_all(buffer)?;
+        Ok(buffer.len())
     }
 
     pub fn read(&self, buffer: &mut [u8], length: usize) -> IoResult<usize> {
@@ -81,5 +82,35 @@ impl PeerNetwork {
     pub fn close(&self) {
         let lock = self.stream.lock().unwrap();
         let _ = lock.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    #[test]
+    fn test_peer_network_write_all_reads_full_buffer() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = vec![0u8; 64];
+            let mut read = 0;
+            while read < 64 {
+                read += stream.read(&mut buf[read..]).unwrap();
+            }
+            assert_eq!(buf, vec![0xAB; 64]);
+        });
+
+        let stream = TcpStream::connect(addr).unwrap();
+        let network = PeerNetwork::new(stream);
+        let written = network.write(&vec![0xAB; 64]).unwrap();
+        assert_eq!(written, 64);
+
+        handle.join().unwrap();
     }
 }

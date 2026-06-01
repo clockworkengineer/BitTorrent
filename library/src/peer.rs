@@ -1,7 +1,7 @@
 use crate::average::Average;
+use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
-use crate::disk_io::DiskIO;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;

@@ -2,6 +2,7 @@ use bittorrent_rs::{Peer, PeerMessage};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
+use std::time::Duration;
 
 #[test]
 fn test_peer_message_encode_decode() {
@@ -58,6 +59,9 @@ fn test_peer_handshake_round_trip() {
     });
 
     let stream = TcpStream::connect(addr).expect("Failed to connect to listener");
+    let _ = stream.set_nodelay(true);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let mut peer = Peer::new("127.0.0.1".to_string(), addr.port(), stream);
     let received_peer_id = peer
         .handshake(&info_hash, &local_peer_id)

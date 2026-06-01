@@ -372,6 +372,7 @@ impl TorrentContext {
             drop(assembly_data);
 
             if self.check_piece_hash(piece_number, &finished_piece, finished_piece.len() as u32) {
+                println!("Piece {} passed hash verification ({} bytes), writing to disk", piece_number, finished_piece.len());
                 disk_io.write_piece(self, piece_number, &finished_piece)?;
                 self.update_bitfield_from_buffer(
                     piece_number,
@@ -384,6 +385,7 @@ impl TorrentContext {
                 assembly_data.piece_buffer = None;
                 return Ok(true);
             } else {
+                println!("Piece {} failed hash verification", piece_number);
                 self.clear_piece_requests(piece_number);
                 let mut assembly_data = self.assembly_data.lock().unwrap();
                 assembly_data.piece_buffer = None;

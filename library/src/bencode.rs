@@ -79,9 +79,15 @@ impl Bencode {
     }
 
     pub fn get_dictionary_entry_string(bnode: &BNode, key: &str) -> Option<String> {
-        Bencode::get_dictionary_entry(bnode, key.as_bytes())
-            .and_then(|node| node.as_string())
-            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+        Bencode::get_dictionary_entry(bnode, key.as_bytes()).and_then(|node| {
+            if let Some(bytes) = node.as_string() {
+                return Some(String::from_utf8_lossy(bytes).to_string());
+            }
+            if let Some(bytes) = node.as_number_bytes() {
+                return Some(String::from_utf8_lossy(bytes).to_string());
+            }
+            None
+        })
     }
 }
 

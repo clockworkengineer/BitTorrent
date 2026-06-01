@@ -1,13 +1,28 @@
-use bittorrent_rs::TorrentSession;
+use bittorrent_rs::{TorrentSession, Tracker};
 use eframe::egui;
+use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    let mut args = env::args_os().skip(1);
+    let initial_torrent_path = args.next().and_then(|arg| arg.into_string().ok());
+    let initial_download_dir = args.next().and_then(|arg| arg.into_string().ok());
+
     let options = eframe::NativeOptions::default();
     eframe::run_native(
         "BitTorrent Client",
         options,
-        Box::new(|_cc| Ok(Box::new(TorrentClientApp::default()))),
+        Box::new(move |_cc| {
+            let mut app = TorrentClientApp::default();
+            if let (Some(torrent_path), Some(download_dir)) =
+                (initial_torrent_path, initial_download_dir)
+            {
+                app.torrent_path = torrent_path;
+                app.download_dir = download_dir;
+                app.create_session();
+            }
+            Ok(Box::new(app))
+        }),
     )
     .unwrap();
 }
@@ -18,6 +33,7 @@ struct TorrentClientApp {
     download_dir: String,
     messages: Vec<String>,
     added_torrents: Vec<String>,
+    sessions: Vec<TorrentSession>,
 }
 
 impl eframe::App for TorrentClientApp {
@@ -68,11 +84,39 @@ impl TorrentClientApp {
         let download_dir = PathBuf::from(download_dir);
 
         match TorrentSession::new(&torrent_path, &download_dir, false) {
-            Ok(session) => {
-                self.added_torrents
-                    .push(format!("{}", torrent_path.display()));
-                self.messages
-                    .push(format!("Session created: {:?}", session.status()));
+            Ok(mut session) => {
+                let session_id = torrent_path.display().to_string();
+                match session.start_download() {
+                    Ok(()) => {
+                        match Tracker::new(session.context.clone()) {
+                            Ok(mut tracker) => match tracker.start_announcing() {
+                                Ok(response) => {
+                                    let peer_count = response.peer_list.len();
+                                    self.messages.push(format!("Tracker announce returned {} peers", peer_count));
+                                    if let Err(err) = session.download_from_peers(response.peer_list, None) {
+                                        self.messages.push(format!("Download from peers failed: {}", err));
+                                    }
+                                }
+                                Err(err) => {
+                                    self.messages.push(format!("Tracker announce failed: {}", err));
+                                }
+                            },
+                            Err(err) => {
+                                self.messages.push(format!("Tracker setup failed: {}", err));
+                            }
+                        }
+                        self.added_torrents.push(session_id.clone());
+                        self.sessions.push(session);
+                        self.messages
+                            .push(format!("Session started: {}", session_id));
+                    }
+                    Err(err) => {
+                        self.messages.push(format!(
+                            "Session created but failed to start download: {}",
+                            err
+                        ));
+                    }
+                }
             }
             Err(err) => {
                 self.messages

@@ -187,6 +187,7 @@ impl TorrentSession {
                 }
             };
 
+            let _ = stream.set_nodelay(true);
             let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
             let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
@@ -205,6 +206,14 @@ impl TorrentSession {
                     }
                     return;
                 }
+                println!("Handshake completed with peer {}:{}", peer_details.ip, peer_details.port);
+                if let Err(_) = peer_guard.send_interested() {
+                    if let Some(manager) = &manager_clone {
+                        manager.add_to_dead_peer_list(&peer_details.ip);
+                    }
+                    return;
+                }
+                println!("Sent Interested to peer {}:{}", peer_details.ip, peer_details.port);
             }
 
             {
