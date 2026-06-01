@@ -83,6 +83,34 @@ impl MetaInfoFile {
         Ok(String::from_utf8_lossy(announce).to_string())
     }
 
+    pub fn get_tracker_urls(&self) -> Result<Vec<String>, BitTorrentError> {
+        if !self.parsed {
+            return Err(BitTorrentError::NotParsed(
+                "File has not been parsed.".into(),
+            ));
+        }
+
+        let mut urls = Vec::new();
+        let announce = self
+            .meta_info_dict
+            .get("announce")
+            .ok_or_else(|| BitTorrentError::MissingField("announce".into()))?;
+        urls.push(String::from_utf8_lossy(announce).to_string());
+
+        if let Some(announce_list) = self.meta_info_dict.get("announce-list") {
+            let list = String::from_utf8_lossy(announce_list);
+            for entry in list.split(',') {
+                let tracker = entry.trim();
+                if tracker.is_empty() || urls.contains(&tracker.to_string()) {
+                    continue;
+                }
+                urls.push(tracker.to_string());
+            }
+        }
+
+        Ok(urls)
+    }
+
     pub fn get_info_hash(&self) -> Result<Vec<u8>, BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(

@@ -4,7 +4,7 @@ use crate::tracker::{
 };
 use crate::util::{pack_u32, pack_u64, unpack_u32, unpack_u64};
 use std::io::Read;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::Duration;
 use urlencoding::encode;
 use urlencoding::encode_binary;
@@ -191,10 +191,13 @@ impl UdpAnnouncer {
         let port = parsed
             .port_or_known_default()
             .ok_or_else(|| BitTorrentError::Parse("UDP tracker port missing".to_string()))?;
-        let remote_addr: SocketAddr = format!("{}:{}", host, port)
-            .parse()
-            .map_err(|err: std::net::AddrParseError| BitTorrentError::Parse(err.to_string()))?;
         let socket = UdpSocket::bind("0.0.0.0:0").map_err(BitTorrentError::Io)?;
+        let mut addrs = format!("{}:{}", host, port)
+            .to_socket_addrs()
+            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+        let remote_addr = addrs
+            .next()
+            .ok_or_else(|| BitTorrentError::Parse("Failed to resolve tracker host".to_string()))?;
         socket
             .set_read_timeout(Some(Duration::from_secs(15)))
             .map_err(BitTorrentError::Io)?;

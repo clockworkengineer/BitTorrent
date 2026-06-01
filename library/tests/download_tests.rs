@@ -1,5 +1,5 @@
-use bittorrent_rs::{BNode, Bencode, MetaInfoFile, Selector, TorrentContext};
 use bittorrent_rs::disk_io::DiskIO;
+use bittorrent_rs::{BNode, Bencode, MetaInfoFile, Selector, TorrentContext};
 use sha1::Digest;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -78,13 +78,16 @@ fn test_process_piece_block_assembly_writes_complete_piece() {
     let mut meta_info = MetaInfoFile::new(&torrent_file).unwrap();
     meta_info.parse().unwrap();
     meta_info.validate().unwrap();
-    let mut context = TorrentContext::new(&meta_info, Selector::new(), &disk_io, &download_path, false).unwrap();
+    let mut context =
+        TorrentContext::new(&meta_info, Selector::new(), &disk_io, &download_path, false).unwrap();
 
     let second_piece_block = &file_data[piece_length as usize..];
 
-    assert!(context
-        .process_piece_block(&disk_io, 1, 0, second_piece_block)
-        .unwrap());
+    assert!(
+        context
+            .process_piece_block(&disk_io, 1, 0, second_piece_block)
+            .unwrap()
+    );
     assert!(context.is_piece_local(1));
 
     let downloaded = fs::read(download_path.join(file_name)).unwrap();

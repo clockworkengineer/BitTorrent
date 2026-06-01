@@ -206,14 +206,20 @@ impl TorrentSession {
                     }
                     return;
                 }
-                println!("Handshake completed with peer {}:{}", peer_details.ip, peer_details.port);
+                println!(
+                    "Handshake completed with peer {}:{}",
+                    peer_details.ip, peer_details.port
+                );
                 if let Err(_) = peer_guard.send_interested() {
                     if let Some(manager) = &manager_clone {
                         manager.add_to_dead_peer_list(&peer_details.ip);
                     }
                     return;
                 }
-                println!("Sent Interested to peer {}:{}", peer_details.ip, peer_details.port);
+                println!(
+                    "Sent Interested to peer {}:{}",
+                    peer_details.ip, peer_details.port
+                );
             }
 
             {
@@ -309,6 +315,11 @@ impl TorrentSession {
         peers: Vec<PeerDetails>,
         manager: Option<Arc<Manager>>,
     ) -> Result<(), BitTorrentError> {
+        if peers.is_empty() {
+            return Err(BitTorrentError::Parse(
+                "No peers are available to download from.".into(),
+            ));
+        }
         for peer in peers {
             self.connect_and_download_peer(peer, manager.clone())?;
         }

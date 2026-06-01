@@ -32,7 +32,7 @@ struct TorrentClientApp {
     torrent_path: String,
     download_dir: String,
     messages: Vec<String>,
-    added_torrents: Vec<String>,
+    session_infos: Vec<(String, String)>,
     sessions: Vec<TorrentSession>,
 }
 
@@ -56,9 +56,9 @@ impl eframe::App for TorrentClientApp {
             }
 
             ui.separator();
-            ui.label("Added torrents:");
-            for torrent in &self.added_torrents {
-                ui.label(torrent);
+            ui.label("Torrent sessions:");
+            for (torrent, status) in &self.session_infos {
+                ui.label(format!("{} — {}", torrent, status));
             }
 
             ui.separator();
@@ -87,29 +87,58 @@ impl TorrentClientApp {
             Ok(mut session) => {
                 let session_id = torrent_path.display().to_string();
                 match session.start_download() {
-                    Ok(()) => {
-                        match Tracker::new(session.context.clone()) {
-                            Ok(mut tracker) => match tracker.start_announcing() {
-                                Ok(response) => {
-                                    let peer_count = response.peer_list.len();
-                                    self.messages.push(format!("Tracker announce returned {} peers", peer_count));
-                                    if let Err(err) = session.download_from_peers(response.peer_list, None) {
-                                        self.messages.push(format!("Download from peers failed: {}", err));
-                                    }
+                    Ok(()) => match Tracker::new(session.context.clone()) {
+                        Ok(mut tracker) => match tracker.start_announcing() {
+                            Ok(response) => {
+                                let peer_count = response.peer_list.len();
+                                self.messages.push(format!(
+                                    "Tracker announce returned {} peers",
+                                    peer_count
+                                ));
+                                if peer_count == 0 {
+                                    self.messages.push(
+                                            "No peers were returned from the tracker; download cannot start.".into(),
+                                        );
+                                    self.session_infos
+                                        .push((session_id.clone(), "Waiting for peers".into()));
+                                    self.sessions.push(session);
+                                } else if let Err(err) =
+                                    session.download_from_peers(response.peer_list, None)
+                                {
+                                    self.messages
+                                        .push(format!("Download from peers failed: {}", err));
+                                    self.session_infos.push((
+                                        session_id.clone(),
+                                        format!("Download failed: {}", err),
+                                    ));
+                                    self.sessions.push(session);
+                                } else {
+                                    self.session_infos
+                                        .push((session_id.clone(), "Downloading".into()));
+                                    self.sessions.push(session);
+                                    self.messages
+                                        .push(format!("Session started: {}", session_id));
                                 }
-                                Err(err) => {
-                                    self.messages.push(format!("Tracker announce failed: {}", err));
-                                }
-                            },
-                            Err(err) => {
-                                self.messages.push(format!("Tracker setup failed: {}", err));
                             }
+                            Err(err) => {
+                                self.messages
+                                    .push(format!("Tracker announce failed: {}", err));
+                                self.session_infos.push((
+                                    session_id.clone(),
+                                    format!("Tracker announce failed: {}", err),
+                                ));
+                                self.sessions.push(session);
+                            }
+                        },
+                        Err(err) => {
+                            self.messages.push(format!("Tracker setup failed: {}", err));
+                            self.session_infos.push((
+                                session_id.clone(),
+                                format!("Tracker setup failed: {}", err),
+                            ));
+                            self.sessions.push(session);
                         }
-                        self.added_torrents.push(session_id.clone());
-                        self.sessions.push(session);
-                        self.messages
-                            .push(format!("Session started: {}", session_id));
-                    }
+                    },
                     Err(err) => {
                         self.messages.push(format!(
                             "Session created but failed to start download: {}",
