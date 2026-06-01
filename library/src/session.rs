@@ -8,11 +8,30 @@ use crate::selector::Selector;
 use crate::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::PeerDetails;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
+
+static LOG: OnceLock<Mutex<fs::File>> = OnceLock::new();
+
+fn log(msg: &str) {
+    let file = LOG.get_or_init(|| {
+        let f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("debug.log")
+            .expect("cannot open debug.log");
+        Mutex::new(f)
+    });
+    if let Ok(mut f) = file.lock() {
+        let _ = writeln!(f, "{}", msg);
+        let _ = f.flush();
+    }
+}
 
 pub struct TorrentSession {
     pub context: Arc<Mutex<TorrentContext>>,
@@ -170,6 +189,32 @@ impl TorrentSession {
         let local_peer_id = peer_id::get();
 
         let handle = thread::spawn(move || {
+            // Periodic stats thread — prints every 5s so we can see what's happening
+            {
+                let ctx_stats = context.clone();
+                thread::spawn(move || loop {
+                    thread::sleep(Duration::from_secs(5));
+                    if let Ok(ctx) = ctx_stats.try_lock() {
+                        if ctx.status == TorrentStatus::Ended {
+                            break;
+                        }
+                        let peers = ctx.peer_swarm.read().map(|s| s.len()).unwrap_or(0);
+                        let unchoked = ctx.number_of_unchoked_peers();
+                        let done = ctx.total_bytes_downloaded;
+                        let total = ctx.total_bytes_to_download + done;
+                        let bps = ctx.bytes_per_second();
+                        let reserved = ctx.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
+                        log(&format!(
+                            "[stats] peers={}/{} downloaded={}/{} ({:.1}%) speed={}/s reserved_blocks={}",
+                            unchoked, peers,
+                            done, total,
+                            if total > 0 { done as f64 / total as f64 * 100.0 } else { 0.0 },
+                            bps,
+                            reserved,
+                        ));
+                    }
+                });
+            }
             if let Some(manager) = &manager_clone {
                 if manager.is_peer_dead(&peer_details.ip) {
                     return;
@@ -177,9 +222,15 @@ impl TorrentSession {
             }
 
             let address = format!("{}:{}", peer_details.ip, peer_details.port);
-            let stream = match TcpStream::connect(&address) {
-                Ok(stream) => stream,
-                Err(_) => {
+            let stream = match address
+                .parse::<std::net::SocketAddr>()
+                .ok()
+                .and_then(|addr| {
+                    TcpStream::connect_timeout(&addr, Duration::from_secs(10)).ok()
+                })
+            {
+                Some(stream) => stream,
+                None => {
                     if let Some(manager) = &manager_clone {
                         manager.add_to_dead_peer_list(&peer_details.ip);
                     }
@@ -253,6 +304,8 @@ impl TorrentSession {
                                 || io_err.kind() == std::io::ErrorKind::TimedOut
                             {
                                 if last_progress.elapsed() > Duration::from_secs(30) {
+                                    log(&format!("[peer {}:{}] 30s idle timeout, dropping",
+                                        peer_details.ip, peer_details.port));
                                     if let Some(manager) = &manager_clone {
                                         manager.add_to_dead_peer_list(&peer_details.ip);
                                     }
@@ -261,6 +314,7 @@ impl TorrentSession {
                                 continue;
                             }
                         }
+                        log(&format!("[peer {}:{}] read error: {}", peer_details.ip, peer_details.port, err));
                         if let Some(manager) = &manager_clone {
                             manager.add_to_dead_peer_list(&peer_details.ip);
                         }
@@ -280,21 +334,39 @@ impl TorrentSession {
                 }
 
                 if peer_guard.peer_choking.wait_one(0) && ctx.status == TorrentStatus::Downloading {
-                    if let Some((piece_number, begin, length)) =
-                        ctx.next_block_request_for_peer(&peer_guard)
-                    {
-                        if peer_guard
-                            .send_request(piece_number, begin, length)
-                            .is_err()
-                        {
-                            if let Some(manager) = &manager_clone {
-                                manager.add_to_dead_peer_list(&peer_details.ip);
+                    let to_send = 10usize.saturating_sub(peer_guard.outstanding_requests_count);
+                    let mut send_error = false;
+                    let mut none_count = 0;
+                    for _ in 0..to_send {
+                        match ctx.next_block_request_for_peer(&peer_guard) {
+                            Some((piece_number, begin, length)) => {
+                                if peer_guard
+                                    .send_request(piece_number, begin, length)
+                                    .is_err()
+                                {
+                                    if let Some(manager) = &manager_clone {
+                                        manager.add_to_dead_peer_list(&peer_details.ip);
+                                    }
+                                    send_error = true;
+                                    break;
+                                }
+                                let block_index = begin / crate::constants::BLOCK_SIZE as u32;
+                                peer_guard.reserved_blocks.push((piece_number, block_index));
+                                peer_guard.outstanding_requests_count =
+                                    peer_guard.outstanding_requests_count.saturating_add(1);
+                                last_progress = Instant::now();
                             }
-                            break;
+                            None => { none_count += 1; break; }
                         }
-                        peer_guard.outstanding_requests_count =
-                            peer_guard.outstanding_requests_count.saturating_add(1);
-                        last_progress = Instant::now();
+                    }
+                    if none_count > 0 {
+                        log(&format!("[peer {}:{}] no blocks available (outstanding={} missing_pieces={})",
+                            peer_details.ip, peer_details.port,
+                            peer_guard.outstanding_requests_count,
+                            peer_guard.number_of_missing_pieces));
+                    }
+                    if send_error {
+                        break;
                     }
                 }
 
@@ -303,7 +375,17 @@ impl TorrentSession {
                 }
             }
 
-            context.lock().unwrap().remove_peer(&peer_details.ip);
+            log(&format!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port));
+            {
+                let mut ctx = context.lock().unwrap();
+                // Release any blocks this peer reserved but didn't deliver
+                if let Ok(peer_lock) = peer.try_lock() {
+                    for (piece_number, block_index) in &peer_lock.reserved_blocks {
+                        ctx.release_block_request(*piece_number, *block_index);
+                    }
+                }
+                ctx.remove_peer(&peer_details.ip);
+            }
         });
 
         self.peer_workers.push(handle);

@@ -177,7 +177,8 @@ impl Announcer for HttpAnnouncer {
 }
 
 pub struct UdpAnnouncer {
-    socket: UdpSocket,
+    host_port: String,
+    socket: Option<UdpSocket>,
     connected: bool,
     connection_id: u64,
 }
@@ -191,30 +192,46 @@ impl UdpAnnouncer {
         let port = parsed
             .port_or_known_default()
             .ok_or_else(|| BitTorrentError::Parse("UDP tracker port missing".to_string()))?;
-        let socket = UdpSocket::bind("0.0.0.0:0").map_err(BitTorrentError::Io)?;
-        let mut addrs = format!("{}:{}", host, port)
-            .to_socket_addrs()
-            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
-        let remote_addr = addrs
-            .next()
-            .ok_or_else(|| BitTorrentError::Parse("Failed to resolve tracker host".to_string()))?;
-        socket
-            .set_read_timeout(Some(Duration::from_secs(15)))
-            .map_err(BitTorrentError::Io)?;
-        socket.connect(remote_addr).map_err(BitTorrentError::Io)?;
         Ok(UdpAnnouncer {
-            socket,
+            host_port: format!("{}:{}", host, port),
+            socket: None,
             connected: false,
             connection_id: 0,
         })
     }
 
+    fn ensure_socket(&mut self) -> Result<(), BitTorrentError> {
+        if self.socket.is_some() {
+            return Ok(());
+        }
+        let mut addrs = self
+            .host_port
+            .to_socket_addrs()
+            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+        let remote_addr = addrs
+            .next()
+            .ok_or_else(|| BitTorrentError::Parse("Failed to resolve tracker host".to_string()))?;
+        // Bind to the correct address family (IPv4 vs IPv6) to match the remote
+        let bind_addr = if remote_addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+        let socket = UdpSocket::bind(bind_addr).map_err(BitTorrentError::Io)?;
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .map_err(BitTorrentError::Io)?;
+        socket.connect(remote_addr).map_err(BitTorrentError::Io)?;
+        self.socket = Some(socket);
+        Ok(())
+    }
+
     fn send_command(&self, command: &[u8]) -> Result<Vec<u8>, BitTorrentError> {
+        let socket = self
+            .socket
+            .as_ref()
+            .ok_or_else(|| BitTorrentError::Parse("UDP socket not initialised".to_string()))?;
         let mut retries = 0;
         loop {
-            self.socket.send(command).map_err(BitTorrentError::Io)?;
+            socket.send(command).map_err(BitTorrentError::Io)?;
             let mut buf = vec![0u8; 1500];
-            match self.socket.recv(&mut buf) {
+            match socket.recv(&mut buf) {
                 Ok(n) => {
                     buf.truncate(n);
                     return Ok(buf);
@@ -223,7 +240,7 @@ impl UdpAnnouncer {
                     if err.kind() == std::io::ErrorKind::WouldBlock
                         || err.kind() == std::io::ErrorKind::TimedOut
                     {
-                        if retries < 3 {
+                        if retries < 1 {
                             retries += 1;
                             continue;
                         }
@@ -297,11 +314,24 @@ impl Announcer for UdpAnnouncer {
         tracker: &crate::tracker::TrackerAnnounceContext,
     ) -> Result<AnnounceResponse, BitTorrentError> {
         Tracker::log_announce(tracker);
+        self.ensure_socket()?;
         if !self.connected {
-            self.connect()?;
+            if let Err(e) = self.connect() {
+                // Reset socket so next attempt gets a fresh connection
+                self.socket = None;
+                return Err(e);
+            }
         }
         let transaction_id: u32 = rand::random();
-        let reply = self.send_command(&self.build_announce_packet(tracker, transaction_id))?;
+        let reply = match self.send_command(&self.build_announce_packet(tracker, transaction_id)) {
+            Ok(r) => r,
+            Err(e) => {
+                // Reset so next call re-resolves and reconnects
+                self.socket = None;
+                self.connected = false;
+                return Err(e);
+            }
+        };
         if transaction_id != unpack_u32(&reply, 4) {
             return Err(BitTorrentError::Parse(
                 "UDP announce transaction ID mismatch".into(),

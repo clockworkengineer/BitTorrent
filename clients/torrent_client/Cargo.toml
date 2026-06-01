@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.28"
+eframe = { version = "0.28", features = ["wgpu"] }
 bittorrent_rs = { path = "../../library", package = "bittorrent-rs" }

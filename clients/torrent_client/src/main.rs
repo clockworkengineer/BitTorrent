@@ -2,13 +2,21 @@ use bittorrent_rs::{TorrentSession, Tracker};
 use eframe::egui;
 use std::env;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Duration;
 
 fn main() {
     let mut args = env::args_os().skip(1);
     let initial_torrent_path = args.next().and_then(|arg| arg.into_string().ok());
     let initial_download_dir = args.next().and_then(|arg| arg.into_string().ok());
 
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([700.0, 500.0])
+            .with_position(egui::pos2(100.0, 100.0)),
+        ..Default::default()
+    };
     eframe::run_native(
         "BitTorrent Client",
         options,
@@ -27,17 +35,52 @@ fn main() {
     .unwrap();
 }
 
-#[derive(Default)]
 struct TorrentClientApp {
     torrent_path: String,
     download_dir: String,
     messages: Vec<String>,
-    session_infos: Vec<(String, String)>,
     sessions: Vec<TorrentSession>,
+    pending_sessions: Vec<mpsc::Receiver<TorrentSession>>,
+    pending_messages: Vec<mpsc::Receiver<String>>,
+}
+
+impl Default for TorrentClientApp {
+    fn default() -> Self {
+        Self {
+            torrent_path: String::new(),
+            download_dir: String::new(),
+            messages: Vec::new(),
+            sessions: Vec::new(),
+            pending_sessions: Vec::new(),
+            pending_messages: Vec::new(),
+        }
+    }
 }
 
 impl eframe::App for TorrentClientApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Repaint every 500 ms so progress updates live
+        ctx.request_repaint_after(Duration::from_millis(500));
+
+        // Drain log messages from background threads
+        for rx in &self.pending_messages {
+            while let Ok(msg) = rx.try_recv() {
+                self.messages.push(msg);
+            }
+        }
+
+        // Move ready sessions into self.sessions
+        let mut ready = vec![];
+        for (i, rx) in self.pending_sessions.iter().enumerate() {
+            if let Ok(session) = rx.try_recv() {
+                self.sessions.push(session);
+                ready.push(i);
+            }
+        }
+        for i in ready.into_iter().rev() {
+            self.pending_sessions.remove(i);
+        }
+
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.heading("BitTorrent Client");
         });
@@ -51,106 +94,183 @@ impl eframe::App for TorrentClientApp {
                 ui.label("Download dir:");
                 ui.text_edit_singleline(&mut self.download_dir);
             });
-            if ui.button("Create Session").clicked() {
+            if ui.button("Add Session").clicked() {
                 self.create_session();
             }
 
             ui.separator();
-            ui.label("Torrent sessions:");
-            for (torrent, status) in &self.session_infos {
-                ui.label(format!("{} — {}", torrent, status));
+
+            // Show a connecting indicator while a session is being set up
+            if !self.pending_sessions.is_empty() {
+                ui.label("Connecting to tracker…");
+                ui.add_space(4.0);
             }
 
-            ui.separator();
-            ui.label("Messages:");
-            for message in &self.messages {
-                ui.label(message);
+            for session in &self.sessions {
+                let ctx_guard = match session.context.try_lock() {
+                    Ok(g) => g,
+                    Err(_) => continue, // lock held by peer thread, skip this frame
+                };
+
+                let file_name = std::path::Path::new(&ctx_guard.file_name)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ctx_guard.file_name.clone());
+
+                let progress = ctx_guard.progress_percent() / 100.0;
+                let status = format!("{:?}", ctx_guard.status);
+                let peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
+                let peers_active = ctx_guard.number_of_unchoked_peers();
+                let bps = ctx_guard.bytes_per_second();
+                let downloaded = ctx_guard.total_bytes_downloaded;
+                let total = ctx_guard.total_bytes_to_download + ctx_guard.total_bytes_downloaded;
+                drop(ctx_guard);
+
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new(&file_name).strong());
+
+                    let bar = egui::ProgressBar::new(progress)
+                        .text(format!("{:.1}%", progress * 100.0))
+                        .animate(progress < 1.0);
+                    ui.add(bar);
+
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Status: {}", status));
+                        ui.separator();
+                        ui.label(format!(
+                            "Downloaded: {} / {}",
+                            fmt_bytes(downloaded),
+                            fmt_bytes(total)
+                        ));
+                        ui.separator();
+                        ui.label(format!("Speed: {}/s", fmt_bytes(bps as u64)));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Peers: {} connected", peers_connected));
+                        ui.separator();
+                        ui.label(format!("{} unchoked (active)", peers_active));
+                    });
+                });
+
+                ui.add_space(4.0);
+            }
+
+            if !self.messages.is_empty() {
+                ui.separator();
+                ui.label(egui::RichText::new("Log:").strong());
+                egui::ScrollArea::vertical()
+                    .max_height(160.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for message in &self.messages {
+                            ui.label(message);
+                        }
+                    });
             }
         });
     }
 }
 
+fn fmt_bytes(bytes: u64) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{:.2} GB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 impl TorrentClientApp {
     fn create_session(&mut self) {
-        let torrent_path = self.torrent_path.trim();
-        let download_dir = self.download_dir.trim();
+        let torrent_path = self.torrent_path.trim().to_string();
+        let download_dir = self.download_dir.trim().to_string();
         if torrent_path.is_empty() || download_dir.is_empty() {
             self.messages
                 .push("Please provide both torrent file and download directory.".into());
             return;
         }
 
-        let torrent_path = PathBuf::from(torrent_path);
-        let download_dir = PathBuf::from(download_dir);
+        let (session_tx, session_rx) = mpsc::channel::<TorrentSession>();
+        let (msg_tx, msg_rx) = mpsc::channel::<String>();
+        self.pending_sessions.push(session_rx);
+        self.pending_messages.push(msg_rx);
 
-        match TorrentSession::new(&torrent_path, &download_dir, false) {
-            Ok(mut session) => {
-                let session_id = torrent_path.display().to_string();
-                match session.start_download() {
-                    Ok(()) => match Tracker::new(session.context.clone()) {
-                        Ok(mut tracker) => match tracker.start_announcing() {
-                            Ok(response) => {
-                                let peer_count = response.peer_list.len();
-                                self.messages.push(format!(
-                                    "Tracker announce returned {} peers",
-                                    peer_count
-                                ));
-                                if peer_count == 0 {
-                                    self.messages.push(
-                                            "No peers were returned from the tracker; download cannot start.".into(),
-                                        );
-                                    self.session_infos
-                                        .push((session_id.clone(), "Waiting for peers".into()));
-                                    self.sessions.push(session);
-                                } else if let Err(err) =
-                                    session.download_from_peers(response.peer_list, None)
-                                {
-                                    self.messages
-                                        .push(format!("Download from peers failed: {}", err));
-                                    self.session_infos.push((
-                                        session_id.clone(),
-                                        format!("Download failed: {}", err),
-                                    ));
-                                    self.sessions.push(session);
-                                } else {
-                                    self.session_infos
-                                        .push((session_id.clone(), "Downloading".into()));
-                                    self.sessions.push(session);
-                                    self.messages
-                                        .push(format!("Session started: {}", session_id));
-                                }
-                            }
-                            Err(err) => {
-                                self.messages
-                                    .push(format!("Tracker announce failed: {}", err));
-                                self.session_infos.push((
-                                    session_id.clone(),
-                                    format!("Tracker announce failed: {}", err),
-                                ));
-                                self.sessions.push(session);
-                            }
-                        },
-                        Err(err) => {
-                            self.messages.push(format!("Tracker setup failed: {}", err));
-                            self.session_infos.push((
-                                session_id.clone(),
-                                format!("Tracker setup failed: {}", err),
-                            ));
-                            self.sessions.push(session);
-                        }
-                    },
-                    Err(err) => {
-                        self.messages.push(format!(
-                            "Session created but failed to start download: {}",
-                            err
+        // All blocking network work happens in a background thread so the UI
+        // is never frozen and the window appears immediately.
+        std::thread::spawn(move || {
+            let torrent_path = PathBuf::from(&torrent_path);
+            let download_dir = PathBuf::from(&download_dir);
+            let session_id = torrent_path.display().to_string();
+
+            let mut session = match TorrentSession::new(&torrent_path, &download_dir, false) {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = msg_tx.send(format!("Failed to create session: {}", e));
+                    return;
+                }
+            };
+
+            if let Err(e) = session.start_download() {
+                let _ = msg_tx.send(format!("[{}] Failed to start download: {}", session_id, e));
+                return;
+            }
+
+            let mut tracker = match Tracker::new(session.context.clone()) {
+                Ok(t) => t,
+                Err(e) => {
+                    let _ = msg_tx.send(format!("[{}] Tracker setup failed: {}", session_id, e));
+                    let _ = session_tx.send(session);
+                    return;
+                }
+            };
+
+            let _ = msg_tx.send(format!("[{}] Announcing to trackers...", session_id));
+            match tracker.start_announcing() {
+                Ok(response) => {
+                    let peer_count = response.peer_list.len();
+                    let _ = msg_tx.send(format!(
+                        "[{}] Tracker returned {} peers",
+                        session_id, peer_count
+                    ));
+                    if peer_count == 0 {
+                        let _ = msg_tx.send(format!("[{}] No peers; waiting.", session_id));
+                    } else if let Err(e) = session.download_from_peers(response.peer_list, None) {
+                        let _ = msg_tx.send(format!(
+                            "[{}] Download from peers failed: {}",
+                            session_id, e
                         ));
+                    } else {
+                        let _ = msg_tx.send(format!("[{}] Download started.", session_id));
+
+                        // Re-announce every 60s to get fresh peers
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(60));
+                            let done = {
+                                let ctx = session.context.lock().unwrap();
+                                ctx.is_download_complete()
+                            };
+                            if done { break; }
+                            let _ = msg_tx.send(format!("[{}] Re-announcing to tracker...", session_id));
+                            match tracker.announce_once() {
+                                Ok(resp) if !resp.peer_list.is_empty() => {
+                                    let _ = msg_tx.send(format!("[{}] Re-announce: {} new peers", session_id, resp.peer_list.len()));
+                                    let _ = session.download_from_peers(resp.peer_list, None);
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
+                Err(e) => {
+                    let _ = msg_tx
+                        .send(format!("[{}] Tracker announce failed: {}", session_id, e));
+                }
             }
-            Err(err) => {
-                self.messages
-                    .push(format!("Failed to create session: {}", err));
-            }
-        }
+
+            let _ = session_tx.send(session);
+        });
     }
 }

@@ -23,7 +23,7 @@ pub struct PieceInfo {
 
 #[derive(Debug)]
 pub struct AssemblerData {
-    pub piece_buffer: Option<Arc<Mutex<PieceBuffer>>>,
+    pub piece_buffers: HashMap<u32, Arc<Mutex<PieceBuffer>>>,
     pub current_block_requests: usize,
     pub guard_mutex: Mutex<()>,
     pub block_requests_done: ManualResetEvent,
@@ -129,7 +129,7 @@ impl TorrentContext {
             missing_pieces_count: 0,
             maximum_swarm_size: crate::constants::MAXIMUM_SWARM_SIZE,
             assembly_data: Mutex::new(AssemblerData {
-                piece_buffer: None,
+                piece_buffers: HashMap::new(),
                 current_block_requests: 0,
                 guard_mutex: Mutex::new(()),
                 block_requests_done: ManualResetEvent::new(false),
@@ -355,27 +355,21 @@ impl TorrentContext {
         let block_index = begin / BLOCK_SIZE as u32;
 
         let mut assembly_data = self.assembly_data.lock().unwrap();
-        if assembly_data
-            .piece_buffer
-            .as_ref()
-            .map(|buffer| buffer.lock().unwrap().number != piece_number)
-            .unwrap_or(true)
-        {
-            assembly_data.piece_buffer = Some(Arc::new(Mutex::new(PieceBuffer::new(
-                piece_number,
-                piece_length,
-            ))));
-        }
+        let piece_buffer_arc = assembly_data
+            .piece_buffers
+            .entry(piece_number)
+            .or_insert_with(|| Arc::new(Mutex::new(PieceBuffer::new(piece_number, piece_length))))
+            .clone();
+        drop(assembly_data);
 
-        let piece_buffer_arc = assembly_data.piece_buffer.as_ref().unwrap().clone();
-        let mut piece_buffer = piece_buffer_arc.lock().unwrap();
+        let piece_buffer_arc2 = piece_buffer_arc.clone();
+        let mut piece_buffer = piece_buffer_arc2.lock().unwrap();
         piece_buffer.add_block(block_data, block_index);
         let piece_complete = piece_buffer.all_blocks_there();
 
         if piece_complete {
             let finished_piece = piece_buffer.buffer.clone();
             drop(piece_buffer);
-            drop(assembly_data);
 
             if self.check_piece_hash(piece_number, &finished_piece, finished_piece.len() as u32) {
                 println!("Piece {} passed hash verification ({} bytes), writing to disk", piece_number, finished_piece.len());
@@ -387,14 +381,12 @@ impl TorrentContext {
                 );
                 self.try_complete_download();
                 self.clear_piece_requests(piece_number);
-                let mut assembly_data = self.assembly_data.lock().unwrap();
-                assembly_data.piece_buffer = None;
+                self.assembly_data.lock().unwrap().piece_buffers.remove(&piece_number);
                 return Ok(true);
             } else {
                 println!("Piece {} failed hash verification", piece_number);
                 self.clear_piece_requests(piece_number);
-                let mut assembly_data = self.assembly_data.lock().unwrap();
-                assembly_data.piece_buffer = None;
+                self.assembly_data.lock().unwrap().piece_buffers.remove(&piece_number);
                 return Err(crate::error::BitTorrentError::Parse(
                     "Piece failed hash verification".to_string(),
                 ));
@@ -518,7 +510,12 @@ impl TorrentContext {
         if self.status != TorrentStatus::Downloading {
             return None;
         }
-        if let Some(piece_number) = self.select_next_piece_for_peer(peer) {
+        let mut candidates: Vec<(usize, u32)> = (0..self.number_of_pieces as u32)
+            .filter(|piece| !self.is_piece_local(*piece) && peer.is_piece_on_remote_peer(*piece))
+            .map(|piece| (self.piece_data[piece as usize].peer_count, piece))
+            .collect();
+        candidates.sort_by_key(|(count, piece)| (*count, *piece));
+        for (_, piece_number) in candidates {
             if let Some((begin, length)) = self.next_pending_block(piece_number) {
                 let block_index = begin / BLOCK_SIZE as u32;
                 if self.reserve_block_request(piece_number, block_index) {
@@ -573,7 +570,11 @@ impl TorrentContext {
             .read()
             .unwrap()
             .values()
-            .filter(|peer| !peer.lock().unwrap().peer_choking.wait_one(0))
+            .filter(|peer| {
+                peer.try_lock()
+                    .map(|p| p.peer_choking.wait_one(0))
+                    .unwrap_or(false)
+            })
             .count()
     }
 }

@@ -193,7 +193,23 @@ impl Tracker {
         let info_hash = guard.info_hash.clone();
         let tracker_url = guard.tracker_url.clone();
         let tracker_urls = guard.tracker_urls.clone();
-        let announcer = AnnouncerFactory::create(&tracker_url)?;
+        // Try the primary URL first, then fall back to alternates if it fails
+        let (announcer, active_url) = {
+            let mut result =
+                AnnouncerFactory::create(&tracker_url).map(|a| (a, tracker_url.clone()));
+            if result.is_err() {
+                for url in &tracker_urls {
+                    if url == &tracker_url {
+                        continue;
+                    }
+                    if let Ok(a) = AnnouncerFactory::create(url) {
+                        result = Ok((a, url.clone()));
+                        break;
+                    }
+                }
+            }
+            result?
+        };
         Ok(Tracker {
             tc: tc.clone(),
             announcer,
@@ -204,9 +220,9 @@ impl Tracker {
             no_peer_id: false,
             key: None,
             tracker_id: None,
-            num_wanted: 5,
+            num_wanted: 50,
             info_hash,
-            tracker_url,
+            tracker_url: active_url,
             tracker_urls,
             interval: 2000,
             min_interval: 0,
@@ -237,7 +253,7 @@ impl Tracker {
             no_peer_id: false,
             key: None,
             tracker_id: None,
-            num_wanted: 5,
+            num_wanted: 50,
             info_hash,
             tracker_url,
             tracker_urls,
@@ -300,19 +316,20 @@ impl Tracker {
     fn announce_with_fallback(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
         let mut last_error = None;
         let original_tracker_url = self.tracker_url.clone();
-        for tracker_url in &self.tracker_urls {
+        for tracker_url in &self.tracker_urls.clone() {
             self.tracker_url = tracker_url.clone();
             if tracker_url != &original_tracker_url {
-                self.announcer = AnnouncerFactory::create(tracker_url)?;
+                match AnnouncerFactory::create(tracker_url) {
+                    Ok(a) => self.announcer = a,
+                    Err(_) => continue,
+                }
             }
             let announce_context = self.build_announce_context();
             let response = self.announcer.announce(&announce_context);
             match response {
                 Ok(response) => {
                     if response.failure {
-                        last_error = Some(BitTorrentError::Parse(
-                            response.status_message.clone(),
-                        ));
+                        last_error = Some(BitTorrentError::Parse(response.status_message.clone()));
                         continue;
                     }
                     return Ok(response);
