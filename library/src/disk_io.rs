@@ -1,3 +1,8 @@
+//! Disk I/O management
+//!
+//! Handles file system interactions including directory/file structure initialization,
+//! scanning existing files to compute/verify the bitfield of local pieces, and writing downloaded pieces.
+
 use crate::error::BitTorrentError;
 use crate::piece_buffer::PieceBuffer;
 use crate::piece_request::PieceRequest;
@@ -8,6 +13,7 @@ use std::path::Path;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
+/// Manager for orchestrating reading and writing torrent data blocks to and from disk.
 #[derive(Debug)]
 pub struct DiskIO {
     pub piece_write_queue: Sender<PieceBuffer>,
@@ -16,6 +22,7 @@ pub struct DiskIO {
 }
 
 impl DiskIO {
+    /// Creates a new `DiskIO` manager and starts a background worker thread.
     pub fn new() -> Self {
         let (write_sender, write_receiver) = mpsc::channel::<PieceBuffer>();
         let (request_sender, request_receiver) = mpsc::channel::<PieceRequest>();
@@ -33,6 +40,7 @@ impl DiskIO {
         }
     }
 
+    /// Pre-creates the files and directories on disk for the torrent, pre-allocating the correct file sizes.
     pub fn create_local_torrent_structure(
         &self,
         tc: &TorrentContext,
@@ -50,6 +58,7 @@ impl DiskIO {
         Ok(())
     }
 
+    /// Scans the local files to build and initialize the torrent session's bitfield based on what is already on disk.
     pub fn create_torrent_bitfield(&self, tc: &mut TorrentContext) -> Result<(), BitTorrentError> {
         let mut piece_buffer = vec![0u8; tc.piece_length as usize];
         let mut piece_number = 0u32;
@@ -80,6 +89,7 @@ impl DiskIO {
         Ok(())
     }
 
+    /// Writes a single fully downloaded and verified piece to the appropriate offset in the local files on disk.
     pub fn write_piece(
         &self,
         tc: &TorrentContext,
@@ -121,6 +131,7 @@ impl DiskIO {
         Ok(())
     }
 
+    /// Marks all pieces of the torrent as locally complete in the context (forcing a fully downloaded state).
     pub fn fully_downloaded_torrent_bitfield(
         &self,
         tc: &mut TorrentContext,

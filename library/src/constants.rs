@@ -1,3 +1,8 @@
+//! BitTorrent protocol constants
+//!
+//! This module defines core constants used throughout the BitTorrent client,
+//! such as block sizes, hash lengths, and limits on connection swarms.
+
 pub const BLOCK_SIZE: usize = 1024 * 16;
 pub const HASH_LENGTH: usize = 20;
 pub const PEER_ID_LENGTH: usize = 20;

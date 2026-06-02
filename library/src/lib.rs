@@ -1,3 +1,9 @@
+//! BitTorrent Library
+//!
+//! A comprehensive BitTorrent protocol implementation in Rust, containing
+//! metainfo parsing, tracker communication, peer wire protocol, piece selection,
+//! disk I/O, and session management.
+
 pub mod announcer;
 pub mod average;
 pub mod bencode;

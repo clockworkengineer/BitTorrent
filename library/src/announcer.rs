@@ -1,3 +1,8 @@
+//! Tracker announcer implementations
+//!
+//! Provides the `Announcer` trait and concrete implementations for HTTP (`HttpAnnouncer`)
+//! and UDP (`UdpAnnouncer`) protocols to announce client status to trackers and receive peer lists.
+
 use crate::error::BitTorrentError;
 use crate::tracker::{
     AnnounceResponse, PeerDetails, Tracker, TrackerAnnounceContext, TrackerEvent,
@@ -9,20 +14,29 @@ use std::time::Duration;
 use urlencoding::encode;
 use urlencoding::encode_binary;
 
-pub trait Announcer: Send {
-    fn announce(
-        &mut self,
-        tracker: &crate::tracker::TrackerAnnounceContext,
-    ) -> Result<AnnounceResponse, BitTorrentError>;
+/// Trait defining the announcement interface to communicate with a BitTorrent tracker.
+pub mod announcer_trait {
+    use super::*;
+    pub trait Announcer: Send {
+        /// Performs an announce request to the tracker using the given context and returns the response.
+        fn announce(
+            &mut self,
+            tracker: &crate::tracker::TrackerAnnounceContext,
+        ) -> Result<AnnounceResponse, BitTorrentError>;
+    }
 }
+pub use announcer_trait::Announcer;
 
+/// An announcer that uses the HTTP/HTTPS protocol to communicate with trackers.
 pub struct HttpAnnouncer;
 
 impl HttpAnnouncer {
+    /// Creates a new `HttpAnnouncer`.
     pub fn new() -> Self {
         HttpAnnouncer
     }
 
+    /// Parses and decodes the HTTP Bencoded tracker announce response.
     fn decode_announce_response(
         tracker: &TrackerAnnounceContext,
         announce_response: &[u8],
@@ -119,6 +133,7 @@ impl HttpAnnouncer {
         Ok(response)
     }
 
+    /// Constructs the full HTTP request URL including the query parameters for the tracker announce.
     fn build_announce_url(&self, tracker: &crate::tracker::TrackerAnnounceContext) -> String {
         let info_hash = encode_binary(&tracker.info_hash);
         let peer_id = encode(&tracker.peer_id);
@@ -150,6 +165,7 @@ impl HttpAnnouncer {
 }
 
 impl Announcer for HttpAnnouncer {
+    /// Executes the HTTP GET request to the tracker and decodes the response.
     fn announce(
         &mut self,
         tracker: &crate::tracker::TrackerAnnounceContext,
@@ -176,6 +192,7 @@ impl Announcer for HttpAnnouncer {
     }
 }
 
+/// An announcer that uses the UDP protocol to communicate with trackers.
 pub struct UdpAnnouncer {
     host_port: String,
     socket: Option<UdpSocket>,
@@ -184,6 +201,7 @@ pub struct UdpAnnouncer {
 }
 
 impl UdpAnnouncer {
+    /// Resolves the host name and port from the UDP tracker URL and creates a `UdpAnnouncer`.
     pub fn new(url: &str) -> Result<Self, BitTorrentError> {
         let parsed = url::Url::parse(url).map_err(|err| BitTorrentError::Parse(err.to_string()))?;
         let host = parsed
@@ -200,6 +218,7 @@ impl UdpAnnouncer {
         })
     }
 
+    /// Instantiates and binds the `UdpSocket` if it hasn't been created yet.
     fn ensure_socket(&mut self) -> Result<(), BitTorrentError> {
         if self.socket.is_some() {
             return Ok(());
@@ -211,7 +230,6 @@ impl UdpAnnouncer {
         let remote_addr = addrs
             .next()
             .ok_or_else(|| BitTorrentError::Parse("Failed to resolve tracker host".to_string()))?;
-        // Bind to the correct address family (IPv4 vs IPv6) to match the remote
         let bind_addr = if remote_addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
         let socket = UdpSocket::bind(bind_addr).map_err(BitTorrentError::Io)?;
         socket
@@ -222,6 +240,7 @@ impl UdpAnnouncer {
         Ok(())
     }
 
+    /// Sends a command payload over the UDP socket and waits for a response (supporting up to 1 retry on timeout).
     fn send_command(&self, command: &[u8]) -> Result<Vec<u8>, BitTorrentError> {
         let socket = self
             .socket
@@ -251,6 +270,7 @@ impl UdpAnnouncer {
         }
     }
 
+    /// Builds the 16-byte UDP connect packet.
     fn build_connect_packet(&self, transaction_id: u32) -> Vec<u8> {
         let mut packet = Vec::new();
         packet.extend_from_slice(&pack_u64(0x41727101980));
@@ -259,6 +279,7 @@ impl UdpAnnouncer {
         packet
     }
 
+    /// Builds the 98-byte UDP announce packet.
     fn build_announce_packet(
         &self,
         tracker: &crate::tracker::TrackerAnnounceContext,
@@ -282,6 +303,7 @@ impl UdpAnnouncer {
         packet
     }
 
+    /// Performs the initial UDP connection handshake with the tracker to acquire a connection ID.
     fn connect(&mut self) -> Result<(), BitTorrentError> {
         let transaction_id: u32 = rand::random();
         let reply = self.send_command(&self.build_connect_packet(transaction_id))?;
@@ -309,6 +331,7 @@ impl UdpAnnouncer {
 }
 
 impl Announcer for UdpAnnouncer {
+    /// Executes the UDP announce process by ensuring connection, transmitting announce command, and parsing the response.
     fn announce(
         &mut self,
         tracker: &crate::tracker::TrackerAnnounceContext,
@@ -317,7 +340,6 @@ impl Announcer for UdpAnnouncer {
         self.ensure_socket()?;
         if !self.connected {
             if let Err(e) = self.connect() {
-                // Reset socket so next attempt gets a fresh connection
                 self.socket = None;
                 return Err(e);
             }
@@ -326,7 +348,6 @@ impl Announcer for UdpAnnouncer {
         let reply = match self.send_command(&self.build_announce_packet(tracker, transaction_id)) {
             Ok(r) => r,
             Err(e) => {
-                // Reset so next call re-resolves and reconnects
                 self.socket = None;
                 self.connected = false;
                 return Err(e);
@@ -356,9 +377,11 @@ impl Announcer for UdpAnnouncer {
     }
 }
 
+/// Factory helper to build `Announcer` trait objects dynamically based on the tracker URL protocol schema.
 pub struct AnnouncerFactory;
 
 impl AnnouncerFactory {
+    /// Instantiates the appropriate `Announcer` concrete implementation (`HttpAnnouncer` or `UdpAnnouncer`) for a given URL.
     pub fn create(url: &str) -> Result<Box<dyn Announcer>, BitTorrentError> {
         if url.starts_with("http://") || url.starts_with("https://") {
             Ok(Box::new(HttpAnnouncer::new()))

@@ -1,3 +1,8 @@
+//! Remote peer connection and state tracking
+//!
+//! Models a connection to a remote BitTorrent peer. Handles peer wire protocol
+//! state, message transmitting/receiving, block requesting, and bitfield syncing.
+
 use crate::average::Average;
 use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
@@ -12,6 +17,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 static PEER_LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
 
+/// Appends a debug message to `debug.log`.
 fn log(msg: &str) {
     let file = PEER_LOG.get_or_init(|| {
         let f = OpenOptions::new()
@@ -27,6 +33,7 @@ fn log(msg: &str) {
     }
 }
 
+/// Represents a remote peer connection, holding socket state, bitfield arrays, choking/interest flags, and latency stats.
 pub struct Peer {
     network: Option<PeerNetwork>,
     pub packet_response_timer: Option<std::time::Instant>,
@@ -47,6 +54,7 @@ pub struct Peer {
 }
 
 impl Peer {
+    /// Creates a new `Peer` representing a remote client connected via the provided TCP stream.
     pub fn new(ip: String, port: u16, stream: TcpStream) -> Self {
         Peer {
             network: Some(PeerNetwork::new(stream)),
@@ -68,6 +76,7 @@ impl Peer {
         }
     }
 
+    /// Links the peer to a specific `TorrentContext`, initializing the peer's remote bitfield capacity.
     pub fn set_torrent_context(&mut self, tc: Arc<Mutex<TorrentContext>>) {
         self.tc = Some(tc.clone());
         let tc_guard = tc.lock().unwrap();
@@ -75,6 +84,7 @@ impl Peer {
         self.remote_piece_bitfield = vec![0u8; tc_guard.bitfield.len()];
     }
 
+    /// Helper to write raw bytes to the peer connection stream.
     pub fn write(&self, buffer: &[u8]) -> std::io::Result<usize> {
         if let Some(net) = &self.network {
             net.write(buffer)
@@ -86,6 +96,7 @@ impl Peer {
         }
     }
 
+    /// Helper to read raw bytes from the peer connection stream.
     pub fn read(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
         if let Some(net) = &self.network {
             net.read(buffer, buffer.len())
@@ -97,6 +108,7 @@ impl Peer {
         }
     }
 
+    /// Performs the BitTorrent handshake over the socket, verifying info hash correctness.
     pub fn handshake(
         &mut self,
         info_hash: &[u8],
@@ -121,6 +133,7 @@ impl Peer {
         Ok(remote_peer_id)
     }
 
+    /// Sends an encoded `PeerMessage` to the remote peer.
     pub fn send_message(&self, message: PeerMessage) -> Result<usize, BitTorrentError> {
         let net = self.network.as_ref().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
@@ -131,6 +144,7 @@ impl Peer {
         net.write_message(message)
     }
 
+    /// Receives and decodes the next message from the remote peer.
     pub fn read_message(&mut self) -> Result<PeerMessage, BitTorrentError> {
         let net = self.network.as_mut().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
@@ -141,14 +155,17 @@ impl Peer {
         net.read_message()
     }
 
+    /// Transmits an Interested message to the peer.
     pub fn send_interested(&self) -> Result<usize, BitTorrentError> {
         self.send_message(PeerMessage::Interested)
     }
 
+    /// Transmits a Not Interested message to the peer.
     pub fn send_not_interested(&self) -> Result<usize, BitTorrentError> {
         self.send_message(PeerMessage::NotInterested)
     }
 
+    /// Transmits a Request message to download a specific block.
     pub fn send_request(
         &self,
         index: u32,
@@ -162,14 +179,17 @@ impl Peer {
         })
     }
 
+    /// Transmits a Have message to announce possession of a complete piece.
     pub fn send_have(&self, piece_index: u32) -> Result<usize, BitTorrentError> {
         self.send_message(PeerMessage::Have(piece_index))
     }
 
+    /// Transmits a Bitfield message to share local piece availability.
     pub fn send_bitfield(&self, bitfield: Vec<u8>) -> Result<usize, BitTorrentError> {
         self.send_message(PeerMessage::Bitfield(bitfield))
     }
 
+    /// Closes the peer network connection and updates local swarm bitfields.
     pub fn close(&mut self) {
         if self.connected {
             if let Some(tc) = &self.tc {
@@ -183,6 +203,7 @@ impl Peer {
         self.network = None;
     }
 
+    /// Checks if the remote peer's bitfield indicates they have the specified piece.
     pub fn is_piece_on_remote_peer(&self, piece_number: u32) -> bool {
         let byte_index = (piece_number >> 3) as usize;
         let bit_mask = 0x80 >> (piece_number & 0x7);
@@ -195,6 +216,7 @@ impl Peer {
         false
     }
 
+    /// Marks the specified piece as complete on the remote peer and updates missing piece counts.
     pub fn set_piece_on_remote_peer(&mut self, piece_number: u32) {
         if !self.is_piece_on_remote_peer(piece_number) {
             let byte_index = (piece_number >> 3) as usize;
@@ -206,10 +228,9 @@ impl Peer {
         }
     }
 
+    /// Sets the entire remote bitfield vector and updates the count of missing pieces.
     pub fn set_remote_bitfield(&mut self, bitfield: Vec<u8>) {
         self.remote_piece_bitfield = bitfield;
-        // Recalculate how many pieces the remote peer is missing.
-        // number_of_missing_pieces was initialised to total_pieces; subtract what remote now has.
         let pieces_on_remote: usize = self
             .remote_piece_bitfield
             .iter()
@@ -220,6 +241,7 @@ impl Peer {
             .saturating_sub(pieces_on_remote);
     }
 
+    /// Checks if this remote peer has any pieces that we still need to download.
     pub fn is_remote_interesting(&self, tc: &TorrentContext) -> bool {
         for piece_number in 0..tc.number_of_pieces as u32 {
             if !tc.is_piece_local(piece_number) && self.is_piece_on_remote_peer(piece_number) {
@@ -229,6 +251,7 @@ impl Peer {
         false
     }
 
+    /// Processes an incoming protocol message from the peer, updating connection states, logging events, and writing pieces to disk.
     pub fn handle_peer_message(
         &mut self,
         message: PeerMessage,
@@ -279,6 +302,7 @@ impl Peer {
         Ok(())
     }
 
+    /// Utility checking if a piece bit is set in a specific bitfield slice.
     fn bitfield_has_piece(bitfield: &[u8], piece_number: u32) -> bool {
         let byte_index = (piece_number >> 3) as usize;
         let bit_mask = 0x80 >> (piece_number & 0x7);
@@ -288,6 +312,7 @@ impl Peer {
         bitfield[byte_index] & bit_mask != 0
     }
 
+    /// Extracts block payload from peer's internal packet buffer and adds it to the active piece assembly buffer.
     pub fn place_block_into_piece(&mut self, piece_number: u32, block_offset: u32) {
         if let Some(tc) = &self.tc {
             let tc_guard = tc.lock().unwrap();
@@ -313,6 +338,7 @@ impl Peer {
         }
     }
 
+    /// Gets the length of the last parsed packet from the network.
     pub fn get_packet_length(&self) -> usize {
         if let Some(net) = &self.network {
             net.packet_length
@@ -321,6 +347,7 @@ impl Peer {
         }
     }
 
+    /// Returns a copy of the peer's raw TCP read buffer.
     pub fn read_buffer(&self) -> Vec<u8> {
         if let Some(net) = &self.network {
             net.read_buffer.clone()

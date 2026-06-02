@@ -1,6 +1,12 @@
+//! Peer wire protocol messages
+//!
+//! Defines the `PeerMessage` enum representing standard messages exchanged between
+//! BitTorrent peers, alongside functions to encode and decode wire-format and handshake packets.
+
 use crate::constants::{HASH_LENGTH, PEER_ID_LENGTH, SIZE_OF_U32};
 use crate::error::BitTorrentError;
 
+/// Enumeration of messages defined in the BitTorrent Peer Wire Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PeerMessage {
     KeepAlive,
@@ -29,6 +35,7 @@ pub enum PeerMessage {
 }
 
 impl PeerMessage {
+    /// Encodes a `PeerMessage` into its protocol-specific wire byte representation.
     pub fn encode(&self) -> Vec<u8> {
         match self {
             PeerMessage::KeepAlive => 0u32.to_be_bytes().to_vec(),
@@ -99,6 +106,7 @@ impl PeerMessage {
         }
     }
 
+    /// Decodes a wire-format message payload (excluding the 4-byte length prefix) into a `PeerMessage`.
     pub fn decode(buffer: &[u8]) -> Result<Self, BitTorrentError> {
         if buffer.is_empty() {
             return Ok(PeerMessage::KeepAlive);
@@ -174,6 +182,7 @@ impl PeerMessage {
         }
     }
 
+    /// Constructs the raw 68-byte handshake packet buffer for establishing a peer connection.
     pub fn handshake_encode(info_hash: &[u8], peer_id: &[u8]) -> Result<Vec<u8>, BitTorrentError> {
         if info_hash.len() != HASH_LENGTH {
             return Err(BitTorrentError::Parse("Info hash must be 20 bytes".into()));
@@ -191,6 +200,7 @@ impl PeerMessage {
         Ok(buffer)
     }
 
+    /// Decodes a 68-byte peer handshake packet and extracts the 20-byte `info_hash` and `peer_id`.
     pub fn handshake_decode(buffer: &[u8]) -> Result<(Vec<u8>, Vec<u8>), BitTorrentError> {
         if buffer.len() != crate::constants::INITIAL_HANDSHAKE_LENGTH {
             return Err(BitTorrentError::Parse("Invalid handshake length".into()));

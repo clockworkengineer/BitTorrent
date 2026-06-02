@@ -1,27 +1,36 @@
+//! Piece and peer selector
+//!
+//! Implements strategy algorithms for selecting which pieces to request next
+//! (random/missing search) and which peers are best candidates to fetch pieces from.
+
 use crate::peer::Peer;
 use crate::torrent_context::TorrentContext;
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 use std::collections::HashSet;
 
+/// Selects the next piece to download and ranks remote peers for block requests.
 #[derive(Debug)]
 pub struct Selector {
     random_seed: StdRng,
 }
 
 impl Default for Selector {
+    /// Returns the default `Selector` initialized with a random entropy seed.
     fn default() -> Self {
         Selector::new()
     }
 }
 
 impl Selector {
+    /// Creates a new `Selector` instance using entropy to initialize the random number generator.
     pub fn new() -> Self {
         Selector {
             random_seed: StdRng::from_entropy(),
         }
     }
 
+    /// Selects a piece index to download next, choosing randomly as a start point and searching for missing pieces.
     pub fn next_piece(&mut self, tc: &TorrentContext) -> Option<u32> {
         if tc.number_of_pieces == 0 {
             return None;
@@ -31,6 +40,7 @@ impl Selector {
         if suggested { Some(piece_number) } else { None }
     }
 
+    /// Recommends a list of locally complete pieces that the remote peer is missing.
     pub fn local_piece_suggestions(
         &mut self,
         remote_peer: &Peer,
@@ -68,6 +78,7 @@ impl Selector {
         suggestions.into_iter().collect()
     }
 
+    /// Selects a sorted list of peer IP addresses who are unchoked and possess the target piece, sorted by response latency.
     pub fn get_list_of_peers(
         &self,
         tc: &TorrentContext,
