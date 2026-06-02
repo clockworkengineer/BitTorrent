@@ -1,3 +1,9 @@
+//! Utility functions
+//!
+//! Provides binary serialization/deserialization helper functions (such as packing
+//! and unpacking integers to/from network byte order) and formatting utilities.
+
+/// Packs a 32-bit unsigned integer into a 4-byte big-endian array.
 pub fn pack_u32(value: u32) -> [u8; 4] {
     [
         (value >> 24) as u8,
@@ -7,6 +13,7 @@ pub fn pack_u32(value: u32) -> [u8; 4] {
     ]
 }
 
+/// Unpacks a 32-bit unsigned integer from a big-endian byte slice starting at `offset`.
 pub fn unpack_u32(buffer: &[u8], offset: usize) -> u32 {
     ((buffer[offset] as u32) << 24)
         | ((buffer[offset + 1] as u32) << 16)
@@ -14,6 +21,7 @@ pub fn unpack_u32(buffer: &[u8], offset: usize) -> u32 {
         | (buffer[offset + 3] as u32)
 }
 
+/// Packs a 64-bit unsigned integer into an 8-byte big-endian array.
 pub fn pack_u64(value: u64) -> [u8; 8] {
     [
         (value >> 56) as u8,
@@ -27,6 +35,7 @@ pub fn pack_u64(value: u64) -> [u8; 8] {
     ]
 }
 
+/// Unpacks a 64-bit unsigned integer from a big-endian byte slice starting at `offset`.
 pub fn unpack_u64(buffer: &[u8], offset: usize) -> u64 {
     ((buffer[offset] as u64) << 56)
         | ((buffer[offset + 1] as u64) << 48)
@@ -38,6 +47,7 @@ pub fn unpack_u64(buffer: &[u8], offset: usize) -> u64 {
         | (buffer[offset + 7] as u64)
 }
 
+/// Formats a 20-byte info hash byte slice into its hexadecimal string representation.
 pub fn info_hash_to_string(info_hash: &[u8]) -> String {
     info_hash.iter().map(|b| format!("{:02x}", b)).collect()
 }

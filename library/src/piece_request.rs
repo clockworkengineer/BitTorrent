@@ -1,3 +1,7 @@
+//! Piece request definitions
+//!
+//! Structs representing a request for a specific data block from a peer.
+
 #[derive(Debug, Clone)]
 pub struct PieceRequest {
     pub info_hash: Vec<u8>,

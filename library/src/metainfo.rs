@@ -1,3 +1,8 @@
+//! Torrent metainfo parser
+//!
+//! Handles parsing of `.torrent` files, extracting tracker URLs, files to download,
+//! piece size information, and computing the info hash of the torrent file's `info` section.
+
 use crate::bencode::{BNode, Bencode};
 use crate::error::BitTorrentError;
 use sha1::{Digest, Sha1};
@@ -5,6 +10,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Detailed information about a single file in a multi-file torrent or the single file itself.
 #[derive(Debug, Clone)]
 pub struct FileDetails {
     pub name: String,
@@ -13,6 +19,7 @@ pub struct FileDetails {
     pub offset: u64,
 }
 
+/// Represents a parsed `.torrent` metadata file.
 #[derive(Debug)]
 pub struct MetaInfoFile {
     pub torrent_file_name: PathBuf,
@@ -22,6 +29,7 @@ pub struct MetaInfoFile {
 }
 
 impl MetaInfoFile {
+    /// Loads a torrent file from the given path but does not parse it yet.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, BitTorrentError> {
         let torrent_file_name = path.as_ref().to_path_buf();
         let mut meta_info = MetaInfoFile {
@@ -34,11 +42,13 @@ impl MetaInfoFile {
         Ok(meta_info)
     }
 
+    /// Reads the raw file contents into memory.
     fn load(&mut self) -> Result<(), BitTorrentError> {
         self.meta_info_data = fs::read(&self.torrent_file_name)?;
         Ok(())
     }
 
+    /// Parses the bencoded raw metadata into dictionary keys and validates fields.
     pub fn parse(&mut self) -> Result<(), BitTorrentError> {
         let root = Bencode::decode(&self.meta_info_data)?;
         if !matches!(root, BNode::Dictionary(_)) {
@@ -70,6 +80,7 @@ impl MetaInfoFile {
         Ok(())
     }
 
+    /// Returns the primary tracker URL announced in the torrent metadata.
     pub fn get_tracker(&self) -> Result<String, BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(
@@ -83,6 +94,7 @@ impl MetaInfoFile {
         Ok(String::from_utf8_lossy(announce).to_string())
     }
 
+    /// Retrieves all tracker URLs from `announce` and `announce-list`.
     pub fn get_tracker_urls(&self) -> Result<Vec<String>, BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(
@@ -111,6 +123,7 @@ impl MetaInfoFile {
         Ok(urls)
     }
 
+    /// Returns the SHA-1 info hash of the `info` dictionary of the torrent.
     pub fn get_info_hash(&self) -> Result<Vec<u8>, BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(
@@ -123,6 +136,7 @@ impl MetaInfoFile {
             .ok_or_else(|| BitTorrentError::MissingField("info hash".into()))
     }
 
+    /// Returns the length of each standard piece in bytes.
     pub fn get_piece_length(&self) -> Result<u32, BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(
@@ -137,6 +151,7 @@ impl MetaInfoFile {
         Ok(text.parse::<u32>()?)
     }
 
+    /// Returns the raw concatenation of 20-byte SHA-1 hash values for all pieces.
     pub fn get_pieces_info_hash(&self) -> Result<Vec<u8>, BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(
@@ -149,6 +164,7 @@ impl MetaInfoFile {
             .ok_or_else(|| BitTorrentError::MissingField("pieces".into()))
     }
 
+    /// Validates the structure and content of parsed metainfo fields.
     pub fn validate(&self) -> Result<(), BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(
@@ -183,6 +199,7 @@ impl MetaInfoFile {
         Ok(())
     }
 
+    /// Resolves target files to be downloaded from the metainfo, returning their total bytes and details.
     pub fn local_files_to_download_list(
         &self,
         download_path: impl AsRef<Path>,
@@ -261,6 +278,7 @@ impl MetaInfoFile {
         Ok((total_bytes, files_to_download))
     }
 
+    /// Extracts a string or numeric value from a `BNode` and caches it in `meta_info_dict`.
     fn get_string_or_numeric(&mut self, root: &BNode, field: &str) -> Result<(), BitTorrentError> {
         if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
             if let Some(bytes) = entry.as_string() {
@@ -274,6 +292,7 @@ impl MetaInfoFile {
         Ok(())
     }
 
+    /// Asserts that a field exists and extracts it as string or numeric, returning an error otherwise.
     fn require_string_or_numeric(
         &mut self,
         root: &BNode,
@@ -285,6 +304,7 @@ impl MetaInfoFile {
         self.get_string_or_numeric(root, field)
     }
 
+    /// Extracts a list of strings from a `BNode` and saves them in `meta_info_dict` as a comma-separated string.
     fn get_list_of_strings(&mut self, root: &BNode, field: &str) -> Result<(), BitTorrentError> {
         if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
             if let BNode::List(list) = entry {
@@ -309,6 +329,7 @@ impl MetaInfoFile {
         Ok(())
     }
 
+    /// Extracts file dict arrays under the "files" list, caching them in `meta_info_dict` as numbered entries.
     fn get_list_of_dictionarys(
         &mut self,
         root: &BNode,
@@ -358,6 +379,7 @@ impl MetaInfoFile {
         Ok(())
     }
 
+    /// Computes the SHA-1 info hash of the `info` sub-dictionary.
     fn calculate_info_hash(&mut self, root: &BNode) -> Result<(), BitTorrentError> {
         let info = Bencode::get_dictionary_entry(root, b"info")
             .ok_or_else(|| BitTorrentError::MissingField("info".into()))?;
@@ -370,6 +392,7 @@ impl MetaInfoFile {
         Ok(())
     }
 
+    /// Validates that a parsed relative path is secure and contains no directory traversal elements.
     fn validate_relative_path(path: &str) -> Result<(), BitTorrentError> {
         if path.is_empty() {
             return Err(BitTorrentError::Parse(

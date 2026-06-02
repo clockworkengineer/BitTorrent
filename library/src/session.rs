@@ -1,3 +1,8 @@
+//! Torrent download session management
+//!
+//! Orchestrates the active downloading/seeding processes for a torrent. Spawn
+//! workers to establish connections, request/download blocks, process messages, and handle disk writes.
+
 use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
 use crate::manager::Manager;
@@ -18,6 +23,7 @@ use std::time::{Duration, Instant};
 
 static LOG: OnceLock<Mutex<fs::File>> = OnceLock::new();
 
+/// Appends a debug message to `debug.log`.
 fn log(msg: &str) {
     let file = LOG.get_or_init(|| {
         let f = OpenOptions::new()
@@ -33,6 +39,7 @@ fn log(msg: &str) {
     }
 }
 
+/// Represents an active Torrent transfer session.
 pub struct TorrentSession {
     pub context: Arc<Mutex<TorrentContext>>,
     pub disk_io: Arc<DiskIO>,
@@ -41,6 +48,7 @@ pub struct TorrentSession {
 }
 
 impl TorrentSession {
+    /// Creates and initializes a new `TorrentSession` using the specified torrent file and target download path.
     pub fn new(
         torrent_path: impl AsRef<Path>,
         download_path: impl AsRef<Path>,
@@ -75,6 +83,7 @@ impl TorrentSession {
         Ok(session)
     }
 
+    /// Transitions the session status to `Downloading`, commencing active peer-based downloading.
     pub fn start_download(&mut self) -> Result<(), BitTorrentError> {
         let mut context = self.context.lock().unwrap();
         if context.status == TorrentStatus::Seeding {
@@ -85,14 +94,17 @@ impl TorrentSession {
         context.start_downloading()
     }
 
+    /// Pauses the torrent download session.
     pub fn pause(&mut self) -> Result<(), BitTorrentError> {
         self.context.lock().unwrap().pause()
     }
 
+    /// Resumes the torrent download session from a paused state.
     pub fn resume(&mut self) -> Result<(), BitTorrentError> {
         self.context.lock().unwrap().resume()
     }
 
+    /// Stops the session, disconnecting all connected peers and releasing resources.
     pub fn stop(&mut self) -> Result<(), BitTorrentError> {
         let context = self.context.lock().unwrap();
         context.disconnect_all_peers();
@@ -100,14 +112,17 @@ impl TorrentSession {
         self.context.lock().unwrap().stop()
     }
 
+    /// Returns the current state (e.g. paused, downloading, seeding) of the torrent.
     pub fn status(&self) -> TorrentStatus {
         self.context.lock().unwrap().status
     }
 
+    /// Returns the percentage of download completion (0.0 to 100.0).
     pub fn progress(&self) -> f32 {
         self.context.lock().unwrap().progress_percent()
     }
 
+    /// Validates the presence and integrity (exact sizes) of downloaded files on disk.
     pub fn validate(&self) -> Result<(), BitTorrentError> {
         let context = self.context.lock().unwrap();
         context.validate()?;
@@ -132,10 +147,12 @@ impl TorrentSession {
         Ok(())
     }
 
+    /// Returns the root download directory path.
     pub fn download_path(&self) -> &Path {
         &self.download_path
     }
 
+    /// Identifies the next missing block to download and transmits a Request packet to the specified peer.
     pub fn request_next_block_from_peer(
         &mut self,
         peer: &mut crate::peer::Peer,
@@ -150,6 +167,7 @@ impl TorrentSession {
         }
     }
 
+    /// Helper to process a decoded `PeerMessage::Piece` payload and store the block in the context.
     pub fn process_peer_message(
         &mut self,
         _peer: &mut crate::peer::Peer,
@@ -171,6 +189,7 @@ impl TorrentSession {
         Ok(())
     }
 
+    /// Establishes connection, handles handshakes, and starts a worker thread loop to read and write messages for a single peer.
     pub fn connect_and_download_peer(
         &mut self,
         peer_details: PeerDetails,
@@ -343,7 +362,7 @@ impl TorrentSession {
                                 if peer_guard
                                     .send_request(piece_number, begin, length)
                                     .is_err()
-                                {
+                                  {
                                     if let Some(manager) = &manager_clone {
                                         manager.add_to_dead_peer_list(&peer_details.ip);
                                     }
@@ -378,7 +397,6 @@ impl TorrentSession {
             log(&format!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port));
             {
                 let mut ctx = context.lock().unwrap();
-                // Release any blocks this peer reserved but didn't deliver
                 if let Ok(peer_lock) = peer.try_lock() {
                     for (piece_number, block_index) in &peer_lock.reserved_blocks {
                         ctx.release_block_request(*piece_number, *block_index);
@@ -392,6 +410,7 @@ impl TorrentSession {
         Ok(())
     }
 
+    /// Spawns connections and download worker threads for all peers listed in the provided details array.
     pub fn download_from_peers(
         &mut self,
         peers: Vec<PeerDetails>,
@@ -408,6 +427,7 @@ impl TorrentSession {
         Ok(())
     }
 
+    /// Blocks the current thread waiting for the download finish event to be signaled.
     pub fn wait_for_download_finished(&self, timeout_ms: u64) -> bool {
         self.context
             .lock()
@@ -416,6 +436,7 @@ impl TorrentSession {
             .wait_one(timeout_ms)
     }
 
+    /// Joins and halts all peer worker threads spawned during the session.
     pub fn join_peer_workers(&mut self) {
         while let Some(handle) = self.peer_workers.pop() {
             let _ = handle.join();

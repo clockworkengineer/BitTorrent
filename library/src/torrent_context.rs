@@ -1,3 +1,8 @@
+//! Torrent session context
+//!
+//! Models the state and configuration of an active torrent session, including
+//! files, bitfield vectors, missing piece indices, and the connected peer swarm.
+
 use crate::average::Average;
 use crate::constants::BLOCK_SIZE;
 use crate::disk_io::DiskIO;
@@ -12,15 +17,18 @@ use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 
+/// Placeholder structure representing a tracker client.
 #[derive(Debug, Clone)]
 pub struct Tracker;
 
+/// Piece availability metadata tracked per piece.
 #[derive(Debug, Clone)]
 pub struct PieceInfo {
     pub peer_count: usize,
     pub piece_length: u32,
 }
 
+/// Assembly queues and stats for downloaded blocks.
 #[derive(Debug)]
 pub struct AssemblerData {
     pub piece_buffers: HashMap<u32, Arc<Mutex<PieceBuffer>>>,
@@ -31,6 +39,7 @@ pub struct AssemblerData {
     pub total_timeouts: usize,
 }
 
+/// Enumeration of states a torrent transfer session can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TorrentStatus {
     Initialised,
@@ -40,6 +49,7 @@ pub enum TorrentStatus {
     Ended,
 }
 
+/// The core session context containing all transfer states, piece indices, and connection maps.
 pub struct TorrentContext {
     pub info_hash: Vec<u8>,
     pub tracker_url: String,
@@ -70,6 +80,7 @@ pub struct TorrentContext {
 }
 
 impl TorrentContext {
+    /// Creates and initializes a `TorrentContext` from parsed metainfo, creating target directories and scanning existing disk files.
     pub fn new(
         torrent_meta_info: &MetaInfoFile,
         selector: Selector,
@@ -155,6 +166,7 @@ impl TorrentContext {
         Ok(context)
     }
 
+    /// Validates the structure and length constraints of context data fields.
     pub fn validate(&self) -> Result<(), crate::error::BitTorrentError> {
         if self.number_of_pieces == 0 {
             return Err(crate::error::BitTorrentError::Parse(
@@ -185,6 +197,7 @@ impl TorrentContext {
         Ok(())
     }
 
+    /// Sets the status to `Downloading` if initialized.
     pub fn start_downloading(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status == TorrentStatus::Downloading {
             return Err(crate::error::BitTorrentError::Parse(
@@ -200,6 +213,7 @@ impl TorrentContext {
         Ok(())
     }
 
+    /// Pauses the torrent download thread, updating state flags.
     pub fn pause(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status != TorrentStatus::Downloading {
             return Err(crate::error::BitTorrentError::Parse(
@@ -211,6 +225,7 @@ impl TorrentContext {
         Ok(())
     }
 
+    /// Resumes the paused torrent download thread.
     pub fn resume(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status != TorrentStatus::Paused {
             return Err(crate::error::BitTorrentError::Parse(
@@ -222,6 +237,7 @@ impl TorrentContext {
         Ok(())
     }
 
+    /// Transitions the state to `Ended` and signals download completion.
     pub fn stop(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status == TorrentStatus::Ended {
             return Err(crate::error::BitTorrentError::Parse(
@@ -233,6 +249,7 @@ impl TorrentContext {
         Ok(())
     }
 
+    /// Computes percentage completion from bytes downloaded versus total.
     pub fn progress_percent(&self) -> f32 {
         if self.total_bytes_to_download == 0 {
             return 100.0;
@@ -243,6 +260,7 @@ impl TorrentContext {
         percent.min(100.0) as f32
     }
 
+    /// Sets or clears a specific piece completion bit in the local bitfield.
     pub fn mark_piece_local(&mut self, piece_number: u32, local: bool) {
         let byte_index = (piece_number >> 3) as usize;
         let bit_mask = 0x80 >> (piece_number & 0x7);
@@ -253,12 +271,14 @@ impl TorrentContext {
         }
     }
 
+    /// Checks if a specific piece has been fully downloaded and verified locally.
     pub fn is_piece_local(&self, piece_number: u32) -> bool {
         let byte_index = (piece_number >> 3) as usize;
         let bit_mask = 0x80 >> (piece_number & 0x7);
         self.bitfield[byte_index] & bit_mask != 0
     }
 
+    /// Sets or clears a specific piece index in the missing pieces tracking vector.
     pub fn mark_piece_missing(&mut self, piece_number: u32, missing: bool) {
         let byte_index = (piece_number >> 3) as usize;
         let bit_mask = 0x80 >> (piece_number & 0x7);
@@ -273,12 +293,14 @@ impl TorrentContext {
         }
     }
 
+    /// Checks if a specific piece index is currently marked as missing.
     pub fn is_piece_missing(&self, piece_number: u32) -> bool {
         let byte_index = (piece_number >> 3) as usize;
         let bit_mask = 0x80 >> (piece_number & 0x7);
         self.pieces_missing[byte_index] & bit_mask != 0
     }
 
+    /// Increments peer counts for all pieces present in a newly connected peer's bitfield.
     pub fn merge_piece_bitfield(&mut self, remote_peer: &Peer) {
         let mut piece_number = 0u32;
         for byte in &remote_peer.remote_piece_bitfield {
@@ -294,6 +316,7 @@ impl TorrentContext {
         }
     }
 
+    /// Computes the SHA-1 checksum of the piece buffer and compares it to the expected metainfo hash.
     pub fn check_piece_hash(
         &self,
         piece_number: u32,
@@ -307,6 +330,7 @@ impl TorrentContext {
             .all(|(a, b)| a == b)
     }
 
+    /// Returns the number of bytes remaining to be downloaded.
     pub fn bytes_left_to_download(&self) -> Result<u64, crate::error::BitTorrentError> {
         if self.total_bytes_to_download < self.total_bytes_downloaded {
             return Err(crate::error::BitTorrentError::Parse(
@@ -316,6 +340,7 @@ impl TorrentContext {
         Ok(self.total_bytes_to_download - self.total_bytes_downloaded)
     }
 
+    /// Integrates a verified piece buffer, updating local bitfields, download speeds, and completion metrics.
     pub fn update_bitfield_from_buffer(
         &mut self,
         piece_number: u32,
@@ -333,10 +358,12 @@ impl TorrentContext {
         }
     }
 
+    /// Checks if the session download is complete.
     pub fn is_download_complete(&self) -> bool {
         self.bytes_left_to_download().unwrap_or(1) == 0
     }
 
+    /// Checks and updates status to `Seeding` if downloading is completed.
     pub fn try_complete_download(&mut self) {
         if self.status == TorrentStatus::Downloading && self.is_download_complete() {
             self.status = TorrentStatus::Seeding;
@@ -344,6 +371,7 @@ impl TorrentContext {
         }
     }
 
+    /// Appends incoming sub-block data, writing the fully assembled piece to disk upon completion and hash validation.
     pub fn process_piece_block(
         &mut self,
         disk_io: &DiskIO,
@@ -396,6 +424,7 @@ impl TorrentContext {
         Ok(false)
     }
 
+    /// Registers a peer connection in the active swarm. Returns `true` if registered, `false` if swarm is full.
     pub fn add_peer(&self, peer: Arc<Mutex<Peer>>) -> bool {
         let ip = peer.lock().unwrap().ip.clone();
         if self.is_space_in_swarm(&ip) {
@@ -405,10 +434,12 @@ impl TorrentContext {
         }
     }
 
+    /// Unregisters and drops a peer connection from the swarm by IP address.
     pub fn remove_peer(&self, ip: &str) {
         self.peer_swarm.write().unwrap().remove(ip);
     }
 
+    /// Safely terminates connection streams and unregisters all active peers in the swarm.
     pub fn disconnect_all_peers(&self) {
         let mut swarm = self.peer_swarm.write().unwrap();
         for peer in swarm.values() {
@@ -417,6 +448,7 @@ impl TorrentContext {
         swarm.clear();
     }
 
+    /// Decrements piece peer counts when a peer disconnects.
     pub fn unmerge_piece_bitfield(&mut self, remote_peer: &Peer) {
         let mut piece_number = 0u32;
         for byte in &remote_peer.remote_piece_bitfield {
@@ -435,10 +467,12 @@ impl TorrentContext {
         }
     }
 
+    /// Returns the length of the specified piece.
     pub fn get_piece_length(&self, piece_number: u32) -> u32 {
         self.piece_data[piece_number as usize].piece_length
     }
 
+    /// Sets the byte length for a given piece index.
     pub fn set_piece_length(&mut self, piece_number: u32, piece_length: u32) {
         if piece_length <= self.piece_length {
             self.piece_data[piece_number as usize].piece_length = piece_length;
@@ -447,12 +481,14 @@ impl TorrentContext {
         }
     }
 
+    /// Helper asserting whether a peer IP can join the swarm (not duplicate and swarm capacity not exceeded).
     pub fn is_space_in_swarm(&self, ip: &str) -> bool {
         !ip.is_empty()
             && self.peer_swarm.read().unwrap().get(ip).is_none()
             && self.peer_swarm.read().unwrap().len() < self.maximum_swarm_size
     }
 
+    /// Finds the next unrequested block offset and length within a given piece.
     pub fn next_pending_block(&self, piece_number: u32) -> Option<(u32, u32)> {
         let piece_length = self.get_piece_length(piece_number);
         let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
@@ -466,6 +502,7 @@ impl TorrentContext {
         None
     }
 
+    /// Checks if a block request has been registered in the context.
     pub fn is_block_requested(&self, piece_number: u32, block_index: u32) -> bool {
         self.requested_blocks
             .read()
@@ -473,6 +510,7 @@ impl TorrentContext {
             .contains(&(piece_number, block_index))
     }
 
+    /// Marks a block index as requested/reserved in the session context.
     pub fn reserve_block_request(&self, piece_number: u32, block_index: u32) -> bool {
         self.requested_blocks
             .write()
@@ -480,6 +518,7 @@ impl TorrentContext {
             .insert((piece_number, block_index))
     }
 
+    /// Releases a block reservation, allowing other peers to request it.
     pub fn release_block_request(&self, piece_number: u32, block_index: u32) {
         self.requested_blocks
             .write()
@@ -487,6 +526,7 @@ impl TorrentContext {
             .remove(&(piece_number, block_index));
     }
 
+    /// Drops all block request reservations registered under a given piece index.
     pub fn clear_piece_requests(&self, piece_number: u32) {
         self.requested_blocks
             .write()
@@ -494,6 +534,7 @@ impl TorrentContext {
             .retain(|(piece, _)| *piece != piece_number);
     }
 
+    /// Selects the rarest missing piece that the remote peer possesses.
     pub fn select_next_piece_for_peer(&mut self, remote_peer: &Peer) -> Option<u32> {
         let mut candidates: Vec<(usize, u32)> = (0..self.number_of_pieces as u32)
             .filter(|piece| {
@@ -506,6 +547,7 @@ impl TorrentContext {
         candidates.into_iter().map(|(_, piece)| piece).next()
     }
 
+    /// Identifies and reserves the next download block from a piece available on the specified peer.
     pub fn next_block_request_for_peer(&mut self, peer: &Peer) -> Option<(u32, u32, u32)> {
         if self.status != TorrentStatus::Downloading {
             return None;
@@ -526,10 +568,12 @@ impl TorrentContext {
         None
     }
 
+    /// Increments the local peer availability count for a given piece.
     pub fn increment_peer_count(&mut self, piece_number: u32) {
         self.piece_data[piece_number as usize].peer_count += 1;
     }
 
+    /// Walks piece availability vectors to identify the next missing piece starting search from `start_piece`.
     pub fn find_next_missing_piece(&self, start_piece: u32) -> (bool, u32) {
         let mut current_piece = start_piece;
         loop {
@@ -546,6 +590,7 @@ impl TorrentContext {
         (false, current_piece)
     }
 
+    /// Estimates the current download transfer rate in bytes per second.
     pub fn bytes_per_second(&self) -> i64 {
         let seconds = self
             .assembly_data
@@ -561,10 +606,12 @@ impl TorrentContext {
         }
     }
 
+    /// Checks if a peer is in the active connection swarm map.
     pub fn is_peer_in_swarm(&self, ip: &str) -> bool {
         !ip.is_empty() && self.peer_swarm.read().unwrap().contains_key(ip)
     }
 
+    /// Counts how many peers in the swarm have unchoked us.
     pub fn number_of_unchoked_peers(&self) -> usize {
         self.peer_swarm
             .read()
