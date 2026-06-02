@@ -1,66 +1,80 @@
 # Architecture Overview
 
-## Current architecture
+## Crate layout
+- `library/src/` — library code
+- `library/tests/` — test suite
+- `clients/torrent_client/` — CLI client binary
+- `examples/torrent_session_example/` — example application
 
-### Crate layout
-- `library/src/`: library code
-- `library/tests/`: test suite
-- `examples/`: placeholder for future sample applications
+## Key components
 
-### Key components
-- `MetaInfoFile` — parses `.torrent` metadata and extracts file layout, piece length, tracker URL, and info hash
-- `TorrentContext` — holds torrent state, bitfield, file list, peer swarm, and assembly metadata
-- `DiskIO` — creates local files and computes bitfield from existing disk data
-- `Tracker` — performs tracker announces and translates peer lists into `PeerDetails`
-- `Peer` / `PeerNetwork` — peer state holder and low-level socket wrapper
-- `Selector` — chooses pieces and peers for download
-- `Manager` — registry for active torrents and dead peers
+### Session layer
+- `TorrentSession` — high-level download orchestrator; owns `TorrentContext`, `DiskIO`, and a pool of per-peer worker threads; exposes `start_download()`, `pause()`, `resume()`, `stop()`, and `wait_for_download_finished()`
+- `Manager` — registry for active torrents (keyed by info hash) and a blacklist of dead peers; routes newly discovered peers via an MPSC sender
 
-## What is missing
+### Torrent state
+- `TorrentContext` — central mutable state: info hash, piece metadata, local bitfield, peer swarm (`HashMap<String, Arc<Mutex<Peer>>>`), in-progress piece buffers (`AssemblerData`), and outstanding block requests; exposes `next_block_request_for_peer()` (rarest-first selection) and `process_piece_block()` (assembly + SHA1 validation)
+- `TorrentStatus` enum — `Initialised → Downloading → Paused → Seeding → Ended`
+- `MetaInfoFile` — parses `.torrent` metadata: info hash (SHA1 of info dict), piece hashes, piece length, file layout, and tracker URL list (primary + backup)
 
-### Peer wire protocol
-- No real BitTorrent handshake implementation
-- No message parser for `bitfield`, `have`, `request`, `piece`, or `choke`
-- `PeerNetwork::start_reads()` is a placeholder
+### Peer layer
+- `Peer` — per-peer state: remote bitfield, choke/interest flags, outstanding request count, reserved block list; performs handshake and drives the message loop
+- `PeerNetwork` — raw TCP socket wrapper; encodes and decodes handshake and length-prefixed messages
+- `PeerMessage` — enum covering the full peer wire protocol: `KeepAlive`, `Choke`, `Unchoke`, `Interested`, `NotInterested`, `Have`, `Bitfield`, `Request`, `Piece`, `Cancel`, `Port`; implements `encode()`/`decode()`
 
-### Download orchestration
-- No high-level download controller
-- No peer download loop, message scheduling, or request retry logic
-- No endgame / rarest-first selection strategy beyond random missing-piece search
+### Tracker layer
+- `Tracker` — manages announce lifecycle (Started, Completed, Stopped, None); parses compact peer lists into `PeerDetails`
+- `Announcer` trait — implemented by `HttpAnnouncer` (bencode response) and `UdpAnnouncer` (binary connection/announce protocol); `AnnouncerFactory` selects implementation by URL scheme
 
-### Disk flow
-- `DiskIO` currently preallocates files and scans existing content only
-- Background disk queue is present but unused
-- No safe write path from assembled pieces back to disk
+### Disk layer
+- `DiskIO` — creates local file/directory structure, scans existing data to build the initial bitfield, writes assembled pieces to the correct file offsets (handles pieces that span file boundaries), and exposes a background write queue (MPSC channel)
+- `PieceBuffer` — assembles incoming blocks into a complete piece; tracks per-block completion with a countdown; signals readiness via `all_blocks_there()`
+- `PieceRequest` — message type carried on the disk I/O queue (info hash, peer IP, piece number, block offset, block size)
 
-### Resilience
-- No peer liveness checks, timeout handling, or retry policies
-- No support for torrent pause/resume or graceful stop
+### Selection
+- `Selector` — rarest-first piece selection and peer ranking by average latency
 
-## Suggested architecture improvements
+### Utilities
+- `Bencode` / `BNode` — recursive bencode parser and encoder for torrent files and tracker responses
+- `ManualResetEvent` — thread synchronization primitive (set/reset/wait) used for pause and download-complete signals
+- `Average` — running mean for latency/bandwidth metrics
+- `peer_id` — generates a random peer ID (`-AZ1000-{12-char random}`)
+- `host` — resolves the local IP address via a non-sending UDP probe
+- `constants` — `BLOCK_SIZE` (16 KiB), `HASH_LENGTH` (20), `PEER_ID_LENGTH` (20), `INITIAL_HANDSHAKE_LENGTH` (68), `MAXIMUM_SWARM_SIZE` (100)
+- `util` — big-endian pack/unpack helpers and info-hash hex encoding
+- `error` — `BitTorrentError` enum (`Io`, `InvalidBencode`, `MissingField`, `Parse`, `NotParsed`)
 
-### Add a `TorrentSession`
-A high-level controller that owns:
-- `TorrentContext`
-- `DiskIO`
-- `Tracker`
-- peer swarm and request pipeline
-- session configuration
+## Data flow
 
-### Separate concerns clearly
-- `torrent_context.rs`: immutable torrent metadata and local state
-- `tracker.rs`: announce/event lifecycle and peer discovery
-- `peer.rs` + `peer_network.rs`: wire protocol and peer state
-- `disk_io.rs`: all disk reads/writes and file management
-- `selector.rs`: piece/peer selection strategies
+```
+TorrentSession::start_download()
+  │
+  ├─ DiskIO::create_local_torrent_structure()
+  ├─ DiskIO::create_torrent_bitfield()     ← resume support
+  ├─ Tracker::announce_started()           ← discovers PeerDetails
+  │
+  └─ per peer: spawn connect_and_download_peer() thread
+       │
+       ├─ Peer::handshake()                ← TCP connect + protocol handshake
+       ├─ send/receive Bitfield            ← update remote_piece_bitfield
+       ├─ send Interested / receive Unchoke
+       │
+       └─ message loop
+            ├─ TorrentContext::next_block_request_for_peer()  ← rarest-first
+            ├─ Peer::send_message(Request)
+            ├─ Peer::read_message() → PeerMessage::Piece
+            ├─ TorrentContext::process_piece_block()
+            │    └─ PieceBuffer::add_block()
+            │         └─ all blocks present → SHA1 check
+            │              └─ DiskIO::write_piece() → filesystem
+            └─ TorrentContext::mark_piece_local()
+```
 
-### Data flow
-1. `TorrentSession` loads metadata and local file structure
-2. `Tracker` announces and returns peers
-3. `Manager` or session adds peers to swarm
-4. `Peer` establishes handshake, exchanges bitfields
-5. `Selector` chooses piece/block requests
-6. `PeerNetwork` sends requests to peers
-7. `AssemblerData` assembles blocks and validates hashes
-8. `DiskIO` writes completed pieces to disk
-9. `TorrentContext` updates progress and status
+## Known gaps and future work
+
+- **Endgame mode** — no special handling for the final few pieces
+- **Upload / seeding** — `TorrentStatus::Seeding` exists but upload logic is not implemented
+- **Peer liveness** — no keepalive timeout or reconnect logic
+- **Choking algorithm** — no tit-for-tat or optimistic unchoke; peers are unchoked unconditionally
+- **DHT / PEX** — no peer discovery beyond the tracker announce
+- **Magnet links** — metadata extension not implemented
