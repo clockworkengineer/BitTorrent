@@ -80,7 +80,7 @@ impl Peer {
     pub fn set_torrent_context(&mut self, tc: Arc<Mutex<TorrentContext>>) {
         self.tc = Some(tc.clone());
         let tc_guard = tc.lock().unwrap();
-        self.number_of_missing_pieces = tc_guard.number_of_pieces as usize;
+        self.number_of_missing_pieces = tc_guard.number_of_pieces;
         self.remote_piece_bitfield = vec![0u8; tc_guard.bitfield.len()];
     }
 
@@ -270,6 +270,11 @@ impl Peer {
             }
             PeerMessage::Interested => {
                 self.peer_interested = true;
+                // Unchoke the remote peer so they can request blocks from us.
+                if self.am_choking {
+                    self.am_choking = false;
+                    let _ = self.send_message(PeerMessage::Unchoke);
+                }
             }
             PeerMessage::NotInterested => {
                 self.peer_interested = false;
@@ -295,47 +300,57 @@ impl Peer {
                 self.reserved_blocks.retain(|&(p, b)| !(p == index && b == block_index));
                 log(&format!("[peer {}:{}] PIECE index={} begin={} len={} outstanding={}",
                     self.ip, self.port, index, begin, block.len(), self.outstanding_requests_count));
-                tc.process_piece_block(disk_io, index, begin, &block)?;
+                let piece_complete = tc.process_piece_block(disk_io, index, begin, &block)?;
+                // In endgame mode, cancel duplicate requests to other peers for the same block.
+                if piece_complete {
+                    let pieces_remaining = (0..tc.number_of_pieces as u32)
+                        .filter(|&p| !tc.is_piece_local(p))
+                        .count();
+                    if pieces_remaining as u32 <= crate::constants::ENDGAME_THRESHOLD {
+                        let length = std::cmp::min(
+                            crate::constants::BLOCK_SIZE as u32,
+                            tc.get_piece_length(index).saturating_sub(begin),
+                        );
+                        let swarm = tc.peer_swarm.read().unwrap();
+                        for (peer_ip, peer_arc) in swarm.iter() {
+                            if peer_ip == &self.ip {
+                                continue;
+                            }
+                            if let Ok(other) = peer_arc.try_lock() {
+                                let _ = other.send_message(PeerMessage::Cancel {
+                                    index,
+                                    begin,
+                                    length,
+                                });
+                            }
+                        }
+                    }
+                }
             }
-            PeerMessage::Cancel { .. } | PeerMessage::Request { .. } | PeerMessage::Port(_) => {}
+            PeerMessage::Cancel { .. } | PeerMessage::Port(_) => {}
+            PeerMessage::Request { index, begin, length } => {
+                // Serve the block if we have the piece and are not choking the remote peer.
+                if !self.am_choking && tc.is_piece_local(index) {
+                    match disk_io.read_piece_block(tc, index, begin, length) {
+                        Ok(block) => {
+                            let _ = self.send_message(PeerMessage::Piece {
+                                index,
+                                begin,
+                                block,
+                            });
+                            tc.total_bytes_uploaded += length as u64;
+                        }
+                        Err(e) => {
+                            log(&format!(
+                                "[peer {}:{}] failed to read piece {} for upload: {}",
+                                self.ip, self.port, index, e
+                            ));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
-    }
-
-    /// Utility checking if a piece bit is set in a specific bitfield slice.
-    fn bitfield_has_piece(bitfield: &[u8], piece_number: u32) -> bool {
-        let byte_index = (piece_number >> 3) as usize;
-        let bit_mask = 0x80 >> (piece_number & 0x7);
-        if byte_index >= bitfield.len() {
-            return false;
-        }
-        bitfield[byte_index] & bit_mask != 0
-    }
-
-    /// Extracts block payload from peer's internal packet buffer and adds it to the active piece assembly buffer.
-    pub fn place_block_into_piece(&mut self, piece_number: u32, block_offset: u32) {
-        if let Some(tc) = &self.tc {
-            let tc_guard = tc.lock().unwrap();
-            let mut assembly_data = tc_guard.assembly_data.lock().unwrap();
-            if let Some(piece_buffer) = assembly_data.piece_buffers.get(&piece_number).cloned() {
-                let mut buffer_lock = piece_buffer.lock().unwrap();
-                let block_number = block_offset / crate::constants::BLOCK_SIZE as u32;
-                let should_decrement = !buffer_lock.blocks_present()[block_number as usize];
-                {
-                    let _guard = assembly_data.guard_mutex.lock().unwrap();
-                    buffer_lock.add_block_from_packet(&self.read_buffer(), block_number);
-                }
-                if should_decrement {
-                    assembly_data.current_block_requests =
-                        assembly_data.current_block_requests.saturating_sub(1);
-                }
-                if assembly_data.current_block_requests == 0 {
-                    assembly_data.block_requests_done.set();
-                }
-                self.outstanding_requests_count =
-                    self.outstanding_requests_count.saturating_sub(1);
-            }
-        }
     }
 
     /// Gets the length of the last parsed packet from the network.

@@ -18,10 +18,10 @@ use urlencoding::encode_binary;
 pub mod announcer_trait {
     use super::*;
     pub trait Announcer: Send {
-        /// Performs an announce request to the tracker using the given context and returns the response.
+        /// Performs an announcement request to the tracker using the given context and returns the response.
         fn announce(
             &mut self,
-            tracker: &crate::tracker::TrackerAnnounceContext,
+            tracker: &TrackerAnnounceContext,
         ) -> Result<AnnounceResponse, BitTorrentError>;
     }
 }
@@ -134,7 +134,7 @@ impl HttpAnnouncer {
     }
 
     /// Constructs the full HTTP request URL including the query parameters for the tracker announce.
-    fn build_announce_url(&self, tracker: &crate::tracker::TrackerAnnounceContext) -> String {
+    fn build_announce_url(&self, tracker: &TrackerAnnounceContext) -> String {
         let info_hash = encode_binary(&tracker.info_hash);
         let peer_id = encode(&tracker.peer_id);
         let mut announce_url = format!(
@@ -168,7 +168,7 @@ impl Announcer for HttpAnnouncer {
     /// Executes the HTTP GET request to the tracker and decodes the response.
     fn announce(
         &mut self,
-        tracker: &crate::tracker::TrackerAnnounceContext,
+        tracker: &TrackerAnnounceContext,
     ) -> Result<AnnounceResponse, BitTorrentError> {
         Tracker::log_announce(tracker);
         let url = self.build_announce_url(tracker);
@@ -282,7 +282,7 @@ impl UdpAnnouncer {
     /// Builds the 98-byte UDP announce packet.
     fn build_announce_packet(
         &self,
-        tracker: &crate::tracker::TrackerAnnounceContext,
+        tracker: &TrackerAnnounceContext,
         transaction_id: u32,
     ) -> Vec<u8> {
         let mut packet = Vec::new();
@@ -334,7 +334,7 @@ impl Announcer for UdpAnnouncer {
     /// Executes the UDP announce process by ensuring connection, transmitting announce command, and parsing the response.
     fn announce(
         &mut self,
-        tracker: &crate::tracker::TrackerAnnounceContext,
+        tracker: &TrackerAnnounceContext,
     ) -> Result<AnnounceResponse, BitTorrentError> {
         Tracker::log_announce(tracker);
         self.ensure_socket()?;
