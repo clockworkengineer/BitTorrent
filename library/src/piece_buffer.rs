@@ -46,17 +46,8 @@ impl PieceBuffer {
 
     /// Adds a block from a raw network packet. Automatically skips the 9-byte peer protocol header.
     pub fn add_block_from_packet(&mut self, packet_buffer: &[u8], block_number: u32) {
-        let block_offset = (block_number as usize) * BLOCK_SIZE;
-        let payload_length = packet_buffer.len().saturating_sub(9);
-        let block_length = std::cmp::min(
-            std::cmp::min(self.length as usize - block_offset, BLOCK_SIZE),
-            payload_length,
-        );
-        self.buffer[block_offset..block_offset + block_length]
-            .copy_from_slice(&packet_buffer[9..9 + block_length]);
-        if !self.present_blocks[block_number as usize] {
-            self.present_blocks[block_number as usize] = true;
-            self.block_count.fetch_sub(1, Ordering::SeqCst);
+        if packet_buffer.len() >= 9 {
+            self.add_block(&packet_buffer[9..], block_number);
         }
     }
 
