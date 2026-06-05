@@ -60,6 +60,7 @@ pub struct TorrentContext {
     pub bitfield: Vec<u8>,
     pub files_to_download: Vec<FileDetails>,
     pub total_bytes_downloaded: u64,
+    pub initial_bytes_downloaded: u64,
     pub total_bytes_to_download: u64,
     pub total_bytes_uploaded: u64,
     pub status: TorrentStatus,
@@ -117,6 +118,7 @@ impl TorrentContext {
             bitfield,
             files_to_download: all_files_to_download,
             total_bytes_downloaded: 0,
+            initial_bytes_downloaded: 0,
             total_bytes_to_download: total_download_length,
             total_bytes_uploaded: 0,
             status: if seeding {
@@ -153,14 +155,11 @@ impl TorrentContext {
         disk_io.create_local_torrent_structure(&context)?;
         if seeding {
             disk_io.fully_downloaded_torrent_bitfield(&mut context)?;
-            context.total_bytes_downloaded = 0;
-            context.total_bytes_to_download = 0;
+            context.total_bytes_downloaded = context.total_bytes_to_download;
+            context.initial_bytes_downloaded = context.total_bytes_to_download;
         } else {
             disk_io.create_torrent_bitfield(&mut context)?;
-            context.total_bytes_to_download = context
-                .total_bytes_to_download
-                .saturating_sub(context.total_bytes_downloaded);
-            context.total_bytes_downloaded = 0;
+            context.initial_bytes_downloaded = context.total_bytes_downloaded;
         }
         Ok(context)
     }

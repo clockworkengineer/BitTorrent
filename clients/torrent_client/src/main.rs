@@ -123,7 +123,7 @@ impl eframe::App for TorrentClientApp {
                 let peers_active = ctx_guard.number_of_unchoked_peers();
                 let bps = ctx_guard.bytes_per_second();
                 let downloaded = ctx_guard.total_bytes_downloaded;
-                let total = ctx_guard.total_bytes_to_download + ctx_guard.total_bytes_downloaded;
+                let total = ctx_guard.total_bytes_to_download;
                 drop(ctx_guard);
 
                 ui.group(|ui| {

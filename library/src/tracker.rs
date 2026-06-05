@@ -292,7 +292,8 @@ impl Tracker {
 
     /// Retrieves downloaded byte statistics cached in the torrent context.
     pub fn downloaded(&self) -> u64 {
-        self.tc.lock().unwrap().total_bytes_downloaded
+        let tc = self.tc.lock().unwrap();
+        tc.total_bytes_downloaded.saturating_sub(tc.initial_bytes_downloaded)
     }
 
     /// Retrieves uploaded byte statistics cached in the torrent context.
@@ -457,8 +458,6 @@ impl Tracker {
             return Err(BitTorrentError::Parse("Tracker is already running".into()));
         }
         if self.tc.lock().unwrap().bytes_left_to_download()? == 0 {
-            self.tc.lock().unwrap().total_bytes_downloaded = 0;
-            self.tc.lock().unwrap().total_bytes_to_download = 0;
             self.announce_completed()
         } else {
             self.announce_started()
