@@ -310,11 +310,13 @@ impl Peer {
                 self.reserved_blocks
                     .retain(|&(p, b)| !(p == index && b == block_index));
                 if tc.is_endgame() {
-                    for peer in tc.peer_swarm.read().unwrap().values() {
-                        if let Ok(other_peer) = peer.lock() {
-                            if other_peer.ip != self.ip
-                                && other_peer.reserved_blocks.contains(&(index, block_index))
-                            {
+                    let swarm = tc.peer_swarm.read().unwrap();
+                    for (peer_ip, peer_arc) in swarm.iter() {
+                        if peer_ip == &self.ip {
+                            continue;
+                        }
+                        if let Ok(other_peer) = peer_arc.try_lock() {
+                            if other_peer.reserved_blocks.contains(&(index, block_index)) {
                                 let cancel_length = std::cmp::min(
                                     crate::constants::BLOCK_SIZE as u32,
                                     tc.get_piece_length(index).saturating_sub(begin),

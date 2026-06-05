@@ -68,7 +68,7 @@ pub struct TorrentContext {
     pub callback_data: Option<String>,
     pub call_back: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     pub paused: ManualResetEvent,
-    pub download_finished: ManualResetEvent,
+    pub download_finished: Arc<ManualResetEvent>,
     pub selector: Selector,
     pub peer_swarm: RwLock<HashMap<String, Arc<Mutex<Peer>>>>,
     pub missing_pieces_count: usize,
@@ -133,7 +133,7 @@ impl TorrentContext {
             callback_data: None,
             call_back: None,
             paused: ManualResetEvent::new(false),
-            download_finished: ManualResetEvent::new(false),
+            download_finished: Arc::new(ManualResetEvent::new(false)),
             selector,
             peer_swarm: RwLock::new(HashMap::new()),
             missing_pieces_count: 0,
@@ -352,9 +352,7 @@ impl TorrentContext {
         }
         self.set_piece_length(piece_number, number_of_bytes);
         self.mark_piece_local(piece_number, piece_there);
-        if !piece_there {
-            self.mark_piece_missing(piece_number, true);
-        }
+        self.mark_piece_missing(piece_number, !piece_there);
     }
 
     /// Checks if the session download is complete.
@@ -419,7 +417,7 @@ impl TorrentContext {
                 {
                     let swarm = self.peer_swarm.read().unwrap();
                     for peer_arc in swarm.values() {
-                        if let Ok(peer_guard) = peer_arc.lock() {
+                        if let Ok(peer_guard) = peer_arc.try_lock() {
                             let _ = peer_guard.send_have(piece_number);
                         }
                     }
@@ -586,8 +584,7 @@ impl TorrentContext {
         candidates.sort_by_key(|(count, piece)| (*count, *piece));
 
         let pieces_remaining = candidates.len();
-        let in_endgame =
-            pieces_remaining > 0 && pieces_remaining <= crate::constants::ENDGAME_THRESHOLD;
+        let in_endgame = endgame && pieces_remaining > 0;
 
         for (_, piece_number) in candidates {
             if in_endgame {

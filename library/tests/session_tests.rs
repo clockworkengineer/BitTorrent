@@ -186,3 +186,108 @@ fn test_create_session_for_seeding() {
 
     cleanup_download_path(&download_path);
 }
+
+#[test]
+fn test_download_piece_from_peer() {
+    let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("session_download_piece");
+    cleanup_download_path(&download_path);
+
+    let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
+        .expect("Failed to create torrent session");
+
+    let expected_info_hash = session.context.lock().unwrap().info_hash.clone();
+    let expected_info_hash_clone = expected_info_hash.clone();
+
+    {
+        use sha1::Digest;
+        let mut new_hashes = Vec::new();
+        let num_pieces = session.context.lock().unwrap().number_of_pieces;
+        let piece_length = session.context.lock().unwrap().piece_length as usize;
+        let file_length = 351874;
+        for i in 0..num_pieces {
+            let current_piece_len = if i == num_pieces - 1 {
+                file_length % piece_length
+            } else {
+                piece_length
+            };
+            let data = vec![0x55u8; current_piece_len];
+            let hash = sha1::Sha1::digest(&data);
+            new_hashes.extend_from_slice(&hash);
+        }
+        session.context.lock().unwrap().pieces_info_hash = new_hashes;
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
+    let addr = listener.local_addr().expect("Failed to get listener address");
+
+    let server_handle = thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("Failed to accept connection");
+        let mut net = PeerNetwork::new(stream);
+        let (remote_info_hash, _) = net.read_handshake().expect("Failed to read handshake");
+        assert_eq!(remote_info_hash, expected_info_hash_clone);
+
+        let local_peer_id = *b"-RS0001-000000000000";
+        net.write_handshake(&expected_info_hash_clone, &local_peer_id)
+            .expect("Failed to write handshake");
+
+        let _ = net.read_message().expect("Failed to read bitfield");
+        let _ = net.read_message().expect("Failed to read unchoke");
+        let _ = net.read_message().expect("Failed to read interested");
+
+        net.write_message(PeerMessage::Bitfield(vec![0xFF, 0xFF, 0xFC]))
+            .expect("Failed to send bitfield");
+
+        net.write_message(PeerMessage::Unchoke)
+            .expect("Failed to send unchoke");
+
+        loop {
+            let msg = match net.read_message() {
+                Ok(m) => m,
+                Err(e) => {
+                    println!("Mock server read_message error: {:?}", e);
+                    break;
+                }
+            };
+            match msg {
+                PeerMessage::Request { index, begin, length } => {
+                    println!("Mock server received Request for piece {}, begin {}, length {}", index, begin, length);
+                    let block = vec![0x55u8; length as usize];
+                    if let Err(e) = net.write_message(PeerMessage::Piece { index, begin, block }) {
+                        println!("Mock server failed to write Piece response: {:?}", e);
+                        break;
+                    }
+                }
+                PeerMessage::KeepAlive => {
+                    println!("Mock server received KeepAlive");
+                }
+                other => {
+                    println!("Mock server received other message: {:?}", other);
+                }
+            }
+        }
+        println!("Mock server thread exiting");
+    });
+
+    let peer_details = PeerDetails {
+        info_hash: expected_info_hash,
+        peer_id: None,
+        ip: "127.0.0.1".to_string(),
+        port: addr.port(),
+    };
+
+    session.start_download().expect("Failed to start download");
+
+    session
+        .connect_and_download_peer(peer_details, None)
+        .expect("Failed to connect to peer");
+
+    let finished = session.wait_for_download_finished(15000);
+    assert!(finished, "Download did not finish in time");
+
+    session.join_peer_workers();
+    server_handle.join().expect("Server thread panicked");
+    cleanup_download_path(&download_path);
+}
+

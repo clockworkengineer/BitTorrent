@@ -430,11 +430,8 @@ impl TorrentSession {
 
     /// Blocks the current thread waiting for the download finish event to be signaled.
     pub fn wait_for_download_finished(&self, timeout_ms: u64) -> bool {
-        self.context
-            .lock()
-            .unwrap()
-            .download_finished
-            .wait_one(timeout_ms)
+        let event = self.context.lock().unwrap().download_finished.clone();
+        event.wait_one(timeout_ms)
     }
 
     /// Joins and halts all peer worker threads spawned during the session.
