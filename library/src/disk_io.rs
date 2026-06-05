@@ -131,6 +131,57 @@ impl DiskIO {
         Ok(())
     }
 
+    /// Reads a single block from disk for a local piece, returning the exact requested bytes.
+    pub fn read_piece_block(
+        &self,
+        tc: &TorrentContext,
+        piece_number: u32,
+        begin: u32,
+        length: u32,
+    ) -> Result<Vec<u8>, BitTorrentError> {
+        let piece_length = tc.get_piece_length(piece_number);
+        if begin.checked_add(length).map_or(true, |end| end > piece_length) {
+            return Err(BitTorrentError::Parse(
+                "Requested block exceeds piece bounds".into(),
+            ));
+        }
+
+        let mut remaining = length as usize;
+        let mut piece_offset = piece_number as u64 * tc.piece_length as u64 + begin as u64;
+        let mut buffer = Vec::with_capacity(length as usize);
+
+        for file in &tc.files_to_download {
+            if piece_offset >= file.length {
+                piece_offset -= file.length;
+                continue;
+            }
+
+            let read_start = piece_offset;
+            let read_size = std::cmp::min(remaining as u64, file.length - read_start) as usize;
+            let mut handle = File::open(&file.name)?;
+            handle.seek(SeekFrom::Start(read_start))?;
+
+            let mut chunk = vec![0u8; read_size];
+            handle.read_exact(&mut chunk)?;
+            buffer.extend_from_slice(&chunk);
+
+            remaining -= read_size;
+            piece_offset = 0;
+            if remaining == 0 {
+                break;
+            }
+        }
+
+        if remaining > 0 {
+            return Err(BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Not enough data available to satisfy piece block request",
+            )));
+        }
+
+        Ok(buffer)
+    }
+
     /// Marks all pieces of the torrent as locally complete in the context (forcing a fully downloaded state).
     pub fn fully_downloaded_torrent_bitfield(
         &self,

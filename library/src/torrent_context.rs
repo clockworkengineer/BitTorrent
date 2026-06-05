@@ -4,8 +4,7 @@
 //! files, bitfield vectors, missing piece indices, and the connected peer swarm.
 
 use crate::average::Average;
-use crate::constants::BLOCK_SIZE;
-use crate::disk_io::DiskIO;
+use crate::constants::BLOCK_SIZE;use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};use crate::disk_io::DiskIO;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::metainfo::FileDetails;
 use crate::metainfo::MetaInfoFile;
@@ -363,6 +362,11 @@ impl TorrentContext {
         self.bytes_left_to_download().unwrap_or(1) == 0
     }
 
+    /// Returns true when the torrent has entered endgame mode.
+    pub fn is_endgame(&self) -> bool {
+        self.missing_pieces_count <= ENDGAME_THRESHOLD
+    }
+
     /// Checks and updates status to `Seeding` if downloading is completed.
     pub fn try_complete_download(&mut self) {
         if self.status == TorrentStatus::Downloading && self.is_download_complete() {
@@ -407,6 +411,11 @@ impl TorrentContext {
                     &finished_piece,
                     finished_piece.len() as u32,
                 );
+                for peer in self.peer_swarm.read().unwrap().values() {
+                    if let Ok(peer_guard) = peer.lock() {
+                        let _ = peer_guard.send_have(piece_number);
+                    }
+                }
                 self.try_complete_download();
                 self.clear_piece_requests(piece_number);
                 self.assembly_data.lock().unwrap().piece_buffers.remove(&piece_number);
@@ -552,6 +561,7 @@ impl TorrentContext {
         if self.status != TorrentStatus::Downloading {
             return None;
         }
+        let endgame = self.is_endgame();
         let mut candidates: Vec<(usize, u32)> = (0..self.number_of_pieces as u32)
             .filter(|piece| !self.is_piece_local(*piece) && peer.is_piece_on_remote_peer(*piece))
             .map(|piece| (self.piece_data[piece as usize].peer_count, piece))
@@ -561,6 +571,9 @@ impl TorrentContext {
             if let Some((begin, length)) = self.next_pending_block(piece_number) {
                 let block_index = begin / BLOCK_SIZE as u32;
                 if self.reserve_block_request(piece_number, block_index) {
+                    return Some((piece_number, begin, length));
+                }
+                if endgame {
                     return Some((piece_number, begin, length));
                 }
             }

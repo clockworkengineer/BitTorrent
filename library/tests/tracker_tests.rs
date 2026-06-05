@@ -75,6 +75,33 @@ fn test_tracker_started_and_peer_list() {
 }
 
 #[test]
+fn test_tracker_completed_event() {
+    let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("tracker_completed_event_test");
+    let _ = fs::remove_dir_all(&download_path);
+
+    let mut meta =
+        MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
+    meta.parse().expect("Failed to parse torrent");
+    let disk_io = DiskIO::new();
+    let selector = Selector::new();
+    let context = TorrentContext::new(&meta, selector, &disk_io, &download_path, false)
+        .expect("Failed to create torrent context");
+    let context = Arc::new(Mutex::new(context));
+
+    let mut tracker = Tracker::new_with_announcer(context.clone(), Box::new(FakeAnnouncer {}))
+        .expect("Failed to create tracker");
+
+    let response = tracker
+        .announce_completed()
+        .expect("Tracker announce completed failed");
+    assert_eq!(response.status_message, "event=completed");
+
+    let _ = fs::remove_dir_all(&download_path);
+}
+
+#[test]
 fn test_manager_peer_discovery_queue_receives_peers() {
     let manager = Manager::new();
     let (sender, receiver) = channel();

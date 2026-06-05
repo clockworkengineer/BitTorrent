@@ -10,7 +10,7 @@ use crate::tracker::{
 use crate::util::{pack_u32, pack_u64, unpack_u32, unpack_u64};
 use std::io::Read;
 use std::net::{ToSocketAddrs, UdpSocket};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use urlencoding::encode;
 use urlencoding::encode_binary;
 
@@ -197,6 +197,7 @@ pub struct UdpAnnouncer {
     host_port: String,
     socket: Option<UdpSocket>,
     connected: bool,
+    connected_at: Option<Instant>,
     connection_id: u64,
 }
 
@@ -214,6 +215,7 @@ impl UdpAnnouncer {
             host_port: format!("{}:{}", host, port),
             socket: None,
             connected: false,
+            connected_at: None,
             connection_id: 0,
         })
     }
@@ -315,6 +317,7 @@ impl UdpAnnouncer {
         if unpack_u32(&reply, 0) == 0 {
             self.connection_id = unpack_u64(&reply, 8);
             self.connected = true;
+            self.connected_at = Some(Instant::now());
             Ok(())
         } else if unpack_u32(&reply, 0) == 3 {
             let message = String::from_utf8_lossy(&reply[8..]).into_owned();
@@ -337,6 +340,14 @@ impl Announcer for UdpAnnouncer {
         tracker: &crate::tracker::TrackerAnnounceContext,
     ) -> Result<AnnounceResponse, BitTorrentError> {
         Tracker::log_announce(tracker);
+        if self.connected {
+            if let Some(at) = self.connected_at {
+                if at.elapsed() > Duration::from_secs(60) {
+                    self.connected = false;
+                    self.connection_id = 0;
+                }
+            }
+        }
         self.ensure_socket()?;
         if !self.connected {
             if let Err(e) = self.connect() {

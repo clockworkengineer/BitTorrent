@@ -280,6 +280,28 @@ impl TorrentSession {
                     "Handshake completed with peer {}:{}",
                     peer_details.ip, peer_details.port
                 );
+                let bitfield = context.lock().unwrap().bitfield.clone();
+                if let Err(_) = peer_guard.send_bitfield(bitfield) {
+                    if let Some(manager) = &manager_clone {
+                        manager.add_to_dead_peer_list(&peer_details.ip);
+                    }
+                    return;
+                }
+                println!(
+                    "Sent Bitfield to peer {}:{}",
+                    peer_details.ip, peer_details.port
+                );
+                if let Err(_) = peer_guard.send_unchoke() {
+                    if let Some(manager) = &manager_clone {
+                        manager.add_to_dead_peer_list(&peer_details.ip);
+                    }
+                    return;
+                }
+                peer_guard.am_choking = false;
+                println!(
+                    "Sent Unchoke to peer {}:{}",
+                    peer_details.ip, peer_details.port
+                );
                 if let Err(_) = peer_guard.send_interested() {
                     if let Some(manager) = &manager_clone {
                         manager.add_to_dead_peer_list(&peer_details.ip);

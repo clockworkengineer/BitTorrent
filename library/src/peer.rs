@@ -189,6 +189,11 @@ impl Peer {
         self.send_message(PeerMessage::Bitfield(bitfield))
     }
 
+    /// Transmits an Unchoke message to inform peers we are willing to serve.
+    pub fn send_unchoke(&self) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Unchoke)
+    }
+
     /// Closes the peer network connection and updates local swarm bitfields.
     pub fn close(&mut self) {
         if self.connected {
@@ -270,9 +275,28 @@ impl Peer {
             }
             PeerMessage::Interested => {
                 self.peer_interested = true;
+                if self.am_choking {
+                    self.send_unchoke()?;
+                    self.am_choking = false;
+                }
             }
             PeerMessage::NotInterested => {
                 self.peer_interested = false;
+            }
+            PeerMessage::Request {
+                index,
+                begin,
+                length,
+            } => {
+                if self.am_choking {
+                    return Ok(());
+                }
+                let block = disk_io.read_piece_block(tc, index, begin, length)?;
+                self.send_message(PeerMessage::Piece {
+                    index,
+                    begin,
+                    block,
+                })?;
             }
             PeerMessage::Have(index) => {
                 let was_new = !self.is_piece_on_remote_peer(index);
@@ -293,6 +317,27 @@ impl Peer {
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
                 self.reserved_blocks.retain(|&(p, b)| !(p == index && b == block_index));
+                if tc.is_endgame() {
+                    for peer in tc.peer_swarm.read().unwrap().values() {
+                        if let Ok(mut other_peer) = peer.lock() {
+                            if other_peer.ip != self.ip
+                                && other_peer
+                                    .reserved_blocks
+                                    .contains(&(index, block_index))
+                            {
+                                let cancel_length = std::cmp::min(
+                                    crate::constants::BLOCK_SIZE as u32,
+                                    tc.get_piece_length(index).saturating_sub(begin),
+                                );
+                                let _ = other_peer.send_message(PeerMessage::Cancel {
+                                    index,
+                                    begin,
+                                    length: cancel_length,
+                                });
+                            }
+                        }
+                    }
+                }
                 log(&format!("[peer {}:{}] PIECE index={} begin={} len={} outstanding={}",
                     self.ip, self.port, index, begin, block.len(), self.outstanding_requests_count));
                 tc.process_piece_block(disk_io, index, begin, &block)?;

@@ -7,14 +7,15 @@ use crate::peer::Peer;
 use crate::torrent_context::TorrentContext;
 use crate::tracker::PeerDetails;
 use crate::util::info_hash_to_string;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
 
 /// Global orchestrator keeping track of active torrent contexts and network peers.
 pub struct Manager {
     torrents: RwLock<HashMap<String, Arc<Mutex<TorrentContext>>>>,
-    dead_peers: RwLock<HashSet<String>>,
+    dead_peers: RwLock<HashMap<String, Instant>>,
     peer_discovery_queue: RwLock<Option<Sender<PeerDetails>>>,
 }
 
@@ -23,7 +24,7 @@ impl Manager {
     pub fn new() -> Self {
         Manager {
             torrents: RwLock::new(HashMap::new()),
-            dead_peers: RwLock::new(HashSet::new()),
+            dead_peers: RwLock::new(HashMap::new()),
             peer_discovery_queue: RwLock::new(None),
         }
     }
@@ -60,7 +61,10 @@ impl Manager {
 
     /// Adds an IP address to the dead peer list to suppress reconnection attempts.
     pub fn add_to_dead_peer_list(&self, ip: &str) {
-        self.dead_peers.write().unwrap().insert(ip.to_string());
+        self.dead_peers
+            .write()
+            .unwrap()
+            .insert(ip.to_string(), Instant::now());
     }
 
     /// Removes an IP address from the dead peer list.
@@ -70,7 +74,15 @@ impl Manager {
 
     /// Checks if a peer IP is marked as dead.
     pub fn is_peer_dead(&self, ip: &str) -> bool {
-        self.dead_peers.read().unwrap().contains(ip)
+        let mut dead_peers = self.dead_peers.write().unwrap();
+        if let Some(&timestamp) = dead_peers.get(ip) {
+            if timestamp.elapsed() > crate::constants::DEAD_PEER_TTL {
+                dead_peers.remove(ip);
+                return false;
+            }
+            return true;
+        }
+        false
     }
 
     /// Configures the sender channel for queueing newly discovered peers.
