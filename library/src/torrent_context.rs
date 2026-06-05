@@ -4,7 +4,8 @@
 //! files, bitfield vectors, missing piece indices, and the connected peer swarm.
 
 use crate::average::Average;
-use crate::constants::BLOCK_SIZE;use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};use crate::disk_io::DiskIO;
+use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};
+use crate::disk_io::DiskIO;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::metainfo::FileDetails;
 use crate::metainfo::MetaInfoFile;
@@ -89,10 +90,9 @@ impl TorrentContext {
     ) -> Result<Self, crate::error::BitTorrentError> {
         let info_hash = torrent_meta_info.get_info_hash()?;
         let tracker_urls = torrent_meta_info.get_tracker_urls()?;
-        let tracker_url = tracker_urls
-            .get(0)
-            .cloned()
-            .ok_or_else(|| crate::error::BitTorrentError::Parse("Torrent contains no tracker URLs.".into()))?;
+        let tracker_url = tracker_urls.get(0).cloned().ok_or_else(|| {
+            crate::error::BitTorrentError::Parse("Torrent contains no tracker URLs.".into())
+        })?;
         let (total_download_length, all_files_to_download) =
             torrent_meta_info.local_files_to_download_list(download_path)?;
         let piece_length = torrent_meta_info.get_piece_length()?;
@@ -404,7 +404,11 @@ impl TorrentContext {
             drop(piece_buffer);
 
             if self.check_piece_hash(piece_number, &finished_piece, finished_piece.len() as u32) {
-                println!("Piece {} passed hash verification ({} bytes), writing to disk", piece_number, finished_piece.len());
+                println!(
+                    "Piece {} passed hash verification ({} bytes), writing to disk",
+                    piece_number,
+                    finished_piece.len()
+                );
                 disk_io.write_piece(self, piece_number, &finished_piece)?;
                 self.update_bitfield_from_buffer(
                     piece_number,
@@ -418,7 +422,11 @@ impl TorrentContext {
                 }
                 self.try_complete_download();
                 self.clear_piece_requests(piece_number);
-                self.assembly_data.lock().unwrap().piece_buffers.remove(&piece_number);
+                self.assembly_data
+                    .lock()
+                    .unwrap()
+                    .piece_buffers
+                    .remove(&piece_number);
                 // Broadcast Have to all connected peers so they know we have this piece.
                 let swarm = self.peer_swarm.read().unwrap();
                 for peer_arc in swarm.values() {
@@ -430,7 +438,11 @@ impl TorrentContext {
             } else {
                 println!("Piece {} failed hash verification", piece_number);
                 self.clear_piece_requests(piece_number);
-                self.assembly_data.lock().unwrap().piece_buffers.remove(&piece_number);
+                self.assembly_data
+                    .lock()
+                    .unwrap()
+                    .piece_buffers
+                    .remove(&piece_number);
                 return Err(crate::error::BitTorrentError::Parse(
                     "Piece failed hash verification".to_string(),
                 ));
@@ -577,15 +589,14 @@ impl TorrentContext {
         candidates.sort_by_key(|(count, piece)| (*count, *piece));
 
         let pieces_remaining = candidates.len();
-        let in_endgame = pieces_remaining > 0
-            && pieces_remaining as u32 <= crate::constants::ENDGAME_THRESHOLD;
+        let in_endgame =
+            pieces_remaining > 0 && pieces_remaining <= crate::constants::ENDGAME_THRESHOLD;
 
         for (_, piece_number) in candidates {
             if in_endgame {
                 // Endgame: request any block of the piece, even if already reserved by another peer.
                 let piece_length = self.get_piece_length(piece_number);
-                let block_count =
-                    ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
+                let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
                 for block_index in 0..block_count {
                     let begin = block_index * BLOCK_SIZE as u32;
                     let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));

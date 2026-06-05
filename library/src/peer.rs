@@ -266,11 +266,17 @@ impl Peer {
         match message {
             PeerMessage::KeepAlive => {}
             PeerMessage::Choke => {
-                log(&format!("[peer {}:{}] CHOKED by remote", self.ip, self.port));
+                log(&format!(
+                    "[peer {}:{}] CHOKED by remote",
+                    self.ip, self.port
+                ));
                 self.peer_choking.reset();
             }
             PeerMessage::Unchoke => {
-                log(&format!("[peer {}:{}] UNCHOKED by remote", self.ip, self.port));
+                log(&format!(
+                    "[peer {}:{}] UNCHOKED by remote",
+                    self.ip, self.port
+                ));
                 self.peer_choking.set();
             }
             PeerMessage::Interested => {
@@ -282,21 +288,6 @@ impl Peer {
             }
             PeerMessage::NotInterested => {
                 self.peer_interested = false;
-            }
-            PeerMessage::Request {
-                index,
-                begin,
-                length,
-            } => {
-                if self.am_choking {
-                    return Ok(());
-                }
-                let block = disk_io.read_piece_block(tc, index, begin, length)?;
-                self.send_message(PeerMessage::Piece {
-                    index,
-                    begin,
-                    block,
-                })?;
             }
             PeerMessage::Have(index) => {
                 let was_new = !self.is_piece_on_remote_peer(index);
@@ -316,14 +307,13 @@ impl Peer {
             } => {
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
-                self.reserved_blocks.retain(|&(p, b)| !(p == index && b == block_index));
+                self.reserved_blocks
+                    .retain(|&(p, b)| !(p == index && b == block_index));
                 if tc.is_endgame() {
                     for peer in tc.peer_swarm.read().unwrap().values() {
-                        if let Ok(mut other_peer) = peer.lock() {
+                        if let Ok(other_peer) = peer.lock() {
                             if other_peer.ip != self.ip
-                                && other_peer
-                                    .reserved_blocks
-                                    .contains(&(index, block_index))
+                                && other_peer.reserved_blocks.contains(&(index, block_index))
                             {
                                 let cancel_length = std::cmp::min(
                                     crate::constants::BLOCK_SIZE as u32,
@@ -338,15 +328,22 @@ impl Peer {
                         }
                     }
                 }
-                log(&format!("[peer {}:{}] PIECE index={} begin={} len={} outstanding={}",
-                    self.ip, self.port, index, begin, block.len(), self.outstanding_requests_count));
+                log(&format!(
+                    "[peer {}:{}] PIECE index={} begin={} len={} outstanding={}",
+                    self.ip,
+                    self.port,
+                    index,
+                    begin,
+                    block.len(),
+                    self.outstanding_requests_count
+                ));
                 let piece_complete = tc.process_piece_block(disk_io, index, begin, &block)?;
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
                     let pieces_remaining = (0..tc.number_of_pieces as u32)
                         .filter(|&p| !tc.is_piece_local(p))
                         .count();
-                    if pieces_remaining as u32 <= crate::constants::ENDGAME_THRESHOLD {
+                    if pieces_remaining <= crate::constants::ENDGAME_THRESHOLD {
                         let length = std::cmp::min(
                             crate::constants::BLOCK_SIZE as u32,
                             tc.get_piece_length(index).saturating_sub(begin),
@@ -368,7 +365,11 @@ impl Peer {
                 }
             }
             PeerMessage::Cancel { .. } | PeerMessage::Port(_) => {}
-            PeerMessage::Request { index, begin, length } => {
+            PeerMessage::Request {
+                index,
+                begin,
+                length,
+            } => {
                 // Serve the block if we have the piece and are not choking the remote peer.
                 if !self.am_choking && tc.is_piece_local(index) {
                     match disk_io.read_piece_block(tc, index, begin, length) {

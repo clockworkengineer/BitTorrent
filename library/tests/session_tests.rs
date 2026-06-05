@@ -1,4 +1,5 @@
-use bittorrent_rs::{PeerDetails, PeerMessage, PeerNetwork, TorrentSession, TorrentStatus};
+use bittorrent_rs::{PeerDetails, PeerMessage, TorrentSession, TorrentStatus};
+use bittorrent_rs::peer_network::PeerNetwork;
 use std::fs;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -23,10 +24,11 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
         .join("session_handshake");
     cleanup_download_path(&download_path);
 
-    let session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
+    let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
         .expect("Failed to create torrent session");
     let expected_info_hash = session.context.lock().unwrap().info_hash.clone();
     let expected_bitfield = session.context.lock().unwrap().bitfield.clone();
+    let expected_info_hash_clone = expected_info_hash.clone();
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
     let addr = listener.local_addr().expect("Failed to get listener address");
@@ -35,10 +37,10 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
         let (stream, _) = listener.accept().expect("Failed to accept connection");
         let mut net = PeerNetwork::new(stream);
         let (remote_info_hash, _) = net.read_handshake().expect("Failed to read handshake");
-        assert_eq!(remote_info_hash, expected_info_hash);
+        assert_eq!(remote_info_hash, expected_info_hash_clone);
 
         let local_peer_id = *b"-RS0001-000000000000";
-        net.write_handshake(&expected_info_hash, &local_peer_id)
+        net.write_handshake(&expected_info_hash_clone, &local_peer_id)
             .expect("Failed to write handshake");
 
         let first = net.read_message().expect("Failed to read first message");
@@ -74,9 +76,10 @@ fn test_uploads_piece_when_peer_requests_block() {
         .join("session_upload_request");
     cleanup_download_path(&download_path);
 
-    let session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, true)
+    let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, true)
         .expect("Failed to create seeding torrent session");
     let expected_info_hash = session.context.lock().unwrap().info_hash.clone();
+    let expected_info_hash_clone = expected_info_hash.clone();
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
     let addr = listener.local_addr().expect("Failed to get listener address");
@@ -85,10 +88,10 @@ fn test_uploads_piece_when_peer_requests_block() {
         let (stream, _) = listener.accept().expect("Failed to accept connection");
         let mut net = PeerNetwork::new(stream);
         let (remote_info_hash, _) = net.read_handshake().expect("Failed to read handshake");
-        assert_eq!(remote_info_hash, expected_info_hash);
+        assert_eq!(remote_info_hash, expected_info_hash_clone);
 
         let local_peer_id = *b"-RS0001-000000000000";
-        net.write_handshake(&expected_info_hash, &local_peer_id)
+        net.write_handshake(&expected_info_hash_clone, &local_peer_id)
             .expect("Failed to write handshake");
 
         let _ = net.read_message().expect("Failed to read bitfield");
