@@ -1,7 +1,7 @@
 //! Piece and peer selector
 //!
 //! Implements strategy algorithms for selecting which pieces to request next
-//! (random/missing search) and which peers are best candidates to fetch pieces from.
+//! (random/missing search) and which peers are the best candidates to fetch pieces from.
 
 use crate::peer::Peer;
 use crate::torrent_context::TorrentContext;
@@ -54,7 +54,7 @@ impl Selector {
         }
         let start_piece = self.random_seed.gen_range(0..number_of_pieces);
         let max_suggestions = std::cmp::min(
-            remote_peer.number_of_missing_pieces as usize,
+            remote_peer.number_of_missing_pieces,
             number_of_suggestions,
         );
         if max_suggestions == 0 {

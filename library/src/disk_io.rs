@@ -106,7 +106,7 @@ impl DiskIO {
                 continue;
             }
 
-            let write_start = piece_offset as u64;
+            let write_start = piece_offset;
             let write_size = std::cmp::min(remaining as u64, file.length - write_start) as usize;
             let mut handle = OpenOptions::new().write(true).open(&file.name)?;
             handle.seek(SeekFrom::Start(write_start))?;
@@ -131,7 +131,8 @@ impl DiskIO {
         Ok(())
     }
 
-    /// Reads a single block from disk for a local piece, returning the exact requested bytes.
+    /// Reads a block of data from the disk for the given piece, begin offset, and length.
+    /// Mirrors `write_piece` but returns the bytes instead of writing them.
     pub fn read_piece_block(
         &self,
         tc: &TorrentContext,
@@ -146,25 +147,22 @@ impl DiskIO {
             ));
         }
 
-        let mut remaining = length as usize;
         let mut piece_offset = piece_number as u64 * tc.piece_length as u64 + begin as u64;
-        let mut buffer = Vec::with_capacity(length as usize);
+        let mut remaining = length as usize;
+        let mut result = Vec::with_capacity(remaining);
 
         for file in &tc.files_to_download {
             if piece_offset >= file.length {
                 piece_offset -= file.length;
                 continue;
             }
-
             let read_start = piece_offset;
             let read_size = std::cmp::min(remaining as u64, file.length - read_start) as usize;
             let mut handle = File::open(&file.name)?;
             handle.seek(SeekFrom::Start(read_start))?;
-
-            let mut chunk = vec![0u8; read_size];
-            handle.read_exact(&mut chunk)?;
-            buffer.extend_from_slice(&chunk);
-
+            let mut buf = vec![0u8; read_size];
+            handle.read_exact(&mut buf)?;
+            result.extend_from_slice(&buf);
             remaining -= read_size;
             piece_offset = 0;
             if remaining == 0 {
@@ -175,11 +173,12 @@ impl DiskIO {
         if remaining > 0 {
             return Err(BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
-                "Not enough data available to satisfy piece block request",
+                "Not enough data in torrent files to read the block",
             )));
         }
 
-        Ok(buffer)
+        Ok(result)
+
     }
 
     /// Marks all pieces of the torrent as locally complete in the context (forcing a fully downloaded state).

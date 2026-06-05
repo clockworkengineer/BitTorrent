@@ -419,6 +419,13 @@ impl TorrentContext {
                 self.try_complete_download();
                 self.clear_piece_requests(piece_number);
                 self.assembly_data.lock().unwrap().piece_buffers.remove(&piece_number);
+                // Broadcast Have to all connected peers so they know we have this piece.
+                let swarm = self.peer_swarm.read().unwrap();
+                for peer_arc in swarm.values() {
+                    if let Ok(peer) = peer_arc.try_lock() {
+                        let _ = peer.send_have(piece_number);
+                    }
+                }
                 return Ok(true);
             } else {
                 println!("Piece {} failed hash verification", piece_number);
@@ -557,6 +564,7 @@ impl TorrentContext {
     }
 
     /// Identifies and reserves the next download block from a piece available on the specified peer.
+    /// In endgame mode (few pieces remaining), allows duplicate requests to speed up completion.
     pub fn next_block_request_for_peer(&mut self, peer: &Peer) -> Option<(u32, u32, u32)> {
         if self.status != TorrentStatus::Downloading {
             return None;
@@ -567,8 +575,24 @@ impl TorrentContext {
             .map(|piece| (self.piece_data[piece as usize].peer_count, piece))
             .collect();
         candidates.sort_by_key(|(count, piece)| (*count, *piece));
+
+        let pieces_remaining = candidates.len();
+        let in_endgame = pieces_remaining > 0
+            && pieces_remaining as u32 <= crate::constants::ENDGAME_THRESHOLD;
+
         for (_, piece_number) in candidates {
-            if let Some((begin, length)) = self.next_pending_block(piece_number) {
+            if in_endgame {
+                // Endgame: request any block of the piece, even if already reserved by another peer.
+                let piece_length = self.get_piece_length(piece_number);
+                let block_count =
+                    ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
+                for block_index in 0..block_count {
+                    let begin = block_index * BLOCK_SIZE as u32;
+                    let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));
+                    self.reserve_block_request(piece_number, block_index);
+                    return Some((piece_number, begin, length));
+                }
+            } else if let Some((begin, length)) = self.next_pending_block(piece_number) {
                 let block_index = begin / BLOCK_SIZE as u32;
                 if self.reserve_block_request(piece_number, block_index) {
                     return Some((piece_number, begin, length));
