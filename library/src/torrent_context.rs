@@ -415,9 +415,13 @@ impl TorrentContext {
                     &finished_piece,
                     finished_piece.len() as u32,
                 );
-                for peer in self.peer_swarm.read().unwrap().values() {
-                    if let Ok(peer_guard) = peer.lock() {
-                        let _ = peer_guard.send_have(piece_number);
+                // Broadcast Have to all connected peers so they know we have this piece.
+                {
+                    let swarm = self.peer_swarm.read().unwrap();
+                    for peer_arc in swarm.values() {
+                        if let Ok(peer_guard) = peer_arc.lock() {
+                            let _ = peer_guard.send_have(piece_number);
+                        }
                     }
                 }
                 self.try_complete_download();
@@ -427,13 +431,6 @@ impl TorrentContext {
                     .unwrap()
                     .piece_buffers
                     .remove(&piece_number);
-                // Broadcast Have to all connected peers so they know we have this piece.
-                let swarm = self.peer_swarm.read().unwrap();
-                for peer_arc in swarm.values() {
-                    if let Ok(peer) = peer_arc.try_lock() {
-                        let _ = peer.send_have(piece_number);
-                    }
-                }
                 return Ok(true);
             } else {
                 println!("Piece {} failed hash verification", piece_number);

@@ -129,8 +129,6 @@ impl TrackerAnnounceContext {
     }
 }
 
-pub type TrackerCallback = Arc<dyn Fn(&TrackerAnnounceContext) + Send + Sync>;
-
 /// Manages periodic communication with the tracker to announce status and retrieve peer swarms.
 pub struct Tracker {
     tc: Arc<Mutex<TorrentContext>>,
@@ -150,7 +148,6 @@ pub struct Tracker {
     pub min_interval: usize,
     pub tracker_status: TrackerStatus,
     pub event: TrackerEvent,
-    pub callback: Option<TrackerCallback>,
     pub peer_swarm_queue: Option<Sender<PeerDetails>>,
     pub peer_manager: Option<Arc<Manager>>,
     pub last_response: AnnounceResponse,
@@ -244,7 +241,6 @@ impl Tracker {
             min_interval: 0,
             tracker_status: TrackerStatus::Stopped,
             event: TrackerEvent::None,
-            callback: None,
             peer_swarm_queue: None,
             peer_manager: None,
             last_response: AnnounceResponse::default(),
@@ -278,7 +274,6 @@ impl Tracker {
             min_interval: 0,
             tracker_status: TrackerStatus::Stopped,
             event: TrackerEvent::None,
-            callback: None,
             peer_swarm_queue: None,
             peer_manager: None,
             last_response: AnnounceResponse::default(),
