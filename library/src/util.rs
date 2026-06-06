@@ -3,6 +3,10 @@
 //! Provides binary serialization/deserialization helper functions (such as packing
 //! and unpacking integers to/from network byte order) and formatting utilities.
 
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::sync::{Mutex, OnceLock};
+
 /// Packs a 32-bit unsigned integer into a 4-byte big-endian array.
 pub fn pack_u32(value: u32) -> [u8; 4] {
     [
@@ -57,4 +61,22 @@ pub fn get_bitfield_index_and_mask(piece_number: u32) -> (usize, u8) {
     let byte_index = (piece_number >> 3) as usize;
     let bit_mask = 0x80 >> (piece_number & 0x7);
     (byte_index, bit_mask)
+}
+
+static DEBUG_LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
+
+/// Appends a debug message to `debug.log`.
+pub fn log_debug(msg: &str) {
+    let file = DEBUG_LOG.get_or_init(|| {
+        let f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("debug.log")
+            .expect("cannot open debug.log");
+        Mutex::new(f)
+    });
+    if let Ok(mut f) = file.lock() {
+        let _ = writeln!(f, "{}", msg);
+        let _ = f.flush();
+    }
 }

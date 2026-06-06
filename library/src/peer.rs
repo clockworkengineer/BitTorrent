@@ -11,28 +11,9 @@ use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;
 use crate::util::get_bitfield_index_and_mask;
-use std::fs::OpenOptions;
-use std::io::Write;
+use crate::util::log_debug as log;
 use std::net::TcpStream;
-use std::sync::{Arc, Mutex, OnceLock};
-
-static PEER_LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
-
-/// Appends a debug message to `debug.log`.
-fn log(msg: &str) {
-    let file = PEER_LOG.get_or_init(|| {
-        let f = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("debug.log")
-            .expect("cannot open debug.log");
-        Mutex::new(f)
-    });
-    if let Ok(mut f) = file.lock() {
-        let _ = writeln!(f, "{}", msg);
-        let _ = f.flush();
-    }
-}
+use std::sync::{Arc, Mutex};
 
 /// Represents a remote peer connection, holding socket state, bitfield arrays, choking/interest flags, and latency stats.
 pub struct Peer {

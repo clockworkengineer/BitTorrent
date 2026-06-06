@@ -13,31 +13,13 @@ use crate::selector::Selector;
 use crate::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::{PeerDetails, Tracker};
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-static LOG: OnceLock<Mutex<fs::File>> = OnceLock::new();
-
-/// Appends a debug message to `debug.log`.
-fn log(msg: &str) {
-    let file = LOG.get_or_init(|| {
-        let f = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("debug.log")
-            .expect("cannot open debug.log");
-        Mutex::new(f)
-    });
-    if let Ok(mut f) = file.lock() {
-        let _ = writeln!(f, "{}", msg);
-        let _ = f.flush();
-    }
-}
+use crate::util::log_debug as log;
 
 /// Represents an active Torrent transfer session.
 pub struct TorrentSession {
@@ -80,6 +62,31 @@ impl TorrentSession {
         };
 
         session.context.lock().unwrap().validate()?;
+
+        let context_stats = session.context.clone();
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(5));
+            if let Ok(ctx) = context_stats.try_lock() {
+                if ctx.status == TorrentStatus::Ended {
+                    break;
+                }
+                let peers = ctx.peer_swarm.read().map(|s| s.len()).unwrap_or(0);
+                let unchoked = ctx.number_of_unchoked_peers();
+                let done = ctx.total_bytes_downloaded;
+                let total = ctx.total_bytes_to_download;
+                let bps = ctx.bytes_per_second();
+                let reserved = ctx.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
+                log(&format!(
+                    "[stats] peers={}/{} downloaded={}/{} ({:.1}%) speed={}/s reserved_blocks={}",
+                    unchoked, peers,
+                    done, total,
+                    if total > 0 { done as f64 / total as f64 * 100.0 } else { 0.0 },
+                    bps,
+                    reserved,
+                ));
+            }
+        });
+
         Ok(session)
     }
 
@@ -184,33 +191,6 @@ impl TorrentSession {
         let manager_clone = manager.clone();
 
         let handle = thread::spawn(move || {
-            // Periodic stats thread — prints every 5s so we can see what's happening
-            {
-                let ctx_stats = context.clone();
-                thread::spawn(move || loop {
-                    thread::sleep(Duration::from_secs(5));
-                    if let Ok(ctx) = ctx_stats.try_lock() {
-                        if ctx.status == TorrentStatus::Ended {
-                            break;
-                        }
-                        let peers = ctx.peer_swarm.read().map(|s| s.len()).unwrap_or(0);
-                        let unchoked = ctx.number_of_unchoked_peers();
-                        let done = ctx.total_bytes_downloaded;
-                        let total = ctx.total_bytes_to_download;
-                        let bps = ctx.bytes_per_second();
-                        let reserved = ctx.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
-                        log(&format!(
-                            "[stats] peers={}/{} downloaded={}/{} ({:.1}%) speed={}/s reserved_blocks={}",
-                            unchoked, peers,
-                            done, total,
-                            if total > 0 { done as f64 / total as f64 * 100.0 } else { 0.0 },
-                            bps,
-                            reserved,
-                        ));
-                    }
-                });
-            }
-
             handle_peer_session(peer_details, context, disk_io, manager_clone);
         });
 
