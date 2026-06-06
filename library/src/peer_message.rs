@@ -61,15 +61,7 @@ impl PeerMessage {
                 index,
                 begin,
                 length,
-            } => {
-                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 12);
-                buffer.extend_from_slice(&((1 + 12) as u32).to_be_bytes());
-                buffer.push(6);
-                buffer.extend_from_slice(&index.to_be_bytes());
-                buffer.extend_from_slice(&begin.to_be_bytes());
-                buffer.extend_from_slice(&length.to_be_bytes());
-                buffer
-            }
+            } => Self::encode_triple_u32(6, *index, *begin, *length),
             PeerMessage::Piece {
                 index,
                 begin,
@@ -87,15 +79,7 @@ impl PeerMessage {
                 index,
                 begin,
                 length,
-            } => {
-                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 12);
-                buffer.extend_from_slice(&((1 + 12) as u32).to_be_bytes());
-                buffer.push(8);
-                buffer.extend_from_slice(&index.to_be_bytes());
-                buffer.extend_from_slice(&begin.to_be_bytes());
-                buffer.extend_from_slice(&length.to_be_bytes());
-                buffer
-            }
+            } => Self::encode_triple_u32(8, *index, *begin, *length),
             PeerMessage::Port(port) => {
                 let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 2);
                 buffer.extend_from_slice(&((1 + 2) as u32).to_be_bytes());
@@ -127,14 +111,7 @@ impl PeerMessage {
             }
             5 => Ok(PeerMessage::Bitfield(payload.to_vec())),
             6 => {
-                if payload.len() != 12 {
-                    return Err(BitTorrentError::Parse(
-                        "Invalid REQUEST payload length".into(),
-                    ));
-                }
-                let index = u32::from_be_bytes(payload[0..4].try_into().unwrap());
-                let begin = u32::from_be_bytes(payload[4..8].try_into().unwrap());
-                let length = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+                let (index, begin, length) = Self::decode_triple_u32(payload)?;
                 Ok(PeerMessage::Request {
                     index,
                     begin,
@@ -157,14 +134,7 @@ impl PeerMessage {
                 })
             }
             8 => {
-                if payload.len() != 12 {
-                    return Err(BitTorrentError::Parse(
-                        "Invalid CANCEL payload length".into(),
-                    ));
-                }
-                let index = u32::from_be_bytes(payload[0..4].try_into().unwrap());
-                let begin = u32::from_be_bytes(payload[4..8].try_into().unwrap());
-                let length = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+                let (index, begin, length) = Self::decode_triple_u32(payload)?;
                 Ok(PeerMessage::Cancel {
                     index,
                     begin,
@@ -219,5 +189,25 @@ impl PeerMessage {
         let info_hash = buffer[28..48].to_vec();
         let peer_id = buffer[48..68].to_vec();
         Ok((info_hash, peer_id))
+    }
+
+    fn encode_triple_u32(message_id: u8, v1: u32, v2: u32, v3: u32) -> Vec<u8> {
+        let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 12);
+        buffer.extend_from_slice(&((1 + 12) as u32).to_be_bytes());
+        buffer.push(message_id);
+        buffer.extend_from_slice(&v1.to_be_bytes());
+        buffer.extend_from_slice(&v2.to_be_bytes());
+        buffer.extend_from_slice(&v3.to_be_bytes());
+        buffer
+    }
+
+    fn decode_triple_u32(payload: &[u8]) -> Result<(u32, u32, u32), BitTorrentError> {
+        if payload.len() != 12 {
+            return Err(BitTorrentError::Parse("Invalid message payload length".into()));
+        }
+        let v1 = u32::from_be_bytes(payload[0..4].try_into().unwrap());
+        let v2 = u32::from_be_bytes(payload[4..8].try_into().unwrap());
+        let v3 = u32::from_be_bytes(payload[8..12].try_into().unwrap());
+        Ok((v1, v2, v3))
     }
 }

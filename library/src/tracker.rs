@@ -175,31 +175,7 @@ impl Tracker {
         );
     }
 
-    /// Extracts peer details from a compact-format peer byte list starting from a given offset.
-    pub fn get_compact_peer_list(&self, peers: &[u8], offset: usize) -> Vec<PeerDetails> {
-        let mut peer_list = Vec::new();
-        let mut num = offset;
-        while num + 6 <= peers.len() {
-            let ip = format!(
-                "{}.{}.{}.{}",
-                peers[num],
-                peers[num + 1],
-                peers[num + 2],
-                peers[num + 3]
-            );
-            let port = ((peers[num + 4] as u16) << 8) | peers[num + 5] as u16;
-            if ip != self.ip {
-                peer_list.push(PeerDetails {
-                    info_hash: self.info_hash.clone(),
-                    peer_id: None,
-                    ip: ip.clone(),
-                    port,
-                });
-            }
-            num += 6;
-        }
-        peer_list
-    }
+
 
     /// Creates and configures a new `Tracker` manager by mapping urls, selecting primary announcer protocol handlers, and initializing defaults.
     pub fn new(tc: Arc<Mutex<TorrentContext>>) -> Result<Self, BitTorrentError> {

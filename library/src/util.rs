@@ -51,3 +51,10 @@ pub fn unpack_u64(buffer: &[u8], offset: usize) -> u64 {
 pub fn info_hash_to_string(info_hash: &[u8]) -> String {
     info_hash.iter().map(|b| format!("{:02x}", b)).collect()
 }
+
+/// Calculates the byte index and bit mask for a piece in a standard BitTorrent bitfield.
+pub fn get_bitfield_index_and_mask(piece_number: u32) -> (usize, u8) {
+    let byte_index = (piece_number >> 3) as usize;
+    let bit_mask = 0x80 >> (piece_number & 0x7);
+    (byte_index, bit_mask)
+}

@@ -10,6 +10,7 @@ use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;
+use crate::util::get_bitfield_index_and_mask;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::TcpStream;
@@ -210,8 +211,7 @@ impl Peer {
 
     /// Checks if the remote peer's bitfield indicates they have the specified piece.
     pub fn is_piece_on_remote_peer(&self, piece_number: u32) -> bool {
-        let byte_index = (piece_number >> 3) as usize;
-        let bit_mask = 0x80 >> (piece_number & 0x7);
+        let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
         if let Some(_) = self.tc {
             if byte_index < self.remote_piece_bitfield.len() {
                 return (self.remote_piece_bitfield[byte_index] & bit_mask) != 0;
@@ -224,8 +224,7 @@ impl Peer {
     /// Marks the specified piece as complete on the remote peer and updates missing piece counts.
     pub fn set_piece_on_remote_peer(&mut self, piece_number: u32) {
         if !self.is_piece_on_remote_peer(piece_number) {
-            let byte_index = (piece_number >> 3) as usize;
-            let bit_mask = 0x80 >> (piece_number & 0x7);
+            let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
             if byte_index < self.remote_piece_bitfield.len() {
                 self.remote_piece_bitfield[byte_index] |= bit_mask;
             }
@@ -310,25 +309,11 @@ impl Peer {
                 self.reserved_blocks
                     .retain(|&(p, b)| !(p == index && b == block_index));
                 if tc.is_endgame() {
-                    let swarm = tc.peer_swarm.read().unwrap();
-                    for (peer_ip, peer_arc) in swarm.iter() {
-                        if peer_ip == &self.ip {
-                            continue;
-                        }
-                        if let Ok(other_peer) = peer_arc.try_lock() {
-                            if other_peer.reserved_blocks.contains(&(index, block_index)) {
-                                let cancel_length = std::cmp::min(
-                                    crate::constants::BLOCK_SIZE as u32,
-                                    tc.get_piece_length(index).saturating_sub(begin),
-                                );
-                                let _ = other_peer.send_message(PeerMessage::Cancel {
-                                    index,
-                                    begin,
-                                    length: cancel_length,
-                                });
-                            }
-                        }
-                    }
+                    let cancel_length = std::cmp::min(
+                        crate::constants::BLOCK_SIZE as u32,
+                        tc.get_piece_length(index).saturating_sub(begin),
+                    );
+                    self.broadcast_cancel(tc, index, begin, cancel_length, Some(block_index));
                 }
                 log(&format!(
                     "[peer {}:{}] PIECE index={} begin={} len={} outstanding={}",
@@ -350,19 +335,7 @@ impl Peer {
                             crate::constants::BLOCK_SIZE as u32,
                             tc.get_piece_length(index).saturating_sub(begin),
                         );
-                        let swarm = tc.peer_swarm.read().unwrap();
-                        for (peer_ip, peer_arc) in swarm.iter() {
-                            if peer_ip == &self.ip {
-                                continue;
-                            }
-                            if let Ok(other) = peer_arc.try_lock() {
-                                let _ = other.send_message(PeerMessage::Cancel {
-                                    index,
-                                    begin,
-                                    length,
-                                });
-                            }
-                        }
+                        self.broadcast_cancel(tc, index, begin, length, None);
                     }
                 }
             }
@@ -394,6 +367,35 @@ impl Peer {
             }
         }
         Ok(())
+    }
+
+    fn broadcast_cancel(
+        &self,
+        tc: &TorrentContext,
+        index: u32,
+        begin: u32,
+        length: u32,
+        block_index: Option<u32>,
+    ) {
+        let swarm = tc.peer_swarm.read().unwrap();
+        for (peer_ip, peer_arc) in swarm.iter() {
+            if peer_ip == &self.ip {
+                continue;
+            }
+            if let Ok(other_peer) = peer_arc.try_lock() {
+                let should_send = match block_index {
+                    Some(bi) => other_peer.reserved_blocks.contains(&(index, bi)),
+                    None => true,
+                };
+                if should_send {
+                    let _ = other_peer.send_message(PeerMessage::Cancel {
+                        index,
+                        begin,
+                        length,
+                    });
+                }
+            }
+        }
     }
 
     /// Gets the length of the last parsed packet from the network.

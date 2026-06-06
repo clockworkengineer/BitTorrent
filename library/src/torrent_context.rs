@@ -12,6 +12,7 @@ use crate::metainfo::MetaInfoFile;
 use crate::peer::Peer;
 use crate::piece_buffer::PieceBuffer;
 use crate::selector::Selector;
+use crate::util::get_bitfield_index_and_mask;
 use sha1::Digest;
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
@@ -260,8 +261,7 @@ impl TorrentContext {
 
     /// Sets or clears a specific piece completion bit in the local bitfield.
     pub fn mark_piece_local(&mut self, piece_number: u32, local: bool) {
-        let byte_index = (piece_number >> 3) as usize;
-        let bit_mask = 0x80 >> (piece_number & 0x7);
+        let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
         if local {
             self.bitfield[byte_index] |= bit_mask;
         } else {
@@ -271,15 +271,13 @@ impl TorrentContext {
 
     /// Checks if a specific piece has been fully downloaded and verified locally.
     pub fn is_piece_local(&self, piece_number: u32) -> bool {
-        let byte_index = (piece_number >> 3) as usize;
-        let bit_mask = 0x80 >> (piece_number & 0x7);
+        let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
         self.bitfield[byte_index] & bit_mask != 0
     }
 
     /// Sets or clears a specific piece index in the missing pieces tracking vector.
     pub fn mark_piece_missing(&mut self, piece_number: u32, missing: bool) {
-        let byte_index = (piece_number >> 3) as usize;
-        let bit_mask = 0x80 >> (piece_number & 0x7);
+        let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
         if missing {
             if self.pieces_missing[byte_index] & bit_mask == 0 {
                 self.pieces_missing[byte_index] |= bit_mask;
@@ -293,8 +291,7 @@ impl TorrentContext {
 
     /// Checks if a specific piece index is currently marked as missing.
     pub fn is_piece_missing(&self, piece_number: u32) -> bool {
-        let byte_index = (piece_number >> 3) as usize;
-        let bit_mask = 0x80 >> (piece_number & 0x7);
+        let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
         self.pieces_missing[byte_index] & bit_mask != 0
     }
 
