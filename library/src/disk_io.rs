@@ -96,36 +96,23 @@ impl DiskIO {
         piece_number: u32,
         piece_data: &[u8],
     ) -> Result<(), BitTorrentError> {
-        let mut remaining = piece_data.len();
-        let mut data_offset = 0usize;
-        let mut piece_offset = piece_number as u64 * tc.piece_length as u64;
+        let global_offset = piece_number as u64 * tc.piece_length as u64;
+        let ranges = resolve_file_ranges(tc, global_offset, piece_data.len());
 
-        for file in &tc.files_to_download {
-            if piece_offset >= file.length {
-                piece_offset -= file.length;
-                continue;
-            }
-
-            let write_start = piece_offset;
-            let write_size = std::cmp::min(remaining as u64, file.length - write_start) as usize;
-            let mut handle = OpenOptions::new().write(true).open(&file.name)?;
-            handle.seek(SeekFrom::Start(write_start))?;
-            handle.write_all(&piece_data[data_offset..data_offset + write_size])?;
-
-            remaining -= write_size;
-            data_offset += write_size;
-            piece_offset = 0;
-
-            if remaining == 0 {
-                break;
-            }
-        }
-
-        if remaining > 0 {
+        let total_resolved: usize = ranges.iter().map(|r| r.io_length).sum();
+        if total_resolved < piece_data.len() {
             return Err(BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "Not enough space in torrent files to write the piece",
             )));
+        }
+
+        let mut data_offset = 0usize;
+        for range in &ranges {
+            let mut handle = OpenOptions::new().write(true).open(&range.file_path)?;
+            handle.seek(SeekFrom::Start(range.seek_offset))?;
+            handle.write_all(&piece_data[data_offset..data_offset + range.io_length])?;
+            data_offset += range.io_length;
         }
 
         Ok(())
@@ -147,38 +134,27 @@ impl DiskIO {
             ));
         }
 
-        let mut piece_offset = piece_number as u64 * tc.piece_length as u64 + begin as u64;
-        let mut remaining = length as usize;
-        let mut result = Vec::with_capacity(remaining);
+        let global_offset = piece_number as u64 * tc.piece_length as u64 + begin as u64;
+        let ranges = resolve_file_ranges(tc, global_offset, length as usize);
 
-        for file in &tc.files_to_download {
-            if piece_offset >= file.length {
-                piece_offset -= file.length;
-                continue;
-            }
-            let read_start = piece_offset;
-            let read_size = std::cmp::min(remaining as u64, file.length - read_start) as usize;
-            let mut handle = File::open(&file.name)?;
-            handle.seek(SeekFrom::Start(read_start))?;
-            let mut buf = vec![0u8; read_size];
-            handle.read_exact(&mut buf)?;
-            result.extend_from_slice(&buf);
-            remaining -= read_size;
-            piece_offset = 0;
-            if remaining == 0 {
-                break;
-            }
-        }
-
-        if remaining > 0 {
+        let total_resolved: usize = ranges.iter().map(|r| r.io_length).sum();
+        if total_resolved < length as usize {
             return Err(BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "Not enough data in torrent files to read the block",
             )));
         }
 
-        Ok(result)
+        let mut result = Vec::with_capacity(length as usize);
+        for range in &ranges {
+            let mut handle = File::open(&range.file_path)?;
+            handle.seek(SeekFrom::Start(range.seek_offset))?;
+            let mut buf = vec![0u8; range.io_length];
+            handle.read_exact(&mut buf)?;
+            result.extend_from_slice(&buf);
+        }
 
+        Ok(result)
     }
 
     /// Marks all pieces of the torrent as locally complete in the context (forcing a fully downloaded state).
@@ -199,4 +175,44 @@ impl DiskIO {
         }
         Ok(())
     }
+}
+
+struct TargetFileRange {
+    file_path: String,
+    seek_offset: u64,
+    io_length: usize,
+}
+
+fn resolve_file_ranges(
+    tc: &TorrentContext,
+    global_offset: u64,
+    length: usize,
+) -> Vec<TargetFileRange> {
+    let mut ranges = Vec::new();
+    let mut remaining = length;
+    let mut current_offset = global_offset;
+
+    for file in &tc.files_to_download {
+        if current_offset >= file.length {
+            current_offset -= file.length;
+            continue;
+        }
+
+        let write_start = current_offset;
+        let write_size = std::cmp::min(remaining as u64, file.length - write_start) as usize;
+
+        ranges.push(TargetFileRange {
+            file_path: file.name.clone(),
+            seek_offset: write_start,
+            io_length: write_size,
+        });
+
+        remaining -= write_size;
+        current_offset = 0;
+
+        if remaining == 0 {
+            break;
+        }
+    }
+    ranges
 }
