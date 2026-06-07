@@ -279,6 +279,12 @@ impl TorrentSession {
     }
 }
 
+fn mark_peer_dead(manager: &Option<Arc<Manager>>, ip: &str) {
+    if let Some(mgr) = manager {
+        mgr.add_to_dead_peer_list(ip);
+    }
+}
+
 fn handle_peer_session(
     peer_details: PeerDetails,
     context: Arc<Mutex<TorrentContext>>,
@@ -303,9 +309,7 @@ fn handle_peer_session(
         }) {
         Some(s) => s,
         None => {
-            if let Some(mgr) = &manager {
-                mgr.add_to_dead_peer_list(&peer_details.ip);
-            }
+            mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
     };
@@ -324,9 +328,7 @@ fn handle_peer_session(
         let mut pg = peer.lock().unwrap();
         pg.set_torrent_context(context.clone());
         if pg.handshake(&info_hash, local_peer_id.as_bytes()).is_err() {
-            if let Some(mgr) = &manager {
-                mgr.add_to_dead_peer_list(&peer_details.ip);
-            }
+            mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
         println!(
@@ -335,9 +337,7 @@ fn handle_peer_session(
         );
         let bitfield = context.lock().unwrap().bitfield.clone();
         if pg.send_bitfield(bitfield).is_err() {
-            if let Some(mgr) = &manager {
-                mgr.add_to_dead_peer_list(&peer_details.ip);
-            }
+            mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
         println!(
@@ -345,9 +345,7 @@ fn handle_peer_session(
             peer_details.ip, peer_details.port
         );
         if pg.send_unchoke().is_err() {
-            if let Some(mgr) = &manager {
-                mgr.add_to_dead_peer_list(&peer_details.ip);
-            }
+            mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
         pg.am_choking = false;
@@ -356,9 +354,7 @@ fn handle_peer_session(
             peer_details.ip, peer_details.port
         );
         if pg.send_interested().is_err() {
-            if let Some(mgr) = &manager {
-                mgr.add_to_dead_peer_list(&peer_details.ip);
-            }
+            mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
         println!(
@@ -398,26 +394,20 @@ fn handle_peer_session(
                         if last_progress.elapsed() > Duration::from_secs(30) {
                             log(&format!("[peer {}:{}] 30s idle timeout, dropping",
                                 peer_details.ip, peer_details.port));
-                            if let Some(mgr) = &manager {
-                                mgr.add_to_dead_peer_list(&peer_details.ip);
-                            }
+                            mark_peer_dead(&manager, &peer_details.ip);
                             break;
                         }
                         continue;
                     }
                 }
                 log(&format!("[peer {}:{}] read error: {}", peer_details.ip, peer_details.port, err));
-                if let Some(mgr) = &manager {
-                    mgr.add_to_dead_peer_list(&peer_details.ip);
-                }
+                mark_peer_dead(&manager, &peer_details.ip);
                 break;
             }
         };
         let mut ctx = context.lock().unwrap();
         if pg.handle_peer_message(message, &mut ctx, disk_io.as_ref()).is_err() {
-            if let Some(mgr) = &manager {
-                mgr.add_to_dead_peer_list(&peer_details.ip);
-            }
+            mark_peer_dead(&manager, &peer_details.ip);
             break;
         }
         if pg.peer_choking.wait_one(0) && ctx.status == TorrentStatus::Downloading {
@@ -428,9 +418,7 @@ fn handle_peer_session(
                 match ctx.next_block_request_for_peer(&pg) {
                     Some((pn, begin, length)) => {
                         if pg.send_request(pn, begin, length).is_err() {
-                            if let Some(mgr) = &manager {
-                                mgr.add_to_dead_peer_list(&peer_details.ip);
-                            }
+                            mark_peer_dead(&manager, &peer_details.ip);
                             send_error = true;
                             break;
                         }

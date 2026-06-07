@@ -295,13 +295,17 @@ impl TorrentContext {
         self.pieces_missing[byte_index] & bit_mask != 0
     }
 
-    /// Increments peer counts for all pieces present in a newly connected peer's bitfield.
-    pub fn merge_piece_bitfield(&mut self, remote_peer: &Peer) {
+    fn update_piece_peer_counts(&mut self, remote_peer: &Peer, increment: bool) {
         let mut piece_number = 0u32;
         for byte in &remote_peer.remote_piece_bitfield {
             for bit in &[0x80u8, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01] {
                 if byte & bit != 0 {
-                    self.piece_data[piece_number as usize].peer_count += 1;
+                    let idx = piece_number as usize;
+                    if increment {
+                        self.piece_data[idx].peer_count += 1;
+                    } else {
+                        self.piece_data[idx].peer_count = self.piece_data[idx].peer_count.saturating_sub(1);
+                    }
                 }
                 piece_number += 1;
                 if piece_number as usize >= self.number_of_pieces {
@@ -309,6 +313,11 @@ impl TorrentContext {
                 }
             }
         }
+    }
+
+    /// Increments peer counts for all pieces present in a newly connected peer's bitfield.
+    pub fn merge_piece_bitfield(&mut self, remote_peer: &Peer) {
+        self.update_piece_peer_counts(remote_peer, true);
     }
 
     /// Computes the SHA-1 checksum of the piece buffer and compares it to the expected metainfo hash.
@@ -469,21 +478,7 @@ impl TorrentContext {
 
     /// Decrements piece peer counts when a peer disconnects.
     pub fn unmerge_piece_bitfield(&mut self, remote_peer: &Peer) {
-        let mut piece_number = 0u32;
-        for byte in &remote_peer.remote_piece_bitfield {
-            for bit in &[0x80u8, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01] {
-                if byte & bit != 0 {
-                    self.piece_data[piece_number as usize].peer_count = self.piece_data
-                        [piece_number as usize]
-                        .peer_count
-                        .saturating_sub(1);
-                }
-                piece_number += 1;
-                if piece_number as usize >= self.number_of_pieces {
-                    break;
-                }
-            }
-        }
+        self.update_piece_peer_counts(remote_peer, false);
     }
 
     /// Returns the length of the specified piece.
@@ -553,17 +548,21 @@ impl TorrentContext {
             .retain(|(piece, _)| *piece != piece_number);
     }
 
-    /// Selects the rarest missing piece that the remote peer possesses.
-    pub fn select_next_piece_for_peer(&mut self, remote_peer: &Peer) -> Option<u32> {
+    fn get_sorted_missing_pieces_for_peer(&self, peer: &Peer) -> Vec<(usize, u32)> {
         let mut candidates: Vec<(usize, u32)> = (0..self.number_of_pieces as u32)
-            .filter(|piece| {
-                !self.is_piece_local(*piece) && remote_peer.is_piece_on_remote_peer(*piece)
-            })
+            .filter(|&piece| !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
             .map(|piece| (self.piece_data[piece as usize].peer_count, piece))
             .collect();
-
         candidates.sort_by_key(|(count, piece)| (*count, *piece));
-        candidates.into_iter().map(|(_, piece)| piece).next()
+        candidates
+    }
+
+    /// Selects the rarest missing piece that the remote peer possesses.
+    pub fn select_next_piece_for_peer(&mut self, remote_peer: &Peer) -> Option<u32> {
+        self.get_sorted_missing_pieces_for_peer(remote_peer)
+            .into_iter()
+            .map(|(_, piece)| piece)
+            .next()
     }
 
     /// Identifies and reserves the next download block from a piece available on the specified peer.
@@ -573,11 +572,7 @@ impl TorrentContext {
             return None;
         }
         let endgame = self.is_endgame();
-        let mut candidates: Vec<(usize, u32)> = (0..self.number_of_pieces as u32)
-            .filter(|piece| !self.is_piece_local(*piece) && peer.is_piece_on_remote_peer(*piece))
-            .map(|piece| (self.piece_data[piece as usize].peer_count, piece))
-            .collect();
-        candidates.sort_by_key(|(count, piece)| (*count, *piece));
+        let candidates = self.get_sorted_missing_pieces_for_peer(peer);
 
         let pieces_remaining = candidates.len();
         let in_endgame = endgame && pieces_remaining > 0;
