@@ -38,20 +38,20 @@ impl PeerMessage {
     /// Encodes a `PeerMessage` into its protocol-specific wire byte representation.
     pub fn encode(&self) -> Vec<u8> {
         match self {
-            PeerMessage::KeepAlive => 0u32.to_be_bytes().to_vec(),
-            PeerMessage::Choke => [1u32.to_be_bytes().as_ref(), &[0u8]].concat(),
-            PeerMessage::Unchoke => [1u32.to_be_bytes().as_ref(), &[1u8]].concat(),
-            PeerMessage::Interested => [1u32.to_be_bytes().as_ref(), &[2u8]].concat(),
-            PeerMessage::NotInterested => [1u32.to_be_bytes().as_ref(), &[3u8]].concat(),
+            PeerMessage::KeepAlive => vec![0, 0, 0, 0],
+            PeerMessage::Choke => vec![0, 0, 0, 1, 0],
+            PeerMessage::Unchoke => vec![0, 0, 0, 1, 1],
+            PeerMessage::Interested => vec![0, 0, 0, 1, 2],
+            PeerMessage::NotInterested => vec![0, 0, 0, 1, 3],
             PeerMessage::Have(index) => {
-                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + SIZE_OF_U32);
-                buffer.extend_from_slice(&(1 + SIZE_OF_U32 as u32).to_be_bytes());
+                let mut buffer = Vec::with_capacity(9);
+                buffer.extend_from_slice(&5u32.to_be_bytes());
                 buffer.push(4);
                 buffer.extend_from_slice(&index.to_be_bytes());
                 buffer
             }
             PeerMessage::Bitfield(bitfield) => {
-                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + bitfield.len());
+                let mut buffer = Vec::with_capacity(5 + bitfield.len());
                 buffer.extend_from_slice(&((1 + bitfield.len()) as u32).to_be_bytes());
                 buffer.push(5);
                 buffer.extend_from_slice(bitfield);
@@ -67,7 +67,7 @@ impl PeerMessage {
                 begin,
                 block,
             } => {
-                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 8 + block.len());
+                let mut buffer = Vec::with_capacity(13 + block.len());
                 buffer.extend_from_slice(&((1 + 8 + block.len()) as u32).to_be_bytes());
                 buffer.push(7);
                 buffer.extend_from_slice(&index.to_be_bytes());
@@ -81,8 +81,8 @@ impl PeerMessage {
                 length,
             } => Self::encode_triple_u32(8, *index, *begin, *length),
             PeerMessage::Port(port) => {
-                let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 2);
-                buffer.extend_from_slice(&((1 + 2) as u32).to_be_bytes());
+                let mut buffer = Vec::with_capacity(7);
+                buffer.extend_from_slice(&3u32.to_be_bytes());
                 buffer.push(9);
                 buffer.extend_from_slice(&port.to_be_bytes());
                 buffer

@@ -145,13 +145,13 @@ impl DiskIO {
             )));
         }
 
-        let mut result = Vec::with_capacity(length as usize);
+        let mut result = vec![0u8; length as usize];
+        let mut current_pos = 0;
         for range in &ranges {
             let mut handle = File::open(&range.file_path)?;
             handle.seek(SeekFrom::Start(range.seek_offset))?;
-            let mut buf = vec![0u8; range.io_length];
-            handle.read_exact(&mut buf)?;
-            result.extend_from_slice(&buf);
+            handle.read_exact(&mut result[current_pos..current_pos + range.io_length])?;
+            current_pos += range.io_length;
         }
 
         Ok(result)

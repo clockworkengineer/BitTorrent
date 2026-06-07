@@ -403,7 +403,7 @@ impl TorrentContext {
         let piece_complete = piece_buffer.all_blocks_there();
 
         if piece_complete {
-            let finished_piece = piece_buffer.buffer.clone();
+            let finished_piece = std::mem::take(&mut piece_buffer.buffer);
             drop(piece_buffer);
 
             if self.check_piece_hash(piece_number, &finished_piece, finished_piece.len() as u32) {
