@@ -161,12 +161,6 @@ impl eframe::App for TorrentClientApp {
 
             ui.separator();
 
-            // Show a connecting indicator while a session is being set up
-            if !self.pending_sessions.is_empty() {
-                ui.label("Connecting to tracker…");
-                ui.add_space(4.0);
-            }
-
             egui::ScrollArea::vertical()
                 .id_source("sessions_scroll")
                 .show(ui, |ui| {
