@@ -14,10 +14,29 @@ use crate::util::get_bitfield_index_and_mask;
 use crate::util::log_debug as log;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use alloc::vec::Vec;
+use alloc::string::String;
+
+/// Actions returned by message handling to be executed asynchronously outside locks.
+#[derive(Debug)]
+pub enum PeerAction {
+    SendUnchoke,
+    SendPiece {
+        index: u32,
+        begin: u32,
+        block: Vec<u8>,
+    },
+    BroadcastCancel {
+        index: u32,
+        begin: u32,
+        length: u32,
+        block_index: Option<u32>,
+    },
+}
 
 /// Represents a remote peer connection, holding socket state, bitfield arrays, choking/interest flags, and latency stats.
 pub struct Peer {
-    network: Option<PeerNetwork>,
+    pub network: Option<PeerNetwork>,
     pub packet_response_timer: Option<std::time::Instant>,
     pub average_packet_response: Average,
     pub connected: bool,
@@ -67,9 +86,9 @@ impl Peer {
     }
 
     /// Helper to write raw bytes to the peer connection stream.
-    pub fn write(&self, buffer: &[u8]) -> std::io::Result<usize> {
+    pub async fn write(&self, buffer: &[u8]) -> std::io::Result<usize> {
         if let Some(net) = &self.network {
-            net.write(buffer)
+            net.write(buffer).await
         } else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -79,9 +98,9 @@ impl Peer {
     }
 
     /// Helper to read raw bytes from the peer connection stream.
-    pub fn read(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    pub async fn read(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
         if let Some(net) = &self.network {
-            net.read(buffer, buffer.len())
+            net.read(buffer, buffer.len()).await
         } else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -91,7 +110,7 @@ impl Peer {
     }
 
     /// Performs the BitTorrent handshake over the socket, verifying info hash correctness.
-    pub fn handshake(
+    pub async fn handshake(
         &mut self,
         info_hash: &[u8],
         local_peer_id: &[u8],
@@ -102,8 +121,8 @@ impl Peer {
                 "No network available",
             ))
         })?;
-        net.write_handshake(info_hash, local_peer_id)?;
-        let (remote_info_hash, remote_peer_id) = net.read_handshake()?;
+        net.write_handshake(info_hash, local_peer_id).await?;
+        let (remote_info_hash, remote_peer_id) = net.read_handshake().await?;
         if remote_info_hash != info_hash {
             return Err(BitTorrentError::Parse(
                 "Peer handshake info hash mismatch".into(),
@@ -116,39 +135,39 @@ impl Peer {
     }
 
     /// Sends an encoded `PeerMessage` to the remote peer.
-    pub fn send_message(&self, message: PeerMessage<'_>) -> Result<usize, BitTorrentError> {
+    pub async fn send_message(&self, message: PeerMessage<'_>) -> Result<usize, BitTorrentError> {
         let net = self.network.as_ref().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "No network available",
             ))
         })?;
-        net.write_message(message)
+        net.write_message(message).await
     }
 
     /// Receives and decodes the next message from the remote peer.
-    pub fn read_message<'a>(&mut self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
+    pub async fn read_message<'a>(&mut self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
         let net = self.network.as_mut().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "No network available",
             ))
         })?;
-        net.read_message(read_buffer)
+        net.read_message(read_buffer).await
     }
 
     /// Transmits an Interested message to the peer.
-    pub fn send_interested(&self) -> Result<usize, BitTorrentError> {
-        self.send_message(PeerMessage::Interested)
+    pub async fn send_interested(&self) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Interested).await
     }
 
     /// Transmits a Not Interested message to the peer.
-    pub fn send_not_interested(&self) -> Result<usize, BitTorrentError> {
-        self.send_message(PeerMessage::NotInterested)
+    pub async fn send_not_interested(&self) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::NotInterested).await
     }
 
     /// Transmits a Request message to download a specific block.
-    pub fn send_request(
+    pub async fn send_request(
         &self,
         index: u32,
         begin: u32,
@@ -158,22 +177,22 @@ impl Peer {
             index,
             begin,
             length,
-        })
+        }).await
     }
 
     /// Transmits a Have message to announce possession of a complete piece.
-    pub fn send_have(&self, piece_index: u32) -> Result<usize, BitTorrentError> {
-        self.send_message(PeerMessage::Have(piece_index))
+    pub async fn send_have(&self, piece_index: u32) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Have(piece_index)).await
     }
 
     /// Transmits a Bitfield message to share local piece availability.
-    pub fn send_bitfield(&self, bitfield: &[u8]) -> Result<usize, BitTorrentError> {
-        self.send_message(PeerMessage::Bitfield(bitfield))
+    pub async fn send_bitfield(&self, bitfield: &[u8]) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Bitfield(bitfield)).await
     }
 
     /// Transmits an Unchoke message to inform peers we are willing to serve.
-    pub fn send_unchoke(&self) -> Result<usize, BitTorrentError> {
-        self.send_message(PeerMessage::Unchoke)
+    pub async fn send_unchoke(&self) -> Result<usize, BitTorrentError> {
+        self.send_message(PeerMessage::Unchoke).await
     }
 
     /// Closes the peer network connection and updates local swarm bitfields.
@@ -242,7 +261,8 @@ impl Peer {
         message: PeerMessage<'_>,
         tc: &mut TorrentContext,
         disk_io: &DiskIO,
-    ) -> Result<(), BitTorrentError> {
+    ) -> Result<Vec<PeerAction>, BitTorrentError> {
+        let mut actions = Vec::new();
         match message {
             PeerMessage::KeepAlive => {}
             PeerMessage::Choke => {
@@ -262,7 +282,7 @@ impl Peer {
             PeerMessage::Interested => {
                 self.peer_interested = true;
                 if self.am_choking {
-                    self.send_unchoke()?;
+                    actions.push(PeerAction::SendUnchoke);
                     self.am_choking = false;
                 }
             }
@@ -294,7 +314,12 @@ impl Peer {
                         crate::constants::BLOCK_SIZE as u32,
                         tc.get_piece_length(index).saturating_sub(begin),
                     );
-                    self.broadcast_cancel(tc, index, begin, cancel_length, Some(block_index));
+                    actions.push(PeerAction::BroadcastCancel {
+                        index,
+                        begin,
+                        length: cancel_length,
+                        block_index: Some(block_index),
+                    });
                 }
 
                 let piece_complete = tc.process_piece_block(disk_io, index, begin, block)?;
@@ -308,7 +333,12 @@ impl Peer {
                             crate::constants::BLOCK_SIZE as u32,
                             tc.get_piece_length(index).saturating_sub(begin),
                         );
-                        self.broadcast_cancel(tc, index, begin, length, None);
+                        actions.push(PeerAction::BroadcastCancel {
+                            index,
+                            begin,
+                            length,
+                            block_index: None,
+                        });
                     }
                 }
             }
@@ -322,10 +352,10 @@ impl Peer {
                 if !self.am_choking && tc.is_piece_local(index) {
                     match disk_io.read_piece_block(tc, index, begin, length) {
                         Ok(block) => {
-                            let _ = self.send_message(PeerMessage::Piece {
+                            actions.push(PeerAction::SendPiece {
                                 index,
                                 begin,
-                                block: &block,
+                                block,
                             });
                             tc.total_bytes_uploaded.fetch_add(length as u64, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -339,36 +369,6 @@ impl Peer {
                 }
             }
         }
-        Ok(())
+        Ok(actions)
     }
-
-    fn broadcast_cancel(
-        &self,
-        tc: &TorrentContext,
-        index: u32,
-        begin: u32,
-        length: u32,
-        block_index: Option<u32>,
-    ) {
-        let swarm = tc.peer_swarm.read().unwrap();
-        for (peer_ip, peer_arc) in swarm.iter() {
-            if peer_ip == &self.ip {
-                continue;
-            }
-            if let Ok(other_peer) = peer_arc.try_lock() {
-                let should_send = match block_index {
-                    Some(bi) => other_peer.reserved_blocks.contains(&(index, bi)),
-                    None => true,
-                };
-                if should_send {
-                    let _ = other_peer.send_message(PeerMessage::Cancel {
-                        index,
-                        begin,
-                        length,
-                    });
-                }
-            }
-        }
-    }
-
 }

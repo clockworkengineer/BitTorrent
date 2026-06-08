@@ -64,9 +64,9 @@ fn test_peer_handshake_round_trip() {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let mut peer = Peer::new("127.0.0.1".to_string(), addr.port(), stream);
-    let received_peer_id = peer
-        .handshake(&info_hash, &local_peer_id)
-        .expect("Handshake failed");
+    let received_peer_id = futures::executor::block_on(async {
+        peer.handshake(&info_hash, &local_peer_id).await
+    }).expect("Handshake failed");
     assert_eq!(received_peer_id, remote_peer_id.to_vec());
     assert_eq!(
         peer.remote_peer_id.as_deref(),

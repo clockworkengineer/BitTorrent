@@ -10,6 +10,8 @@ std = [
     "dep:ureq",
     "dep:urlencoding",
     "dep:url",
+    "futures/executor",
+    "futures/std",
 ]
 
 [dependencies]
@@ -18,3 +20,4 @@ rand = { version = "0.8", optional = true }
 ureq = { version = "2.7", optional = true }
 urlencoding = { version = "2.1", optional = true }
 url = { version = "2.4", optional = true }
+futures = { version = "0.3", default-features = false, features = ["alloc"] }

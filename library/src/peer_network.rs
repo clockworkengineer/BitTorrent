@@ -8,9 +8,10 @@ use crate::peer_message::PeerMessage;
 use std::io::{Read, Result as IoResult, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use alloc::vec::Vec;
 
 /// A socket communication helper for sending and receiving raw BitTorrent peer messages.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PeerNetwork {
     stream: Arc<Mutex<TcpStream>>,
 }
@@ -18,58 +19,106 @@ pub struct PeerNetwork {
 impl PeerNetwork {
     /// Creates a new `PeerNetwork` instance wrapping the given `TcpStream`.
     pub fn new(stream: TcpStream) -> Self {
+        let _ = stream.set_nonblocking(true);
         PeerNetwork {
             stream: Arc::new(Mutex::new(stream)),
         }
     }
 
     /// Writes raw bytes to the underlying TCP stream.
-    pub fn write(&self, buffer: &[u8]) -> IoResult<usize> {
-        let mut lock = self.stream.lock().unwrap();
-        lock.write_all(buffer)?;
+    pub async fn write(&self, buffer: &[u8]) -> IoResult<usize> {
+        let mut offset = 0;
+        while offset < buffer.len() {
+            let write_res = {
+                let mut lock = self.stream.lock().unwrap();
+                lock.write(&buffer[offset..])
+            };
+            match write_res {
+                Ok(n) => {
+                    offset += n;
+                    if offset >= buffer.len() {
+                        break;
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    crate::util::yield_now().await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
         Ok(buffer.len())
     }
 
     /// Reads up to `length` bytes from the stream into the provided buffer.
-    pub fn read(&self, buffer: &mut [u8], length: usize) -> IoResult<usize> {
-        let mut lock = self.stream.lock().unwrap();
-        let read = lock.read(&mut buffer[..length])?;
-        Ok(read)
+    pub async fn read(&self, buffer: &mut [u8], length: usize) -> IoResult<usize> {
+        loop {
+            let read_res = {
+                let mut lock = self.stream.lock().unwrap();
+                lock.read(&mut buffer[..length])
+            };
+            match read_res {
+                Ok(n) => return Ok(n),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    crate::util::yield_now().await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Reads exactly enough bytes from the stream to fill the provided buffer.
-    pub fn read_exact(&self, buffer: &mut [u8]) -> IoResult<()> {
-        let mut lock = self.stream.lock().unwrap();
-        lock.read_exact(buffer)
+    pub async fn read_exact(&self, buffer: &mut [u8]) -> IoResult<()> {
+        let mut offset = 0;
+        while offset < buffer.len() {
+            let read_res = {
+                let mut lock = self.stream.lock().unwrap();
+                lock.read(&mut buffer[offset..])
+            };
+            match read_res {
+                Ok(0) => return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                )),
+                Ok(n) => {
+                    offset += n;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    crate::util::yield_now().await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
 
     /// Encodes and writes a BitTorrent connection handshake to the network stream.
-    pub fn write_handshake(
+    pub async fn write_handshake(
         &self,
         info_hash: &[u8],
         peer_id: &[u8],
     ) -> Result<usize, BitTorrentError> {
         let buffer = PeerMessage::handshake_encode(info_hash, peer_id)?;
-        Ok(self.write(&buffer)?)
+        Ok(self.write(&buffer).await?)
     }
 
     /// Reads and decodes a BitTorrent connection handshake from the network stream.
-    pub fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>), BitTorrentError> {
+    pub async fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>), BitTorrentError> {
         let mut buffer = [0u8; crate::constants::INITIAL_HANDSHAKE_LENGTH];
-        self.read_exact(&mut buffer)?;
+        self.read_exact(&mut buffer).await?;
         PeerMessage::handshake_decode(&buffer)
     }
 
     /// Encodes and writes a high-level `PeerMessage` to the stream.
-    pub fn write_message(&self, message: PeerMessage<'_>) -> Result<usize, BitTorrentError> {
+    pub async fn write_message(&self, message: PeerMessage<'_>) -> Result<usize, BitTorrentError> {
         let buffer = message.encode();
-        Ok(self.write(&buffer)?)
+        Ok(self.write(&buffer).await?)
     }
 
     /// Reads the next message length prefix and body from the stream, returning the decoded `PeerMessage`.
-    pub fn read_message<'a>(&self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
+    pub async fn read_message<'a>(&self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
         let mut length_buf = [0u8; 4];
-        self.read_exact(&mut length_buf)?;
+        self.read_exact(&mut length_buf).await?;
         let length = u32::from_be_bytes(length_buf) as usize;
         if length == 0 {
             return Ok(PeerMessage::KeepAlive);
@@ -77,8 +126,7 @@ impl PeerNetwork {
         if length > read_buffer.len() {
             read_buffer.resize(length, 0);
         }
-        let mut lock = self.stream.lock().unwrap();
-        lock.read_exact(&mut read_buffer[..length])?;
+        self.read_exact(&mut read_buffer[..length]).await?;
         PeerMessage::decode(&read_buffer[..length])
     }
 
@@ -117,8 +165,10 @@ mod tests {
 
         let stream = TcpStream::connect(addr).unwrap();
         let network = PeerNetwork::new(stream);
-        let written = network.write(&vec![0xAB; 64]).unwrap();
-        assert_eq!(written, 64);
+        futures::executor::block_on(async {
+            let written = network.write(&vec![0xAB; 64]).await.unwrap();
+            assert_eq!(written, 64);
+        });
 
         handle.join().unwrap();
     }

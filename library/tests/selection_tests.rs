@@ -59,8 +59,9 @@ fn test_next_block_request_from_peer_reserves_request() {
     assert_eq!(peer.outstanding_requests_count, 0);
 
     let (_, begin, length) = request;
-    peer.send_request(0, begin, length)
-        .expect("Failed to send request");
+    futures::executor::block_on(async {
+        peer.send_request(0, begin, length).await
+    }).expect("Failed to send request");
     peer.outstanding_requests_count = peer.outstanding_requests_count.saturating_add(1);
 
     assert_eq!(peer.outstanding_requests_count, 1);

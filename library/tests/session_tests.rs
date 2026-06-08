@@ -34,24 +34,26 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
     let addr = listener.local_addr().expect("Failed to get listener address");
 
     let server_handle = thread::spawn(move || {
-        let (stream, _) = listener.accept().expect("Failed to accept connection");
-        let net = PeerNetwork::new(stream);
-        let (remote_info_hash, _) = net.read_handshake().expect("Failed to read handshake");
-        assert_eq!(remote_info_hash, expected_info_hash_clone);
+        futures::executor::block_on(async {
+            let (stream, _) = listener.accept().expect("Failed to accept connection");
+            let net = PeerNetwork::new(stream);
+            let (remote_info_hash, _) = net.read_handshake().await.expect("Failed to read handshake");
+            assert_eq!(remote_info_hash, expected_info_hash_clone);
 
-        let local_peer_id = *b"-RS0001-000000000000";
-        net.write_handshake(&expected_info_hash_clone, &local_peer_id)
-            .expect("Failed to write handshake");
+            let local_peer_id = *b"-RS0001-000000000000";
+            net.write_handshake(&expected_info_hash_clone, &local_peer_id).await
+                .expect("Failed to write handshake");
 
-        let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
-        let first = net.read_message(&mut read_buf).expect("Failed to read first message");
-        assert_eq!(first, PeerMessage::Bitfield(&expected_bitfield));
+            let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
+            let first = net.read_message(&mut read_buf).await.expect("Failed to read first message");
+            assert_eq!(first, PeerMessage::Bitfield(&expected_bitfield));
 
-        let second = net.read_message(&mut read_buf).expect("Failed to read second message");
-        assert_eq!(second, PeerMessage::Unchoke);
+            let second = net.read_message(&mut read_buf).await.expect("Failed to read second message");
+            assert_eq!(second, PeerMessage::Unchoke);
 
-        let third = net.read_message(&mut read_buf).expect("Failed to read third message");
-        assert_eq!(third, PeerMessage::Interested);
+            let third = net.read_message(&mut read_buf).await.expect("Failed to read third message");
+            assert_eq!(third, PeerMessage::Interested);
+        });
     });
 
     let peer_details = PeerDetails {
@@ -86,36 +88,38 @@ fn test_uploads_piece_when_peer_requests_block() {
     let addr = listener.local_addr().expect("Failed to get listener address");
 
     let server_handle = thread::spawn(move || {
-        let (stream, _) = listener.accept().expect("Failed to accept connection");
-        let net = PeerNetwork::new(stream);
-        let (remote_info_hash, _) = net.read_handshake().expect("Failed to read handshake");
-        assert_eq!(remote_info_hash, expected_info_hash_clone);
+        futures::executor::block_on(async {
+            let (stream, _) = listener.accept().expect("Failed to accept connection");
+            let net = PeerNetwork::new(stream);
+            let (remote_info_hash, _) = net.read_handshake().await.expect("Failed to read handshake");
+            assert_eq!(remote_info_hash, expected_info_hash_clone);
 
-        let local_peer_id = *b"-RS0001-000000000000";
-        net.write_handshake(&expected_info_hash_clone, &local_peer_id)
-            .expect("Failed to write handshake");
+            let local_peer_id = *b"-RS0001-000000000000";
+            net.write_handshake(&expected_info_hash_clone, &local_peer_id).await
+                .expect("Failed to write handshake");
 
-        let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
-        let _ = net.read_message(&mut read_buf).expect("Failed to read bitfield");
-        let _ = net.read_message(&mut read_buf).expect("Failed to read unchoke");
-        let _ = net.read_message(&mut read_buf).expect("Failed to read interested");
+            let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
+            let _ = net.read_message(&mut read_buf).await.expect("Failed to read bitfield");
+            let _ = net.read_message(&mut read_buf).await.expect("Failed to read unchoke");
+            let _ = net.read_message(&mut read_buf).await.expect("Failed to read interested");
 
-        net.write_message(PeerMessage::Request {
-            index: 0,
-            begin: 0,
-            length: 16384,
-        })
-        .expect("Failed to send request");
+            net.write_message(PeerMessage::Request {
+                index: 0,
+                begin: 0,
+                length: 16384,
+            }).await
+            .expect("Failed to send request");
 
-        let response = net.read_message(&mut read_buf).expect("Failed to read piece response");
-        match response {
-            PeerMessage::Piece { index, begin, block } => {
-                assert_eq!(index, 0);
-                assert_eq!(begin, 0);
-                assert_eq!(block.len(), 16384);
+            let response = net.read_message(&mut read_buf).await.expect("Failed to read piece response");
+            match response {
+                PeerMessage::Piece { index, begin, block } => {
+                    assert_eq!(index, 0);
+                    assert_eq!(begin, 0);
+                    assert_eq!(block.len(), 16384);
+                }
+                other => panic!("Expected Piece response, got {:?}", other),
             }
-            other => panic!("Expected Piece response, got {:?}", other),
-        }
+        });
     });
 
     let peer_details = PeerDetails {
@@ -225,53 +229,55 @@ fn test_download_piece_from_peer() {
     let addr = listener.local_addr().expect("Failed to get listener address");
 
     let server_handle = thread::spawn(move || {
-        let (stream, _) = listener.accept().expect("Failed to accept connection");
-        let net = PeerNetwork::new(stream);
-        let (remote_info_hash, _) = net.read_handshake().expect("Failed to read handshake");
-        assert_eq!(remote_info_hash, expected_info_hash_clone);
+        futures::executor::block_on(async {
+            let (stream, _) = listener.accept().expect("Failed to accept connection");
+            let net = PeerNetwork::new(stream);
+            let (remote_info_hash, _) = net.read_handshake().await.expect("Failed to read handshake");
+            assert_eq!(remote_info_hash, expected_info_hash_clone);
 
-        let local_peer_id = *b"-RS0001-000000000000";
-        net.write_handshake(&expected_info_hash_clone, &local_peer_id)
-            .expect("Failed to write handshake");
+            let local_peer_id = *b"-RS0001-000000000000";
+            net.write_handshake(&expected_info_hash_clone, &local_peer_id).await
+                .expect("Failed to write handshake");
 
-        let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
-        let _ = net.read_message(&mut read_buf).expect("Failed to read bitfield");
-        let _ = net.read_message(&mut read_buf).expect("Failed to read unchoke");
-        let _ = net.read_message(&mut read_buf).expect("Failed to read interested");
+            let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
+            let _ = net.read_message(&mut read_buf).await.expect("Failed to read bitfield");
+            let _ = net.read_message(&mut read_buf).await.expect("Failed to read unchoke");
+            let _ = net.read_message(&mut read_buf).await.expect("Failed to read interested");
 
-        let bitfield_data = vec![0xFF, 0xFF, 0xFC];
-        net.write_message(PeerMessage::Bitfield(&bitfield_data))
-            .expect("Failed to send bitfield");
+            let bitfield_data = vec![0xFF, 0xFF, 0xFC];
+            net.write_message(PeerMessage::Bitfield(&bitfield_data)).await
+                .expect("Failed to send bitfield");
 
-        net.write_message(PeerMessage::Unchoke)
-            .expect("Failed to send unchoke");
+            net.write_message(PeerMessage::Unchoke).await
+                .expect("Failed to send unchoke");
 
-        loop {
-            let msg = match net.read_message(&mut read_buf) {
-                Ok(m) => m,
-                Err(e) => {
-                    println!("Mock server read_message error: {:?}", e);
-                    break;
-                }
-            };
-            match msg {
-                PeerMessage::Request { index, begin, length } => {
-                    println!("Mock server received Request for piece {}, begin {}, length {}", index, begin, length);
-                    let block = vec![0x55u8; length as usize];
-                    if let Err(e) = net.write_message(PeerMessage::Piece { index, begin, block: &block }) {
-                        println!("Mock server failed to write Piece response: {:?}", e);
+            loop {
+                let msg = match net.read_message(&mut read_buf).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        println!("Mock server read_message error: {:?}", e);
                         break;
                     }
-                }
-                PeerMessage::KeepAlive => {
-                    println!("Mock server received KeepAlive");
-                }
-                other => {
-                    println!("Mock server received other message: {:?}", other);
+                };
+                match msg {
+                    PeerMessage::Request { index, begin, length } => {
+                        println!("Mock server received Request for piece {}, begin {}, length {}", index, begin, length);
+                        let block = vec![0x55u8; length as usize];
+                        if let Err(e) = net.write_message(PeerMessage::Piece { index, begin, block: &block }).await {
+                            println!("Mock server failed to write Piece response: {:?}", e);
+                            break;
+                        }
+                    }
+                    PeerMessage::KeepAlive => {
+                        println!("Mock server received KeepAlive");
+                    }
+                    other => {
+                        println!("Mock server received other message: {:?}", other);
+                    }
                 }
             }
-        }
-        println!("Mock server thread exiting");
+            println!("Mock server thread exiting");
+        });
     });
 
     let peer_details = PeerDetails {
@@ -294,4 +300,3 @@ fn test_download_piece_from_peer() {
     server_handle.join().expect("Server thread panicked");
     cleanup_download_path(&download_path);
 }
-
