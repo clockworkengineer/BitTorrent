@@ -57,25 +57,25 @@ impl MetaInfoFile {
             ));
         }
 
-        self.require_string_or_numeric(&root, "announce")?;
-        self.get_list_of_strings(&root, "announce-list")?;
-        self.get_string_or_numeric(&root, "comment")?;
-        self.get_string_or_numeric(&root, "created by")?;
-        self.get_string_or_numeric(&root, "creation date")?;
-        self.require_string_or_numeric(&root, "name")?;
-        self.require_string_or_numeric(&root, "piece length")?;
-        self.require_string_or_numeric(&root, "pieces")?;
-        self.get_string_or_numeric(&root, "private")?;
-        self.get_string_or_numeric(&root, "url-list")?;
+        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "announce")?;
+        Self::get_list_of_strings(&mut self.meta_info_dict, &root, "announce-list")?;
+        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "comment")?;
+        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "created by")?;
+        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "creation date")?;
+        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "name")?;
+        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "piece length")?;
+        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "pieces")?;
+        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "private")?;
+        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "url-list")?;
 
         if Bencode::get_dictionary_entry(&root, b"files").is_none() {
-            self.require_string_or_numeric(&root, "length")?;
-            self.get_string_or_numeric(&root, "md5sum")?;
+            Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "length")?;
+            Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "md5sum")?;
         } else {
-            self.get_list_of_dictionarys(&root, "files")?;
+            Self::get_list_of_dictionarys(&mut self.meta_info_dict, &root, "files")?;
         }
 
-        self.calculate_info_hash(&root)?;
+        Self::calculate_info_hash(&mut self.meta_info_dict, &root)?;
         self.parsed = true;
         Ok(())
     }
@@ -252,7 +252,7 @@ impl MetaInfoFile {
                 } else {
                     break;
                 };
-                let parts: Vec<&str> = entry.split(',').collect();
+                let parts: Vec<&str> = entry.split('\0').collect();
                 let path_value = parts.get(0).copied().unwrap_or("");
                 let length_value = parts.get(1).copied().unwrap_or("0");
                 let md5sum_value = parts.get(2).copied().unwrap_or("");
@@ -279,14 +279,16 @@ impl MetaInfoFile {
     }
 
     /// Extracts a string or numeric value from a `BNode` and caches it in `meta_info_dict`.
-    fn get_string_or_numeric(&mut self, root: &BNode, field: &str) -> Result<(), BitTorrentError> {
+    fn get_string_or_numeric(
+        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        root: &BNode<'_>,
+        field: &str,
+    ) -> Result<(), BitTorrentError> {
         if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
             if let Some(bytes) = entry.as_string() {
-                self.meta_info_dict
-                    .insert(field.to_string(), bytes.to_vec());
+                meta_info_dict.insert(field.to_string(), bytes.to_vec());
             } else if let Some(bytes) = entry.as_number_bytes() {
-                self.meta_info_dict
-                    .insert(field.to_string(), bytes.to_vec());
+                meta_info_dict.insert(field.to_string(), bytes.to_vec());
             }
         }
         Ok(())
@@ -294,18 +296,22 @@ impl MetaInfoFile {
 
     /// Asserts that a field exists and extracts it as string or numeric, returning an error otherwise.
     fn require_string_or_numeric(
-        &mut self,
-        root: &BNode,
+        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        root: &BNode<'_>,
         field: &str,
     ) -> Result<(), BitTorrentError> {
         if Bencode::get_dictionary_entry(root, field.as_bytes()).is_none() {
             return Err(BitTorrentError::MissingField(field.to_string()));
         }
-        self.get_string_or_numeric(root, field)
+        Self::get_string_or_numeric(meta_info_dict, root, field)
     }
 
     /// Extracts a list of strings from a `BNode` and saves them in `meta_info_dict` as a comma-separated string.
-    fn get_list_of_strings(&mut self, root: &BNode, field: &str) -> Result<(), BitTorrentError> {
+    fn get_list_of_strings(
+        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        root: &BNode<'_>,
+        field: &str,
+    ) -> Result<(), BitTorrentError> {
         if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
             if let BNode::List(list) = entry {
                 let mut values = Vec::new();
@@ -322,8 +328,7 @@ impl MetaInfoFile {
                         _ => {}
                     }
                 }
-                self.meta_info_dict
-                    .insert(field.to_string(), values.join(",").into_bytes());
+                meta_info_dict.insert(field.to_string(), values.join(",").into_bytes());
             }
         }
         Ok(())
@@ -331,8 +336,8 @@ impl MetaInfoFile {
 
     /// Extracts file dict arrays under the "files" list, caching them in `meta_info_dict` as numbered entries.
     fn get_list_of_dictionarys(
-        &mut self,
-        root: &BNode,
+        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        root: &BNode<'_>,
         field: &str,
     ) -> Result<(), BitTorrentError> {
         if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
@@ -358,19 +363,18 @@ impl MetaInfoFile {
                                 );
                             }
                         }
-                        file_entry.push(',');
+                        file_entry.push('\0');
                         file_entry.push_str(
                             &Bencode::get_dictionary_entry_string(item, "length")
                                 .unwrap_or_default(),
                         );
-                        file_entry.push(',');
+                        file_entry.push('\0');
                         file_entry.push_str(
                             &Bencode::get_dictionary_entry_string(item, "md5sum")
                                 .unwrap_or_default(),
                         );
 
-                        self.meta_info_dict
-                            .insert(file_no.to_string(), file_entry.into_bytes());
+                        meta_info_dict.insert(file_no.to_string(), file_entry.into_bytes());
                         file_no += 1;
                     }
                 }
@@ -380,15 +384,17 @@ impl MetaInfoFile {
     }
 
     /// Computes the SHA-1 info hash of the `info` sub-dictionary.
-    fn calculate_info_hash(&mut self, root: &BNode) -> Result<(), BitTorrentError> {
+    fn calculate_info_hash(
+        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        root: &BNode<'_>,
+    ) -> Result<(), BitTorrentError> {
         let info = Bencode::get_dictionary_entry(root, b"info")
             .ok_or_else(|| BitTorrentError::MissingField("info".into()))?;
         let encoded = Bencode::encode(info);
         let mut hasher = Sha1::new();
         hasher.update(&encoded);
         let digest = hasher.finalize();
-        self.meta_info_dict
-            .insert("info hash".to_string(), digest.to_vec());
+        meta_info_dict.insert("info hash".to_string(), digest.to_vec());
         Ok(())
     }
 

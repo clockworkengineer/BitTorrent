@@ -256,46 +256,62 @@ impl TorrentClientApp {
             let session_id = torrent_path.display().to_string();
 
             let _ = msg_tx.send(format!("[{}] Connecting to tracker…", session_id));
+            println!("[{}] Connecting to tracker…", session_id);
 
             let mut session = match TorrentSession::new(&torrent_path, &download_dir, false) {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = msg_tx.send(format!("Failed to create session: {}", e));
+                    let err_msg = format!("Failed to create session: {}", e);
+                    let _ = msg_tx.send(err_msg.clone());
+                    eprintln!("{}", err_msg);
                     return;
                 }
             };
 
             if let Err(e) = session.start_download() {
-                let _ = msg_tx.send(format!("[{}] Failed to start download: {}", session_id, e));
+                let err_msg = format!("[{}] Failed to start download: {}", session_id, e);
+                let _ = msg_tx.send(err_msg.clone());
+                eprintln!("{}", err_msg);
                 return;
             }
 
             let mut tracker = match Tracker::new(session.context.clone()) {
                 Ok(t) => t,
                 Err(e) => {
-                    let _ = msg_tx.send(format!("[{}] Tracker setup failed: {}", session_id, e));
+                    let err_msg = format!("[{}] Tracker setup failed: {}", session_id, e);
+                    let _ = msg_tx.send(err_msg.clone());
+                    eprintln!("{}", err_msg);
                     let _ = session_tx.send(session);
                     return;
                 }
             };
 
             let _ = msg_tx.send(format!("[{}] Announcing to trackers...", session_id));
+            println!("[{}] Announcing to trackers...", session_id);
             match tracker.start_announcing() {
                 Ok(response) => {
                     let peer_count = response.peer_list.len();
-                    let _ = msg_tx.send(format!(
+                    let msg = format!(
                         "[{}] Tracker returned {} peers",
                         session_id, peer_count
-                    ));
+                    );
+                    let _ = msg_tx.send(msg.clone());
+                    println!("{}", msg);
                     if peer_count == 0 {
-                        let _ = msg_tx.send(format!("[{}] No peers; waiting.", session_id));
+                        let msg = format!("[{}] No peers; waiting.", session_id);
+                        let _ = msg_tx.send(msg.clone());
+                        println!("{}", msg);
                     } else if let Err(e) = session.download_from_peers(response.peer_list, None) {
-                        let _ = msg_tx.send(format!(
+                        let msg = format!(
                             "[{}] Download from peers failed: {}",
                             session_id, e
-                        ));
+                        );
+                        let _ = msg_tx.send(msg.clone());
+                        eprintln!("{}", msg);
                     } else {
-                        let _ = msg_tx.send(format!("[{}] Download started.", session_id));
+                        let msg = format!("[{}] Download started.", session_id);
+                        let _ = msg_tx.send(msg.clone());
+                        println!("{}", msg);
                     }
 
                     // Start the re-announce loop thread (runs in background)
@@ -305,8 +321,9 @@ impl TorrentClientApp {
                     let _ = session_tx.send(session);
                 }
                 Err(e) => {
-                    let _ = msg_tx
-                        .send(format!("[{}] Tracker announce failed: {}", session_id, e));
+                    let err_msg = format!("[{}] Tracker announce failed: {}", session_id, e);
+                    let _ = msg_tx.send(err_msg.clone());
+                    eprintln!("{}", err_msg);
                     let _ = session_tx.send(session);
                 }
             }
