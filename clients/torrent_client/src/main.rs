@@ -85,6 +85,22 @@ impl eframe::App for TorrentClientApp {
             ui.heading("BitTorrent Client");
         });
 
+        if !self.messages.is_empty() {
+            egui::TopBottomPanel::bottom("log_panel")
+                .resizable(true)
+                .default_height(120.0)
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new("Log:").strong());
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for message in &self.messages {
+                                ui.label(message);
+                            }
+                        });
+                });
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Torrent file:");
@@ -106,67 +122,58 @@ impl eframe::App for TorrentClientApp {
                 ui.add_space(4.0);
             }
 
-            for session in &self.sessions {
-                let ctx_guard = match session.context.try_lock() {
-                    Ok(g) => g,
-                    Err(_) => continue, // lock held by peer thread, skip this frame
-                };
+            egui::ScrollArea::vertical()
+                .id_source("sessions_scroll")
+                .show(ui, |ui| {
+                    for session in &self.sessions {
+                        let ctx_guard = match session.context.try_lock() {
+                            Ok(g) => g,
+                            Err(_) => continue, // lock held by peer thread, skip this frame
+                        };
 
-                let file_name = std::path::Path::new(&ctx_guard.file_name)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| ctx_guard.file_name.clone());
+                        let file_name = std::path::Path::new(&ctx_guard.file_name)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| ctx_guard.file_name.clone());
 
-                let progress = ctx_guard.progress_percent() / 100.0;
-                let status = format!("{:?}", ctx_guard.status);
-                let peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
-                let peers_active = ctx_guard.number_of_unchoked_peers();
-                let bps = ctx_guard.bytes_per_second();
-                let downloaded = ctx_guard.total_bytes_downloaded;
-                let total = ctx_guard.total_bytes_to_download;
-                drop(ctx_guard);
+                        let progress = ctx_guard.progress_percent() / 100.0;
+                        let status = format!("{:?}", ctx_guard.status);
+                        let peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
+                        let peers_active = ctx_guard.number_of_unchoked_peers();
+                        let bps = ctx_guard.bytes_per_second();
+                        let downloaded = ctx_guard.total_bytes_downloaded;
+                        let total = ctx_guard.total_bytes_to_download;
+                        drop(ctx_guard);
 
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new(&file_name).strong());
+                        ui.group(|ui| {
+                            ui.label(egui::RichText::new(&file_name).strong());
 
-                    let bar = egui::ProgressBar::new(progress)
-                        .text(format!("{:.1}%", progress * 100.0))
-                        .animate(progress < 1.0);
-                    ui.add(bar);
+                            let bar = egui::ProgressBar::new(progress)
+                                .text(format!("{:.1}%", progress * 100.0))
+                                .animate(progress < 1.0);
+                            ui.add(bar);
 
-                    ui.horizontal(|ui| {
-                        ui.label(format!("Status: {}", status));
-                        ui.separator();
-                        ui.label(format!(
-                            "Downloaded: {} / {}",
-                            fmt_bytes(downloaded),
-                            fmt_bytes(total)
-                        ));
-                        ui.separator();
-                        ui.label(format!("Speed: {}/s", fmt_bytes(bps as u64)));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(format!("Peers: {} connected", peers_connected));
-                        ui.separator();
-                        ui.label(format!("{} unchoked (active)", peers_active));
-                    });
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Status: {}", status));
+                                ui.separator();
+                                ui.label(format!(
+                                    "Downloaded: {} / {}",
+                                    fmt_bytes(downloaded),
+                                    fmt_bytes(total)
+                                ));
+                                ui.separator();
+                                ui.label(format!("Speed: {}/s", fmt_bytes(bps as u64)));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Peers: {} connected", peers_connected));
+                                ui.separator();
+                                ui.label(format!("{} unchoked (active)", peers_active));
+                            });
+                        });
+
+                        ui.add_space(4.0);
+                    }
                 });
-
-                ui.add_space(4.0);
-            }
-
-            if !self.messages.is_empty() {
-                ui.separator();
-                ui.label(egui::RichText::new("Log:").strong());
-                egui::ScrollArea::vertical()
-                    .max_height(160.0)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for message in &self.messages {
-                            ui.label(message);
-                        }
-                    });
-            }
         });
     }
 }
