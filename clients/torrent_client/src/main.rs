@@ -35,11 +35,53 @@ fn main() {
     .unwrap();
 }
 
+struct SessionState {
+    session: TorrentSession,
+    last_file_name: String,
+    last_progress: f32,
+    last_status: String,
+    last_peers_connected: usize,
+    last_peers_active: usize,
+    last_bps: u64,
+    last_downloaded: u64,
+    last_total: u64,
+}
+
+impl SessionState {
+    fn new(session: TorrentSession) -> Self {
+        let mut state = Self {
+            session,
+            last_file_name: String::new(),
+            last_progress: 0.0,
+            last_status: String::new(),
+            last_peers_connected: 0,
+            last_peers_active: 0,
+            last_bps: 0,
+            last_downloaded: 0,
+            last_total: 0,
+        };
+        if let Ok(ctx_guard) = state.session.context.lock() {
+            state.last_file_name = std::path::Path::new(&ctx_guard.file_name)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| ctx_guard.file_name.clone());
+            state.last_progress = ctx_guard.progress_percent() / 100.0;
+            state.last_status = format!("{:?}", ctx_guard.status);
+            state.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
+            state.last_peers_active = ctx_guard.number_of_unchoked_peers();
+            state.last_bps = ctx_guard.bytes_per_second() as u64;
+            state.last_downloaded = ctx_guard.total_bytes_downloaded;
+            state.last_total = ctx_guard.total_bytes_to_download;
+        }
+        state
+    }
+}
+
 struct TorrentClientApp {
     torrent_path: String,
     download_dir: String,
     messages: Vec<String>,
-    sessions: Vec<TorrentSession>,
+    sessions: Vec<SessionState>,
     pending_sessions: Vec<mpsc::Receiver<TorrentSession>>,
     pending_messages: Vec<mpsc::Receiver<String>>,
 }
@@ -73,7 +115,7 @@ impl eframe::App for TorrentClientApp {
         let mut ready = vec![];
         for (i, rx) in self.pending_sessions.iter().enumerate() {
             if let Ok(session) = rx.try_recv() {
-                self.sessions.push(session);
+                self.sessions.push(SessionState::new(session));
                 ready.push(i);
             }
         }
@@ -125,28 +167,33 @@ impl eframe::App for TorrentClientApp {
             egui::ScrollArea::vertical()
                 .id_source("sessions_scroll")
                 .show(ui, |ui| {
-                    for session in &self.sessions {
-                        let ctx_guard = match session.context.try_lock() {
-                            Ok(g) => g,
-                            Err(_) => continue, // lock held by peer thread, skip this frame
-                        };
+                    for session_state in &mut self.sessions {
+                        if let Ok(ctx_guard) = session_state.session.context.try_lock() {
+                            session_state.last_file_name = std::path::Path::new(&ctx_guard.file_name)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| ctx_guard.file_name.clone());
 
-                        let file_name = std::path::Path::new(&ctx_guard.file_name)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| ctx_guard.file_name.clone());
+                            session_state.last_progress = ctx_guard.progress_percent() / 100.0;
+                            session_state.last_status = format!("{:?}", ctx_guard.status);
+                            session_state.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
+                            session_state.last_peers_active = ctx_guard.number_of_unchoked_peers();
+                            session_state.last_bps = ctx_guard.bytes_per_second() as u64;
+                            session_state.last_downloaded = ctx_guard.total_bytes_downloaded;
+                            session_state.last_total = ctx_guard.total_bytes_to_download;
+                        }
 
-                        let progress = ctx_guard.progress_percent() / 100.0;
-                        let status = format!("{:?}", ctx_guard.status);
-                        let peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
-                        let peers_active = ctx_guard.number_of_unchoked_peers();
-                        let bps = ctx_guard.bytes_per_second();
-                        let downloaded = ctx_guard.total_bytes_downloaded;
-                        let total = ctx_guard.total_bytes_to_download;
-                        drop(ctx_guard);
+                        let file_name = &session_state.last_file_name;
+                        let progress = session_state.last_progress;
+                        let status = &session_state.last_status;
+                        let peers_connected = session_state.last_peers_connected;
+                        let peers_active = session_state.last_peers_active;
+                        let bps = session_state.last_bps;
+                        let downloaded = session_state.last_downloaded;
+                        let total = session_state.last_total;
 
                         ui.group(|ui| {
-                            ui.label(egui::RichText::new(&file_name).strong());
+                            ui.label(egui::RichText::new(file_name).strong());
 
                             let bar = egui::ProgressBar::new(progress)
                                 .text(format!("{:.1}%", progress * 100.0))
@@ -162,7 +209,7 @@ impl eframe::App for TorrentClientApp {
                                     fmt_bytes(total)
                                 ));
                                 ui.separator();
-                                ui.label(format!("Speed: {}/s", fmt_bytes(bps as u64)));
+                                ui.label(format!("Speed: {}/s", fmt_bytes(bps)));
                             });
                             ui.horizontal(|ui| {
                                 ui.label(format!("Peers: {} connected", peers_connected));
