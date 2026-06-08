@@ -3,12 +3,15 @@
 //! Implements strategy algorithms for selecting which pieces to request next
 //! (random/missing search) and which peers are the best candidates to fetch pieces from.
 
+#[cfg(feature = "std")]
 use rand::SeedableRng;
+#[cfg(feature = "std")]
 use rand::rngs::StdRng;
 
 /// Selects the next piece to download and ranks remote peers for block requests.
 #[derive(Debug)]
 pub struct Selector {
+    #[cfg(feature = "std")]
     _random_seed: StdRng,
 }
 
@@ -23,6 +26,7 @@ impl Selector {
     /// Creates a new `Selector` instance using entropy to initialize the random number generator.
     pub fn new() -> Self {
         Selector {
+            #[cfg(feature = "std")]
             _random_seed: StdRng::from_entropy(),
         }
     }

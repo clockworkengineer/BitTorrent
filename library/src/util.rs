@@ -3,9 +3,15 @@
 //! Provides binary serialization/deserialization helper functions (such as packing
 //! and unpacking integers to/from network byte order) and formatting utilities.
 
+#[cfg(feature = "std")]
 use std::fs::OpenOptions;
+#[cfg(feature = "std")]
 use std::io::Write;
+#[cfg(feature = "std")]
 use std::sync::{Mutex, OnceLock};
+
+use alloc::string::String;
+use alloc::format;
 
 /// Packs a 32-bit unsigned integer into a 4-byte big-endian array.
 pub fn pack_u32(value: u32) -> [u8; 4] {
@@ -63,10 +69,13 @@ pub fn get_bitfield_index_and_mask(piece_number: u32) -> (usize, u8) {
     (byte_index, bit_mask)
 }
 
+#[cfg(feature = "std")]
 static DEBUG_LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
+#[cfg(feature = "std")]
 static LOG_SENDER: OnceLock<Mutex<Option<std::sync::mpsc::Sender<String>>>> = OnceLock::new();
 
 /// Sets the global log sender channel to forward logs to.
+#[cfg(feature = "std")]
 pub fn set_log_sender(sender: std::sync::mpsc::Sender<String>) {
     let mutex = LOG_SENDER.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = mutex.lock() {
@@ -76,24 +85,32 @@ pub fn set_log_sender(sender: std::sync::mpsc::Sender<String>) {
 
 /// Appends a debug message to `debug.log`.
 pub fn log_debug(msg: &str) {
-    let file = DEBUG_LOG.get_or_init(|| {
-        let f = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("debug.log")
-            .expect("cannot open debug.log");
-        Mutex::new(f)
-    });
-    if let Ok(mut f) = file.lock() {
-        let _ = writeln!(f, "{}", msg);
-        let _ = f.flush();
-    }
+    #[cfg(feature = "std")]
+    {
+        let file = DEBUG_LOG.get_or_init(|| {
+            let f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("debug.log")
+                .expect("cannot open debug.log");
+            Mutex::new(f)
+        });
+        if let Ok(mut f) = file.lock() {
+            let _ = writeln!(f, "{}", msg);
+            let _ = f.flush();
+        }
 
-    if let Some(mutex) = LOG_SENDER.get() {
-        if let Ok(guard) = mutex.lock() {
-            if let Some(ref sender) = *guard {
-                let _ = sender.send(msg.to_string());
+        if let Some(mutex) = LOG_SENDER.get() {
+            if let Ok(guard) = mutex.lock() {
+                if let Some(ref sender) = *guard {
+                    let _ = sender.send(msg.to_string());
+                }
             }
         }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        // No-op or custom light print in embedded systems
+        let _ = msg;
     }
 }

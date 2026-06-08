@@ -3,9 +3,18 @@ name = "bittorrent-rs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["std"]
+std = [
+    "dep:rand",
+    "dep:ureq",
+    "dep:urlencoding",
+    "dep:url",
+]
+
 [dependencies]
-sha1 = "0.11.0"
-rand = "0.8"
-ureq = "2.7"
-urlencoding = "2.1"
-url = "2.4"
+sha1 = { version = "0.11.0", default-features = false }
+rand = { version = "0.8", optional = true }
+ureq = { version = "2.7", optional = true }
+urlencoding = { version = "2.1", optional = true }
+url = { version = "2.4", optional = true }

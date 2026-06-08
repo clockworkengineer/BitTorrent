@@ -6,9 +6,28 @@
 use crate::bencode::{BNode, Bencode};
 use crate::error::BitTorrentError;
 use sha1::{Digest, Sha1};
+
+#[cfg(feature = "std")]
 use std::collections::HashMap;
+#[cfg(feature = "std")]
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "std")]
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::format;
+
+#[cfg(not(feature = "std"))]
+const MAIN_SEPARATOR: char = '/';
+
+#[cfg(feature = "std")]
+type MetaInfoDict = HashMap<String, Vec<u8>>;
+#[cfg(not(feature = "std"))]
+type MetaInfoDict = BTreeMap<String, Vec<u8>>;
 
 /// Detailed information about a single file in a multi-file torrent or the single file itself.
 #[derive(Debug, Clone)]
@@ -22,14 +41,30 @@ pub struct FileDetails {
 /// Represents a parsed `.torrent` metadata file.
 #[derive(Debug)]
 pub struct MetaInfoFile {
+    #[cfg(feature = "std")]
     pub torrent_file_name: PathBuf,
     meta_info_data: Vec<u8>,
-    meta_info_dict: HashMap<String, Vec<u8>>,
+    meta_info_dict: MetaInfoDict,
     parsed: bool,
 }
 
 impl MetaInfoFile {
+    /// Loads a torrent file directly from memory raw bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        MetaInfoFile {
+            #[cfg(feature = "std")]
+            torrent_file_name: PathBuf::new(),
+            meta_info_data: bytes.to_vec(),
+            #[cfg(feature = "std")]
+            meta_info_dict: HashMap::new(),
+            #[cfg(not(feature = "std"))]
+            meta_info_dict: BTreeMap::new(),
+            parsed: false,
+        }
+    }
+
     /// Loads a torrent file from the given path but does not parse it yet.
+    #[cfg(feature = "std")]
     pub fn new(path: impl AsRef<Path>) -> Result<Self, BitTorrentError> {
         let torrent_file_name = path.as_ref().to_path_buf();
         let mut meta_info = MetaInfoFile {
@@ -43,6 +78,7 @@ impl MetaInfoFile {
     }
 
     /// Reads the raw file contents into memory.
+    #[cfg(feature = "std")]
     fn load(&mut self) -> Result<(), BitTorrentError> {
         self.meta_info_data = fs::read(&self.torrent_file_name)?;
         Ok(())
@@ -186,20 +222,24 @@ impl MetaInfoFile {
             ));
         }
 
-        let tracker = self.get_tracker()?;
-        url::Url::parse(&tracker).map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+        #[cfg(feature = "std")]
+        {
+            let tracker = self.get_tracker()?;
+            url::Url::parse(&tracker).map_err(|err| BitTorrentError::Parse(err.to_string()))?;
 
-        let files = self.local_files_to_download_list(Path::new("."))?.1;
-        if files.is_empty() {
-            return Err(BitTorrentError::Parse(
-                "Torrent contains no file entries.".into(),
-            ));
+            let files = self.local_files_to_download_list(Path::new("."))?.1;
+            if files.is_empty() {
+                return Err(BitTorrentError::Parse(
+                    "Torrent contains no file entries.".into(),
+                ));
+            }
         }
 
         Ok(())
     }
 
     /// Resolves target files to be downloaded from the metainfo, returning their total bytes and details.
+    #[cfg(feature = "std")]
     pub fn local_files_to_download_list(
         &self,
         download_path: impl AsRef<Path>,
@@ -280,7 +320,7 @@ impl MetaInfoFile {
 
     /// Extracts a string or numeric value from a `BNode` and caches it in `meta_info_dict`.
     fn get_string_or_numeric(
-        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        meta_info_dict: &mut MetaInfoDict,
         root: &BNode<'_>,
         field: &str,
     ) -> Result<(), BitTorrentError> {
@@ -296,7 +336,7 @@ impl MetaInfoFile {
 
     /// Asserts that a field exists and extracts it as string or numeric, returning an error otherwise.
     fn require_string_or_numeric(
-        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        meta_info_dict: &mut MetaInfoDict,
         root: &BNode<'_>,
         field: &str,
     ) -> Result<(), BitTorrentError> {
@@ -308,7 +348,7 @@ impl MetaInfoFile {
 
     /// Extracts a list of strings from a `BNode` and saves them in `meta_info_dict` as a comma-separated string.
     fn get_list_of_strings(
-        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        meta_info_dict: &mut MetaInfoDict,
         root: &BNode<'_>,
         field: &str,
     ) -> Result<(), BitTorrentError> {
@@ -336,13 +376,13 @@ impl MetaInfoFile {
 
     /// Extracts file dict arrays under the "files" list, caching them in `meta_info_dict` as numbered entries.
     fn get_list_of_dictionarys(
-        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        meta_info_dict: &mut MetaInfoDict,
         root: &BNode<'_>,
         field: &str,
     ) -> Result<(), BitTorrentError> {
         if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
             if let BNode::List(list) = entry {
-                let mut file_no = 0;
+                let mut file_no: i32 = 0;
                 for item in list {
                     if let BNode::Dictionary(_) = item {
                         let mut file_entry = String::new();
@@ -358,7 +398,7 @@ impl MetaInfoFile {
                                 file_entry.push_str(
                                     &path_segments
                                         .iter()
-                                        .map(|seg| format!("{}{}", std::path::MAIN_SEPARATOR, seg))
+                                        .map(|seg| format!("{}{}", MAIN_SEPARATOR, seg))
                                         .collect::<String>(),
                                 );
                             }
@@ -385,7 +425,7 @@ impl MetaInfoFile {
 
     /// Computes the SHA-1 info hash of the `info` sub-dictionary.
     fn calculate_info_hash(
-        meta_info_dict: &mut HashMap<String, Vec<u8>>,
+        meta_info_dict: &mut MetaInfoDict,
         root: &BNode<'_>,
     ) -> Result<(), BitTorrentError> {
         let info = Bencode::get_dictionary_entry(root, b"info")
@@ -399,6 +439,7 @@ impl MetaInfoFile {
     }
 
     /// Validates that a parsed relative path is secure and contains no directory traversal elements.
+    #[cfg(feature = "std")]
     fn validate_relative_path(path: &str) -> Result<(), BitTorrentError> {
         if path.is_empty() {
             return Err(BitTorrentError::Parse(

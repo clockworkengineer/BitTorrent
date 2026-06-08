@@ -4,6 +4,10 @@
 //! Bencode format, which is the standard serialization format used by BitTorrent.
 
 use crate::error::BitTorrentError;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::format;
 
 /// Represents a node in a parsed Bencode structure.
 #[derive(Debug, Clone, PartialEq)]
@@ -177,7 +181,7 @@ impl<'a> Parser<'a> {
             ));
         }
         let number_bytes = &self.buffer[start..end];
-        let number_str = std::str::from_utf8(number_bytes)
+        let number_str = core::str::from_utf8(number_bytes)
             .map_err(|e| BitTorrentError::InvalidBencode(e.to_string()))?;
         if number_str.is_empty()
             || (number_str.starts_with('0') && number_str.len() > 1)
@@ -205,7 +209,7 @@ impl<'a> Parser<'a> {
             }
             self.position += 1;
         }
-        let length_bytes = std::str::from_utf8(&self.buffer[start..self.position])
+        let length_bytes = core::str::from_utf8(&self.buffer[start..self.position])
             .map_err(|e| BitTorrentError::InvalidBencode(e.to_string()))?;
         if length_bytes.is_empty() || (length_bytes.starts_with('0') && length_bytes != "0") {
             return Err(BitTorrentError::InvalidBencode(

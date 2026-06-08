@@ -5,6 +5,8 @@
 
 use crate::constants::{HASH_LENGTH, PEER_ID_LENGTH, SIZE_OF_U32};
 use crate::error::BitTorrentError;
+use alloc::vec::Vec;
+use alloc::vec;
 
 /// Enumeration of messages defined in the BitTorrent Peer Wire Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
