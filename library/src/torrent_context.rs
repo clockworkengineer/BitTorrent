@@ -16,6 +16,7 @@ use crate::util::get_bitfield_index_and_mask;
 use sha1::Digest;
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// Placeholder structure representing a tracker client.
@@ -60,10 +61,10 @@ pub struct TorrentContext {
     pub pieces_info_hash: Vec<u8>,
     pub bitfield: Vec<u8>,
     pub files_to_download: Vec<FileDetails>,
-    pub total_bytes_downloaded: u64,
+    pub total_bytes_downloaded: Arc<AtomicU64>,
     pub initial_bytes_downloaded: u64,
     pub total_bytes_to_download: u64,
-    pub total_bytes_uploaded: u64,
+    pub total_bytes_uploaded: Arc<AtomicU64>,
     pub status: TorrentStatus,
     pub file_name: String,
     pub main_tracker: Option<Tracker>,
@@ -118,10 +119,10 @@ impl TorrentContext {
             pieces_info_hash,
             bitfield,
             files_to_download: all_files_to_download,
-            total_bytes_downloaded: 0,
+            total_bytes_downloaded: Arc::new(AtomicU64::new(0)),
             initial_bytes_downloaded: 0,
             total_bytes_to_download: total_download_length,
-            total_bytes_uploaded: 0,
+            total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
             status: if seeding {
                 TorrentStatus::Seeding
             } else {
@@ -156,11 +157,11 @@ impl TorrentContext {
         disk_io.create_local_torrent_structure(&context)?;
         if seeding {
             disk_io.fully_downloaded_torrent_bitfield(&mut context)?;
-            context.total_bytes_downloaded = context.total_bytes_to_download;
+            context.total_bytes_downloaded.store(context.total_bytes_to_download, Ordering::Relaxed);
             context.initial_bytes_downloaded = context.total_bytes_to_download;
         } else {
             disk_io.create_torrent_bitfield(&mut context)?;
-            context.initial_bytes_downloaded = context.total_bytes_downloaded;
+            context.initial_bytes_downloaded = context.total_bytes_downloaded.load(Ordering::Relaxed);
         }
         Ok(context)
     }
@@ -260,7 +261,7 @@ impl TorrentContext {
         }
 
         let percent =
-            self.total_bytes_downloaded as f64 / self.total_bytes_to_download as f64 * 100.0;
+            self.total_bytes_downloaded.load(Ordering::Relaxed) as f64 / self.total_bytes_to_download as f64 * 100.0;
         percent.min(100.0) as f32
     }
 
@@ -341,12 +342,13 @@ impl TorrentContext {
 
     /// Returns the number of bytes remaining to be downloaded.
     pub fn bytes_left_to_download(&self) -> Result<u64, crate::error::BitTorrentError> {
-        if self.total_bytes_to_download < self.total_bytes_downloaded {
+        let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
+        if self.total_bytes_to_download < downloaded {
             return Err(crate::error::BitTorrentError::Parse(
                 "Bytes left to download turned negative.".to_string(),
             ));
         }
-        Ok(self.total_bytes_to_download - self.total_bytes_downloaded)
+        Ok(self.total_bytes_to_download - downloaded)
     }
 
     /// Integrates a verified piece buffer, updating local bitfields, download speeds, and completion metrics.
@@ -358,7 +360,7 @@ impl TorrentContext {
     ) {
         let piece_there = self.check_piece_hash(piece_number, piece_buffer, number_of_bytes);
         if piece_there {
-            self.total_bytes_downloaded += number_of_bytes as u64;
+            self.total_bytes_downloaded.fetch_add(number_of_bytes as u64, Ordering::Relaxed);
         }
         self.set_piece_length(piece_number, number_of_bytes);
         self.mark_piece_local(piece_number, piece_there);

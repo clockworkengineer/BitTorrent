@@ -327,7 +327,7 @@ impl Peer {
                                 begin,
                                 block,
                             });
-                            tc.total_bytes_uploaded += length as u64;
+                            tc.total_bytes_uploaded.fetch_add(length as u64, std::sync::atomic::Ordering::Relaxed);
                         }
                         Err(e) => {
                             log(&format!(

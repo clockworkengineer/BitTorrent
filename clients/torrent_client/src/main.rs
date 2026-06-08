@@ -73,7 +73,7 @@ impl SessionState {
             state.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
             state.last_peers_active = ctx_guard.number_of_unchoked_peers();
             state.last_bps = ctx_guard.bytes_per_second() as u64;
-            state.last_downloaded = ctx_guard.total_bytes_downloaded;
+            state.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
             state.last_total = ctx_guard.total_bytes_to_download;
         }
         state
@@ -176,7 +176,7 @@ impl eframe::App for TorrentClientApp {
                             session_state.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
                             session_state.last_peers_active = ctx_guard.number_of_unchoked_peers();
                             session_state.last_bps = ctx_guard.bytes_per_second() as u64;
-                            session_state.last_downloaded = ctx_guard.total_bytes_downloaded;
+                            session_state.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
                             session_state.last_total = ctx_guard.total_bytes_to_download;
                         }
 

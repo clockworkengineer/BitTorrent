@@ -175,7 +175,7 @@ fn test_process_piece_block_writes_complete_piece_to_disk() {
 
     assert!(completed);
     assert!(context.is_piece_local(0));
-    assert_eq!(context.total_bytes_downloaded, 16384);
+    assert_eq!(context.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed), 16384);
 
     let file_path = download_path.join("data.bin");
     let mut file_contents = Vec::new();

@@ -72,7 +72,7 @@ impl TorrentSession {
                 }
                 let peers = ctx.peer_swarm.read().map(|s| s.len()).unwrap_or(0);
                 let unchoked = ctx.number_of_unchoked_peers();
-                let done = ctx.total_bytes_downloaded;
+                let done = ctx.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
                 let total = ctx.total_bytes_to_download;
                 let bps = ctx.bytes_per_second();
                 let reserved = ctx.requested_blocks.read().map(|r| r.len()).unwrap_or(0);

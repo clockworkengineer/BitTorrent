@@ -133,6 +133,10 @@ impl TrackerAnnounceContext {
 pub struct Tracker {
     tc: Arc<Mutex<TorrentContext>>,
     announcer: AnnouncerEnum,
+    pub total_bytes_downloaded: Arc<std::sync::atomic::AtomicU64>,
+    pub total_bytes_uploaded: Arc<std::sync::atomic::AtomicU64>,
+    pub initial_bytes_downloaded: u64,
+    pub total_bytes_to_download: u64,
     pub peer_id: String,
     pub port: u16,
     pub ip: String,
@@ -199,9 +203,17 @@ impl Tracker {
             }
             result?
         };
+        let total_bytes_downloaded = guard.total_bytes_downloaded.clone();
+        let total_bytes_uploaded = guard.total_bytes_uploaded.clone();
+        let initial_bytes_downloaded = guard.initial_bytes_downloaded;
+        let total_bytes_to_download = guard.total_bytes_to_download;
         Ok(Tracker {
             tc: tc.clone(),
             announcer,
+            total_bytes_downloaded,
+            total_bytes_uploaded,
+            initial_bytes_downloaded,
+            total_bytes_to_download,
             peer_id: peer_id::get(),
             port: 6881,
             ip: host::get_ip(),
@@ -232,9 +244,17 @@ impl Tracker {
         let info_hash = guard.info_hash.clone();
         let tracker_url = guard.tracker_url.clone();
         let tracker_urls = guard.tracker_urls.clone();
+        let total_bytes_downloaded = guard.total_bytes_downloaded.clone();
+        let total_bytes_uploaded = guard.total_bytes_uploaded.clone();
+        let initial_bytes_downloaded = guard.initial_bytes_downloaded;
+        let total_bytes_to_download = guard.total_bytes_to_download;
         Ok(Tracker {
             tc: tc.clone(),
             announcer: AnnouncerEnum::Custom(announcer),
+            total_bytes_downloaded,
+            total_bytes_uploaded,
+            initial_bytes_downloaded,
+            total_bytes_to_download,
             peer_id: peer_id::get(),
             port: 6881,
             ip: host::get_ip(),
@@ -268,22 +288,22 @@ impl Tracker {
 
     /// Retrieves downloaded byte statistics cached in the torrent context.
     pub fn downloaded(&self) -> u64 {
-        let tc = self.tc.lock().unwrap();
-        tc.total_bytes_downloaded.saturating_sub(tc.initial_bytes_downloaded)
+        self.total_bytes_downloaded
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .saturating_sub(self.initial_bytes_downloaded)
     }
 
     /// Retrieves uploaded byte statistics cached in the torrent context.
     pub fn uploaded(&self) -> u64 {
-        self.tc.lock().unwrap().total_bytes_uploaded
+        self.total_bytes_uploaded
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Computes bytes remaining to download in the torrent.
     pub fn left(&self) -> u64 {
-        self.tc
-            .lock()
-            .unwrap()
-            .bytes_left_to_download()
-            .unwrap_or(0)
+        let downloaded = self.total_bytes_downloaded
+            .load(std::sync::atomic::Ordering::Relaxed);
+        self.total_bytes_to_download.saturating_sub(downloaded)
     }
 
     /// Constructs the parameters object needed to make an announce request.
