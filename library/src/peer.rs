@@ -296,15 +296,7 @@ impl Peer {
                     );
                     self.broadcast_cancel(tc, index, begin, cancel_length, Some(block_index));
                 }
-                log(&format!(
-                    "[peer {}:{}] PIECE index={} begin={} len={} outstanding={}",
-                    self.ip,
-                    self.port,
-                    index,
-                    begin,
-                    block.len(),
-                    self.outstanding_requests_count
-                ));
+
                 let piece_complete = tc.process_piece_block(disk_io, index, begin, &block)?;
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
