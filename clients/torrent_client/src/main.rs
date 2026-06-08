@@ -244,33 +244,20 @@ impl TorrentClientApp {
                         ));
                     } else {
                         let _ = msg_tx.send(format!("[{}] Download started.", session_id));
-
-                        // Re-announce every 60s to get fresh peers
-                        loop {
-                            std::thread::sleep(std::time::Duration::from_secs(60));
-                            let done = {
-                                let ctx = session.context.lock().unwrap();
-                                ctx.is_download_complete()
-                            };
-                            if done { break; }
-                            let _ = msg_tx.send(format!("[{}] Re-announcing to tracker...", session_id));
-                            match tracker.announce_once() {
-                                Ok(resp) if !resp.peer_list.is_empty() => {
-                                    let _ = msg_tx.send(format!("[{}] Re-announce: {} new peers", session_id, resp.peer_list.len()));
-                                    let _ = session.download_from_peers(resp.peer_list, None);
-                                }
-                                _ => {}
-                            }
-                        }
                     }
+
+                    // Start the re-announce loop thread (runs in background)
+                    let _reannounce_thread = session.start_reannounce_loop(tracker, None);
+
+                    // Send the session to the GUI thread immediately so it shows up in the UI
+                    let _ = session_tx.send(session);
                 }
                 Err(e) => {
                     let _ = msg_tx
                         .send(format!("[{}] Tracker announce failed: {}", session_id, e));
+                    let _ = session_tx.send(session);
                 }
             }
-
-            let _ = session_tx.send(session);
         });
     }
 }
