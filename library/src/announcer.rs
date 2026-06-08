@@ -387,16 +387,36 @@ impl Announcer for UdpAnnouncer {
     }
 }
 
-/// Factory helper to build `Announcer` trait objects dynamically based on the tracker URL protocol schema.
+/// An enum dispatcher for different announcer implementations to avoid dynamic dispatch.
+pub enum AnnouncerEnum {
+    Http(HttpAnnouncer),
+    Udp(UdpAnnouncer),
+    Custom(Box<dyn Announcer>),
+}
+
+impl AnnouncerEnum {
+    pub fn announce(
+        &mut self,
+        tracker: &TrackerAnnounceContext,
+    ) -> Result<AnnounceResponse, BitTorrentError> {
+        match self {
+            AnnouncerEnum::Http(a) => a.announce(tracker),
+            AnnouncerEnum::Udp(a) => a.announce(tracker),
+            AnnouncerEnum::Custom(a) => a.announce(tracker),
+        }
+    }
+}
+
+/// Factory helper to build `AnnouncerEnum` variants based on the tracker URL protocol schema.
 pub struct AnnouncerFactory;
 
 impl AnnouncerFactory {
-    /// Instantiates the appropriate `Announcer` concrete implementation (`HttpAnnouncer` or `UdpAnnouncer`) for a given URL.
-    pub fn create(url: &str) -> Result<Box<dyn Announcer>, BitTorrentError> {
+    /// Instantiates the appropriate `AnnouncerEnum` variant for a given URL.
+    pub fn create(url: &str) -> Result<AnnouncerEnum, BitTorrentError> {
         if url.starts_with("http://") || url.starts_with("https://") {
-            Ok(Box::new(HttpAnnouncer::new()))
+            Ok(AnnouncerEnum::Http(HttpAnnouncer::new()))
         } else if url.starts_with("udp://") {
-            Ok(Box::new(UdpAnnouncer::new(url)?))
+            Ok(AnnouncerEnum::Udp(UdpAnnouncer::new(url)?))
         } else {
             Err(BitTorrentError::Parse("Invalid tracker URL".into()))
         }

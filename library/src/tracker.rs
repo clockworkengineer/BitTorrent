@@ -3,7 +3,7 @@
 //! Handles announcements to HTTP and UDP trackers, parsing responses, and maintaining
 //! state information like upload/download statistics and discovered peers.
 
-use crate::announcer::{Announcer, AnnouncerFactory};
+use crate::announcer::{Announcer, AnnouncerEnum, AnnouncerFactory};
 use crate::error::BitTorrentError;
 use crate::host;
 use crate::manager::Manager;
@@ -132,7 +132,7 @@ impl TrackerAnnounceContext {
 /// Manages periodic communication with the tracker to announce status and retrieve peer swarms.
 pub struct Tracker {
     tc: Arc<Mutex<TorrentContext>>,
-    announcer: Box<dyn Announcer>,
+    announcer: AnnouncerEnum,
     pub peer_id: String,
     pub port: u16,
     pub ip: String,
@@ -234,7 +234,7 @@ impl Tracker {
         let tracker_urls = guard.tracker_urls.clone();
         Ok(Tracker {
             tc: tc.clone(),
-            announcer,
+            announcer: AnnouncerEnum::Custom(announcer),
             peer_id: peer_id::get(),
             port: 6881,
             ip: host::get_ip(),
