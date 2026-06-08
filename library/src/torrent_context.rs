@@ -553,21 +553,11 @@ impl TorrentContext {
             .retain(|(piece, _)| *piece != piece_number);
     }
 
-    fn get_sorted_missing_pieces_for_peer(&self, peer: &Peer) -> Vec<(usize, u32)> {
-        let mut candidates: Vec<(usize, u32)> = (0..self.number_of_pieces as u32)
-            .filter(|&piece| !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
-            .map(|piece| (self.piece_data[piece as usize].peer_count, piece))
-            .collect();
-        candidates.sort_by_key(|(count, piece)| (*count, *piece));
-        candidates
-    }
-
     /// Selects the rarest missing piece that the remote peer possesses.
-    pub fn select_next_piece_for_peer(&mut self, remote_peer: &Peer) -> Option<u32> {
-        self.get_sorted_missing_pieces_for_peer(remote_peer)
-            .into_iter()
-            .map(|(_, piece)| piece)
-            .next()
+    pub fn select_next_piece_for_peer(&self, remote_peer: &Peer) -> Option<u32> {
+        (0..self.number_of_pieces as u32)
+            .filter(|&piece| !self.is_piece_local(piece) && remote_peer.is_piece_on_remote_peer(piece))
+            .min_by_key(|&piece| (self.piece_data[piece as usize].peer_count, piece))
     }
 
     /// Identifies and reserves the next download block from a piece available on the specified peer.
@@ -577,28 +567,32 @@ impl TorrentContext {
             return None;
         }
         let endgame = self.is_endgame();
-        let candidates = self.get_sorted_missing_pieces_for_peer(peer);
+        if endgame {
+            // Endgame mode: request any block from the rarest available piece.
+            let piece_number = (0..self.number_of_pieces as u32)
+                .filter(|&piece| !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
+                .min_by_key(|&piece| (self.piece_data[piece as usize].peer_count, piece))?;
 
-        let pieces_remaining = candidates.len();
-        let in_endgame = endgame && pieces_remaining > 0;
+            let piece_length = self.get_piece_length(piece_number);
+            let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
+            for block_index in 0..block_count {
+                let begin = block_index * BLOCK_SIZE as u32;
+                let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));
+                self.reserve_block_request(piece_number, block_index);
+                return Some((piece_number, begin, length));
+            }
+        } else {
+            // Standard mode: find the rarest piece with an unrequested block.
+            let best = (0..self.number_of_pieces as u32)
+                .filter(|&piece| !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
+                .filter_map(|piece| {
+                    self.next_pending_block(piece).map(|block| (piece, block))
+                })
+                .min_by_key(|&(piece, _)| (self.piece_data[piece as usize].peer_count, piece));
 
-        for (_, piece_number) in candidates {
-            if in_endgame {
-                // Endgame: request any block of the piece, even if already reserved by another peer.
-                let piece_length = self.get_piece_length(piece_number);
-                let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
-                for block_index in 0..block_count {
-                    let begin = block_index * BLOCK_SIZE as u32;
-                    let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));
-                    self.reserve_block_request(piece_number, block_index);
-                    return Some((piece_number, begin, length));
-                }
-            } else if let Some((begin, length)) = self.next_pending_block(piece_number) {
+            if let Some((piece_number, (begin, length))) = best {
                 let block_index = begin / BLOCK_SIZE as u32;
                 if self.reserve_block_request(piece_number, block_index) {
-                    return Some((piece_number, begin, length));
-                }
-                if endgame {
                     return Some((piece_number, begin, length));
                 }
             }
