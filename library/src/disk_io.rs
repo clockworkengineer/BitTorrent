@@ -4,40 +4,25 @@
 //! scanning existing files to compute/verify the bitfield of local pieces, and writing downloaded pieces.
 
 use crate::error::BitTorrentError;
-use crate::piece_buffer::PieceBuffer;
-use crate::piece_request::PieceRequest;
 use crate::torrent_context::TorrentContext;
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::mpsc::{self, Sender};
-use std::thread;
 
 /// Manager for orchestrating reading and writing torrent data blocks to and from disk.
 #[derive(Debug)]
-pub struct DiskIO {
-    pub piece_write_queue: Sender<PieceBuffer>,
-    pub piece_request_queue: Sender<PieceRequest>,
-    _worker_handle: Option<thread::JoinHandle<()>>,
+pub struct DiskIO;
+
+impl Default for DiskIO {
+    fn default() -> Self {
+        DiskIO::new()
+    }
 }
 
 impl DiskIO {
-    /// Creates a new `DiskIO` manager and starts a background worker thread.
+    /// Creates a new `DiskIO` manager.
     pub fn new() -> Self {
-        let (write_sender, write_receiver) = mpsc::channel::<PieceBuffer>();
-        let (request_sender, request_receiver) = mpsc::channel::<PieceRequest>();
-
-        let worker_handle = thread::spawn(move || {
-            let _ = write_receiver;
-            let _ = request_receiver;
-            // Background disk tasks can be implemented later.
-        });
-
-        DiskIO {
-            piece_write_queue: write_sender,
-            piece_request_queue: request_sender,
-            _worker_handle: Some(worker_handle),
-        }
+        DiskIO
     }
 
     /// Pre-creates the files and directories on disk for the torrent, pre-allocating the correct file sizes.

@@ -27,7 +27,7 @@ fn test_single_file_torrent_contains_valid_keys() {
     );
     assert_eq!(torrent.get_piece_length().unwrap().to_string(), "16384");
     assert_eq!(
-        hex::encode(torrent.get_info_hash().unwrap()),
+        bittorrent_rs::util::info_hash_to_string(&torrent.get_info_hash().unwrap()),
         "7fd1a2631b385a4cc68bf15040fa375c8e68cb7e"
     );
 }
@@ -42,7 +42,7 @@ fn test_multi_file_torrent_contains_valid_keys() {
         "http://192.168.1.215:9005/announce"
     );
     assert_eq!(
-        hex::encode(torrent.get_info_hash().unwrap()),
+        bittorrent_rs::util::info_hash_to_string(&torrent.get_info_hash().unwrap()),
         "c28bf4c5ab095923eecad46701d09408912928e7"
     );
 }
