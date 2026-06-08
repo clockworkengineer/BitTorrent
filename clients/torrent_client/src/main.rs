@@ -10,6 +10,9 @@ fn main() {
     let initial_torrent_path = args.next().and_then(|arg| arg.into_string().ok());
     let initial_download_dir = args.next().and_then(|arg| arg.into_string().ok());
 
+    let (log_tx, log_rx) = mpsc::channel::<String>();
+    bittorrent_rs::util::set_log_sender(log_tx.clone());
+
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
@@ -21,7 +24,7 @@ fn main() {
         "BitTorrent Client",
         options,
         Box::new(move |_cc| {
-            let mut app = TorrentClientApp::default();
+            let mut app = TorrentClientApp::new(log_rx, log_tx);
             if let (Some(torrent_path), Some(download_dir)) =
                 (initial_torrent_path, initial_download_dir)
             {
@@ -83,18 +86,20 @@ struct TorrentClientApp {
     messages: Vec<String>,
     sessions: Vec<SessionState>,
     pending_sessions: Vec<mpsc::Receiver<TorrentSession>>,
-    pending_messages: Vec<mpsc::Receiver<String>>,
+    log_rx: mpsc::Receiver<String>,
+    log_tx: mpsc::Sender<String>,
 }
 
-impl Default for TorrentClientApp {
-    fn default() -> Self {
+impl TorrentClientApp {
+    fn new(log_rx: mpsc::Receiver<String>, log_tx: mpsc::Sender<String>) -> Self {
         Self {
             torrent_path: String::new(),
             download_dir: String::new(),
             messages: Vec::new(),
             sessions: Vec::new(),
             pending_sessions: Vec::new(),
-            pending_messages: Vec::new(),
+            log_rx,
+            log_tx,
         }
     }
 }
@@ -105,10 +110,8 @@ impl eframe::App for TorrentClientApp {
         ctx.request_repaint_after(Duration::from_millis(500));
 
         // Drain log messages from background threads
-        for rx in &self.pending_messages {
-            while let Ok(msg) = rx.try_recv() {
-                self.messages.push(msg);
-            }
+        while let Ok(msg) = self.log_rx.try_recv() {
+            self.messages.push(msg);
         }
 
         // Move ready sessions into self.sessions
@@ -248,9 +251,8 @@ impl TorrentClientApp {
         }
 
         let (session_tx, session_rx) = mpsc::channel::<TorrentSession>();
-        let (msg_tx, msg_rx) = mpsc::channel::<String>();
+        let msg_tx = self.log_tx.clone();
         self.pending_sessions.push(session_rx);
-        self.pending_messages.push(msg_rx);
 
         // All blocking network work happens in a background thread so the UI
         // is never frozen and the window appears immediately.

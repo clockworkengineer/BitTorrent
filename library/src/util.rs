@@ -64,6 +64,15 @@ pub fn get_bitfield_index_and_mask(piece_number: u32) -> (usize, u8) {
 }
 
 static DEBUG_LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
+static LOG_SENDER: OnceLock<Mutex<Option<std::sync::mpsc::Sender<String>>>> = OnceLock::new();
+
+/// Sets the global log sender channel to forward logs to.
+pub fn set_log_sender(sender: std::sync::mpsc::Sender<String>) {
+    let mutex = LOG_SENDER.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = mutex.lock() {
+        *guard = Some(sender);
+    }
+}
 
 /// Appends a debug message to `debug.log`.
 pub fn log_debug(msg: &str) {
@@ -78,5 +87,13 @@ pub fn log_debug(msg: &str) {
     if let Ok(mut f) = file.lock() {
         let _ = writeln!(f, "{}", msg);
         let _ = f.flush();
+    }
+
+    if let Some(mutex) = LOG_SENDER.get() {
+        if let Ok(guard) = mutex.lock() {
+            if let Some(ref sender) = *guard {
+                let _ = sender.send(msg.to_string());
+            }
+        }
     }
 }
