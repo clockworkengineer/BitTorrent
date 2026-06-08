@@ -24,27 +24,35 @@ fn write_single_file_torrent(
     piece_length: u32,
     pieces: Vec<u8>,
 ) {
+    let file_length_str = file_length.to_string();
+    let piece_length_str = piece_length.to_string();
+    let file_length_bytes = file_length_str.as_bytes();
+    let piece_length_bytes = piece_length_str.as_bytes();
+    let file_name_bytes = file_name.as_bytes();
+    let announce_url_bytes = announce_url.as_bytes();
+    let pieces_ref = &pieces;
+
     let info = BNode::Dictionary(vec![
         (
-            b"length".to_vec(),
-            BNode::Number(file_length.to_string().into_bytes()),
+            b"length" as &[u8],
+            BNode::Number(file_length_bytes),
         ),
         (
-            b"name".to_vec(),
-            BNode::String(file_name.as_bytes().to_vec()),
+            b"name" as &[u8],
+            BNode::String(file_name_bytes),
         ),
         (
-            b"piece length".to_vec(),
-            BNode::Number(piece_length.to_string().into_bytes()),
+            b"piece length" as &[u8],
+            BNode::Number(piece_length_bytes),
         ),
-        (b"pieces".to_vec(), BNode::String(pieces)),
+        (b"pieces" as &[u8], BNode::String(pieces_ref)),
     ]);
     let root = BNode::Dictionary(vec![
         (
-            b"announce".to_vec(),
-            BNode::String(announce_url.as_bytes().to_vec()),
+            b"announce" as &[u8],
+            BNode::String(announce_url_bytes),
         ),
-        (b"info".to_vec(), info),
+        (b"info" as &[u8], info),
     ]);
     fs::write(torrent_path, Bencode::encode(&root)).unwrap();
 }

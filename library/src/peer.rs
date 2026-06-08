@@ -116,7 +116,7 @@ impl Peer {
     }
 
     /// Sends an encoded `PeerMessage` to the remote peer.
-    pub fn send_message(&self, message: PeerMessage) -> Result<usize, BitTorrentError> {
+    pub fn send_message(&self, message: PeerMessage<'_>) -> Result<usize, BitTorrentError> {
         let net = self.network.as_ref().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -127,14 +127,14 @@ impl Peer {
     }
 
     /// Receives and decodes the next message from the remote peer.
-    pub fn read_message(&mut self) -> Result<PeerMessage, BitTorrentError> {
+    pub fn read_message<'a>(&mut self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
         let net = self.network.as_mut().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "No network available",
             ))
         })?;
-        net.read_message()
+        net.read_message(read_buffer)
     }
 
     /// Transmits an Interested message to the peer.
@@ -167,7 +167,7 @@ impl Peer {
     }
 
     /// Transmits a Bitfield message to share local piece availability.
-    pub fn send_bitfield(&self, bitfield: Vec<u8>) -> Result<usize, BitTorrentError> {
+    pub fn send_bitfield(&self, bitfield: &[u8]) -> Result<usize, BitTorrentError> {
         self.send_message(PeerMessage::Bitfield(bitfield))
     }
 
@@ -239,7 +239,7 @@ impl Peer {
     /// Processes an incoming protocol message from the peer, updating connection states, logging events, and writing pieces to disk.
     pub fn handle_peer_message(
         &mut self,
-        message: PeerMessage,
+        message: PeerMessage<'_>,
         tc: &mut TorrentContext,
         disk_io: &DiskIO,
     ) -> Result<(), BitTorrentError> {
@@ -277,7 +277,7 @@ impl Peer {
                 }
             }
             PeerMessage::Bitfield(bitfield) => {
-                self.set_remote_bitfield(bitfield);
+                self.set_remote_bitfield(bitfield.to_vec());
                 tc.merge_piece_bitfield(self);
             }
             PeerMessage::Piece {
@@ -297,7 +297,7 @@ impl Peer {
                     self.broadcast_cancel(tc, index, begin, cancel_length, Some(block_index));
                 }
 
-                let piece_complete = tc.process_piece_block(disk_io, index, begin, &block)?;
+                let piece_complete = tc.process_piece_block(disk_io, index, begin, block)?;
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
                     let pieces_remaining = (0..tc.number_of_pieces as u32)
@@ -325,7 +325,7 @@ impl Peer {
                             let _ = self.send_message(PeerMessage::Piece {
                                 index,
                                 begin,
-                                block,
+                                block: &block,
                             });
                             tc.total_bytes_uploaded.fetch_add(length as u64, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -371,21 +371,4 @@ impl Peer {
         }
     }
 
-    /// Gets the length of the last parsed packet from the network.
-    pub fn get_packet_length(&self) -> usize {
-        if let Some(net) = &self.network {
-            net.packet_length
-        } else {
-            0
-        }
-    }
-
-    /// Returns a copy of the peer's raw TCP read buffer.
-    pub fn read_buffer(&self) -> Vec<u8> {
-        if let Some(net) = &self.network {
-            net.read_buffer.clone()
-        } else {
-            Vec::new()
-        }
-    }
 }

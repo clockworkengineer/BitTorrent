@@ -8,14 +8,14 @@ use crate::error::BitTorrentError;
 
 /// Enumeration of messages defined in the BitTorrent Peer Wire Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PeerMessage {
+pub enum PeerMessage<'a> {
     KeepAlive,
     Choke,
     Unchoke,
     Interested,
     NotInterested,
     Have(u32),
-    Bitfield(Vec<u8>),
+    Bitfield(&'a [u8]),
     Request {
         index: u32,
         begin: u32,
@@ -24,7 +24,7 @@ pub enum PeerMessage {
     Piece {
         index: u32,
         begin: u32,
-        block: Vec<u8>,
+        block: &'a [u8],
     },
     Cancel {
         index: u32,
@@ -34,7 +34,7 @@ pub enum PeerMessage {
     Port(u16),
 }
 
-impl PeerMessage {
+impl<'a> PeerMessage<'a> {
     /// Encodes a `PeerMessage` into its protocol-specific wire byte representation.
     pub fn encode(&self) -> Vec<u8> {
         match self {
@@ -91,7 +91,7 @@ impl PeerMessage {
     }
 
     /// Decodes a wire-format message payload (excluding the 4-byte length prefix) into a `PeerMessage`.
-    pub fn decode(buffer: &[u8]) -> Result<Self, BitTorrentError> {
+    pub fn decode(buffer: &'a [u8]) -> Result<Self, BitTorrentError> {
         if buffer.is_empty() {
             return Ok(PeerMessage::KeepAlive);
         }
@@ -109,7 +109,7 @@ impl PeerMessage {
                 let index = u32::from_be_bytes(payload.try_into().unwrap());
                 Ok(PeerMessage::Have(index))
             }
-            5 => Ok(PeerMessage::Bitfield(payload.to_vec())),
+            5 => Ok(PeerMessage::Bitfield(payload)),
             6 => {
                 let (index, begin, length) = Self::decode_triple_u32(payload)?;
                 Ok(PeerMessage::Request {
@@ -126,7 +126,7 @@ impl PeerMessage {
                 }
                 let index = u32::from_be_bytes(payload[0..4].try_into().unwrap());
                 let begin = u32::from_be_bytes(payload[4..8].try_into().unwrap());
-                let block = payload[8..].to_vec();
+                let block = &payload[8..];
                 Ok(PeerMessage::Piece {
                     index,
                     begin,

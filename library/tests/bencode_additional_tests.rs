@@ -3,8 +3,8 @@ use bittorrent_rs::{BNode, Bencode};
 #[test]
 fn test_encode_dictionary_sorts_keys() {
     let node = BNode::Dictionary(vec![
-        (b"spam".to_vec(), BNode::Number(b"42".to_vec())),
-        (b"bar".to_vec(), BNode::String(b"spam".to_vec())),
+        (b"spam" as &[u8], BNode::Number(b"42")),
+        (b"bar" as &[u8], BNode::String(b"spam")),
     ]);
 
     let encoded = Bencode::encode(&node);

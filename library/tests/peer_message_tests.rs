@@ -16,7 +16,8 @@ fn test_peer_message_encode_decode() {
     let decoded = PeerMessage::decode(&bytes[4..]).expect("Failed to decode request");
     assert_eq!(decoded, request);
 
-    let bitfield = PeerMessage::Bitfield(vec![0b1010_1010, 0b0101_0101]);
+    let bitfield_data = vec![0b1010_1010, 0b0101_0101];
+    let bitfield = PeerMessage::Bitfield(&bitfield_data);
     let bytes = bitfield.encode();
     let decoded = PeerMessage::decode(&bytes[4..]).expect("Failed to decode bitfield");
     assert_eq!(decoded, bitfield);

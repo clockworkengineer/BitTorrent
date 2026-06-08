@@ -7,21 +7,21 @@ use crate::error::BitTorrentError;
 
 /// Represents a node in a parsed Bencode structure.
 #[derive(Debug, Clone, PartialEq)]
-pub enum BNode {
-    Dictionary(Vec<(Vec<u8>, BNode)>),
-    List(Vec<BNode>),
-    Number(Vec<u8>),
-    String(Vec<u8>),
+pub enum BNode<'a> {
+    Dictionary(Vec<(&'a [u8], BNode<'a>)>),
+    List(Vec<BNode<'a>>),
+    Number(&'a [u8]),
+    String(&'a [u8]),
 }
 
-impl BNode {
+impl<'a> BNode<'a> {
     /// Attempts to retrieve a value from a dictionary node using the specified byte slice key.
     /// Returns `None` if the node is not a dictionary or if the key does not exist.
-    pub fn dict_get<'a>(&'a self, key: &[u8]) -> Option<&'a BNode> {
+    pub fn dict_get(&self, key: &[u8]) -> Option<&BNode<'a>> {
         match self {
             BNode::Dictionary(entries) => entries
                 .iter()
-                .find(|(k, _)| k.as_slice() == key)
+                .find(|(k, _)| *k == key)
                 .map(|(_, v)| v),
             _ => None,
         }
@@ -30,7 +30,7 @@ impl BNode {
     /// Returns the byte slice representation if the node is a `BNode::String`.
     pub fn as_string(&self) -> Option<&[u8]> {
         match self {
-            BNode::String(bytes) => Some(bytes),
+            BNode::String(bytes) => Some(*bytes),
             _ => None,
         }
     }
@@ -38,7 +38,7 @@ impl BNode {
     /// Returns the raw byte representation if the node is a `BNode::Number`.
     pub fn as_number_bytes(&self) -> Option<&[u8]> {
         match self {
-            BNode::Number(bytes) => Some(bytes),
+            BNode::Number(bytes) => Some(*bytes),
             _ => None,
         }
     }
@@ -50,7 +50,7 @@ pub struct Bencode;
 impl Bencode {
     /// Decodes a Bencode byte slice into a `BNode`.
     /// Returns an error if the input contains invalid Bencode or trailing bytes.
-    pub fn decode(buffer: &[u8]) -> Result<BNode, BitTorrentError> {
+    pub fn decode(buffer: &[u8]) -> Result<BNode<'_>, BitTorrentError> {
         let mut parser = Parser {
             buffer,
             position: 0,
@@ -65,18 +65,18 @@ impl Bencode {
     }
 
     /// Encodes a `BNode` structure into a Bencode-compliant byte vector.
-    pub fn encode(bnode: &BNode) -> Vec<u8> {
+    pub fn encode(bnode: &BNode<'_>) -> Vec<u8> {
         let mut output = Vec::new();
         encode_node(bnode, &mut output);
         output
     }
 
     /// Recursively searches the `bnode` dictionary and nested dictionaries for a matching key.
-    pub fn get_dictionary_entry<'a>(bnode: &'a BNode, key: &[u8]) -> Option<&'a BNode> {
+    pub fn get_dictionary_entry<'a, 'b>(bnode: &'b BNode<'a>, key: &[u8]) -> Option<&'b BNode<'a>> {
         match bnode {
             BNode::Dictionary(entries) => {
                 for (entry_key, entry_value) in entries {
-                    if entry_key.as_slice() == key {
+                    if *entry_key == key {
                         return Some(entry_value);
                     }
                 }
@@ -94,7 +94,7 @@ impl Bencode {
     }
 
     /// Recursively retrieves a dictionary entry by key and formats its value as a UTF-8 string.
-    pub fn get_dictionary_entry_string(bnode: &BNode, key: &str) -> Option<String> {
+    pub fn get_dictionary_entry_string(bnode: &BNode<'_>, key: &str) -> Option<String> {
         Bencode::get_dictionary_entry(bnode, key.as_bytes()).and_then(|node| {
             if let Some(bytes) = node.as_string() {
                 return Some(String::from_utf8_lossy(bytes).to_string());
@@ -115,7 +115,7 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     /// Decodes the next `BNode` from the stream based on the leading byte indicator.
-    fn decode_bnode(&mut self) -> Result<BNode, BitTorrentError> {
+    fn decode_bnode(&mut self) -> Result<BNode<'a>, BitTorrentError> {
         let byte = self
             .current_byte()
             .ok_or_else(|| BitTorrentError::InvalidBencode("Unexpected end of input".into()))?;
@@ -132,7 +132,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Decodes a Bencode dictionary (starts with 'd', ends with 'e').
-    fn decode_dictionary(&mut self) -> Result<BNode, BitTorrentError> {
+    fn decode_dictionary(&mut self) -> Result<BNode<'a>, BitTorrentError> {
         self.position += 1;
         let mut dict = Vec::new();
         while self.current_byte() != Some(&b'e') {
@@ -145,7 +145,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Decodes a Bencode list (starts with 'l', ends with 'e').
-    fn decode_list(&mut self) -> Result<BNode, BitTorrentError> {
+    fn decode_list(&mut self) -> Result<BNode<'a>, BitTorrentError> {
         self.position += 1;
         let mut list = Vec::new();
         while self.current_byte() != Some(&b'e') {
@@ -156,7 +156,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Decodes a Bencode integer (starts with 'i', ends with 'e').
-    fn decode_integer(&mut self) -> Result<BNode, BitTorrentError> {
+    fn decode_integer(&mut self) -> Result<BNode<'a>, BitTorrentError> {
         self.position += 1;
         let start = self.position;
         while let Some(&b) = self.current_byte() {
@@ -188,11 +188,11 @@ impl<'a> Parser<'a> {
             ));
         }
         self.position += 1;
-        Ok(BNode::Number(number_bytes.to_vec()))
+        Ok(BNode::Number(number_bytes))
     }
 
     /// Decodes a Bencode string (format: <length>:<data>).
-    fn decode_string(&mut self) -> Result<Vec<u8>, BitTorrentError> {
+    fn decode_string(&mut self) -> Result<&'a [u8], BitTorrentError> {
         let start = self.position;
         while let Some(&b) = self.current_byte() {
             if b == b':' {
@@ -222,7 +222,7 @@ impl<'a> Parser<'a> {
                 "String extends past end of buffer".into(),
             ));
         }
-        let string_bytes = self.buffer[self.position..end].to_vec();
+        let string_bytes = &self.buffer[self.position..end];
         self.position = end;
         Ok(string_bytes)
     }
@@ -234,11 +234,11 @@ impl<'a> Parser<'a> {
 }
 
 /// Helper function to serialize a `BNode` recursively into Bencode format.
-fn encode_node(node: &BNode, output: &mut Vec<u8>) {
+fn encode_node(node: &BNode<'_>, output: &mut Vec<u8>) {
     match node {
         BNode::Dictionary(dict) => {
             output.push(b'd');
-            let mut entries: Vec<&(Vec<u8>, BNode)> = dict.iter().collect();
+            let mut entries: Vec<&(&[u8], BNode<'_>)> = dict.iter().collect();
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             for (key, value) in entries {
                 output.extend_from_slice(key.len().to_string().as_bytes());

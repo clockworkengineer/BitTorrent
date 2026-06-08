@@ -336,7 +336,7 @@ fn handle_peer_session(
             peer_details.ip, peer_details.port
         );
         let bitfield = context.lock().unwrap().bitfield.clone();
-        if pg.send_bitfield(bitfield).is_err() {
+        if pg.send_bitfield(&bitfield).is_err() {
             mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
@@ -370,6 +370,7 @@ fn handle_peer_session(
         }
     }
 
+    let mut read_buffer = vec![0u8; 1024 * 16 + 2 * 4 + 1];
     let mut last_progress = Instant::now();
     loop {
         let status = {
@@ -384,7 +385,7 @@ fn handle_peer_session(
             continue;
         }
         let mut pg = peer.lock().unwrap();
-        let message = match pg.read_message() {
+        let message = match pg.read_message(&mut read_buffer) {
             Ok(m) => m,
             Err(err) => {
                 if let BitTorrentError::Io(ref io_err) = err {

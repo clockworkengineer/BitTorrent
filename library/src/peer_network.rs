@@ -13,8 +13,6 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug)]
 pub struct PeerNetwork {
     stream: Arc<Mutex<TcpStream>>,
-    pub read_buffer: Vec<u8>,
-    pub packet_length: usize,
 }
 
 impl PeerNetwork {
@@ -22,8 +20,6 @@ impl PeerNetwork {
     pub fn new(stream: TcpStream) -> Self {
         PeerNetwork {
             stream: Arc::new(Mutex::new(stream)),
-            read_buffer: vec![0u8; 1024 * 16 + 2 * 4 + 1],
-            packet_length: 4,
         }
     }
 
@@ -65,28 +61,25 @@ impl PeerNetwork {
     }
 
     /// Encodes and writes a high-level `PeerMessage` to the stream.
-    pub fn write_message(&self, message: PeerMessage) -> Result<usize, BitTorrentError> {
+    pub fn write_message(&self, message: PeerMessage<'_>) -> Result<usize, BitTorrentError> {
         let buffer = message.encode();
         Ok(self.write(&buffer)?)
     }
 
     /// Reads the next message length prefix and body from the stream, returning the decoded `PeerMessage`.
-    pub fn read_message(&mut self) -> Result<PeerMessage, BitTorrentError> {
+    pub fn read_message<'a>(&self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
         let mut length_buf = [0u8; 4];
         self.read_exact(&mut length_buf)?;
         let length = u32::from_be_bytes(length_buf) as usize;
         if length == 0 {
-            self.packet_length = 0;
-            self.read_buffer[..4].copy_from_slice(&length_buf);
             return Ok(PeerMessage::KeepAlive);
         }
-        if length > self.read_buffer.len() {
-            self.read_buffer.resize(length, 0);
+        if length > read_buffer.len() {
+            read_buffer.resize(length, 0);
         }
         let mut lock = self.stream.lock().unwrap();
-        lock.read_exact(&mut self.read_buffer[..length])?;
-        self.packet_length = length;
-        PeerMessage::decode(&self.read_buffer[..length])
+        lock.read_exact(&mut read_buffer[..length])?;
+        PeerMessage::decode(&read_buffer[..length])
     }
 
     /// Starts asynchronous/on-demand read processing. Currently a no-op placeholder.
