@@ -208,7 +208,12 @@ impl TorrentContext {
                 "Cannot restart a finished torrent.".to_string(),
             ));
         }
-        self.status = TorrentStatus::Downloading;
+        if self.is_download_complete() {
+            self.status = TorrentStatus::Seeding;
+            self.download_finished.set();
+        } else {
+            self.status = TorrentStatus::Downloading;
+        }
         Ok(())
     }
 
