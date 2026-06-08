@@ -300,8 +300,7 @@ impl UdpAnnouncer {
         packet.extend_from_slice(&pack_u32(0));
         packet.extend_from_slice(&pack_u32(0));
         packet.extend_from_slice(&pack_u32(tracker.num_wanted as u32));
-        packet.extend_from_slice(&pack_u32(tracker.port as u32));
-        packet.extend_from_slice(&pack_u32(0));
+        packet.extend_from_slice(&tracker.port.to_be_bytes());
         packet
     }
 
