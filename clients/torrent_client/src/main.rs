@@ -261,6 +261,8 @@ impl TorrentClientApp {
             let download_dir = PathBuf::from(&download_dir);
             let session_id = torrent_path.display().to_string();
 
+            let _ = msg_tx.send(format!("[{}] Connecting to tracker…", session_id));
+
             let mut session = match TorrentSession::new(&torrent_path, &download_dir, false) {
                 Ok(s) => s,
                 Err(e) => {
