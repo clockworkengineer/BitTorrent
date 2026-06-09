@@ -48,6 +48,33 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! # Portability and Testing
+//!
+//! To enable testing and running in environments without physical disk access or active network connections (such as simulated testing setups or clockless systems), `bittorrent-rs` abstracts transport sockets and block storage under the `AsyncSocket` and `BlockStorage` traits.
+//!
+//! In-memory storage is provided by `MemStorage`, and simulated peer connections can be modeled using `MockSocket`:
+//!
+//! ```no_run
+//! use bittorrent_rs::{BlockStorage, MemStorage, MockSocket, AsyncSocket};
+//! use std::sync::Arc;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // 1. Setup in-memory block storage
+//!     let storage = MemStorage::new(1024 * 1024); // 1 MB buffer
+//!     storage.write_block(0, b"mock piece block data")?;
+//!
+//!     // 2. Setup mock peer communications
+//!     let (socket, in_tx, out_rx) = MockSocket::new();
+//!     let socket = Arc::new(socket);
+//!
+//!     // Simulate incoming bytes from a remote peer
+//!     in_tx.send(b"incoming wire protocol handshake data".to_vec())?;
+//!
+//!     // The client interacts with the storage and socket interfaces polymorphically
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -97,7 +124,9 @@ pub use bencode::{BNode, Bencode};
 pub use error::BitTorrentError;
 pub use io_traits::{AsyncSocket, BlockStorage, MemStorage};
 #[cfg(feature = "std")]
-pub use io_traits::MockSocket;
+pub use io_traits::{MockSocket, SocketFactory};
+#[cfg(all(feature = "std", feature = "http-tracker"))]
+pub use io_traits::{HttpClient, UreqHttpClient};
 #[cfg(feature = "std")]
 pub use manager::Manager;
 pub use metainfo::{FileDetails, MetaInfoFile};

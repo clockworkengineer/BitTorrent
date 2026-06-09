@@ -181,6 +181,30 @@ impl AsyncSocket for TcpSocket {
     }
 }
 
+/// A standard TCP socket factory implementing `SocketFactory`.
+#[cfg(feature = "std")]
+#[derive(Debug)]
+pub struct TcpSocketFactory {
+    pub connect_timeout: std::time::Duration,
+    pub read_timeout: std::time::Duration,
+    pub write_timeout: std::time::Duration,
+}
+
+#[cfg(feature = "std")]
+impl crate::io_traits::SocketFactory for TcpSocketFactory {
+    fn connect(&self, ip: &str, port: u16) -> Result<Arc<dyn AsyncSocket>, BitTorrentError> {
+        let address = format!("{}:{}", ip, port);
+        let addr = address
+            .parse::<std::net::SocketAddr>()
+            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+        let stream = TcpStream::connect_timeout(&addr, self.connect_timeout)?;
+        let _ = stream.set_nodelay(true);
+        let _ = stream.set_read_timeout(Some(self.read_timeout));
+        let _ = stream.set_write_timeout(Some(self.write_timeout));
+        Ok(Arc::new(TcpSocket::new(stream)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

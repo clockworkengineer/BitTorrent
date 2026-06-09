@@ -209,3 +209,46 @@ impl BlockStorage for MemStorage {
         }
     }
 }
+
+/// A hardware-agnostic socket factory trait.
+#[cfg(feature = "std")]
+pub trait SocketFactory: Send + Sync + std::fmt::Debug {
+    /// Establishes a socket connection to target IP and port.
+    fn connect(&self, ip: &str, port: u16) -> Result<alloc::sync::Arc<dyn AsyncSocket>, BitTorrentError>;
+}
+
+/// A hardware-agnostic HTTP client trait.
+#[cfg(all(feature = "std", feature = "http-tracker"))]
+pub trait HttpClient: Send + Sync + std::fmt::Debug {
+    /// Performs an HTTP GET request to the target URL, returning the response body bytes.
+    fn get(&self, url: &str) -> Result<alloc::vec::Vec<u8>, BitTorrentError>;
+}
+
+/// Default HTTP client implementation using `ureq`.
+#[cfg(all(feature = "std", feature = "http-tracker"))]
+#[derive(Debug)]
+pub struct UreqHttpClient;
+
+#[cfg(all(feature = "std", feature = "http-tracker"))]
+impl HttpClient for UreqHttpClient {
+    fn get(&self, url: &str) -> Result<alloc::vec::Vec<u8>, BitTorrentError> {
+        let response = ureq::get(url).call().map_err(|err| {
+            BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                err.to_string(),
+            ))
+        })?;
+        let mut body = alloc::vec::Vec::new();
+        use std::io::Read;
+        response
+            .into_reader()
+            .read_to_end(&mut body)
+            .map_err(|err| {
+                BitTorrentError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err.to_string(),
+                ))
+            })?;
+        Ok(body)
+    }
+}

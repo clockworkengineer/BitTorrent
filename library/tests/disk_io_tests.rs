@@ -202,7 +202,7 @@ fn test_process_piece_block_writes_complete_piece_to_disk() {
     disk_io.create_torrent_bitfield(&mut context).unwrap();
 
     let completed = context
-        .process_piece_block(&*disk_io, 0, 0, &piece_data)
+        .process_piece_block(&*disk_io, 0, 0, &piece_data, "127.0.0.1")
         .unwrap();
 
     assert!(completed);

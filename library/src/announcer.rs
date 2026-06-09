@@ -8,8 +8,6 @@ use crate::tracker::{AnnounceResponse, Tracker, TrackerAnnounceContext};
 #[cfg(feature = "http-tracker")]
 use crate::tracker::{PeerDetails, TrackerEvent};
 use crate::util::{pack_u32, pack_u64, unpack_u32, unpack_u64};
-#[cfg(feature = "http-tracker")]
-use std::io::Read;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 #[cfg(feature = "http-tracker")]
@@ -178,22 +176,7 @@ impl Announcer for HttpAnnouncer {
     ) -> Result<AnnounceResponse, BitTorrentError> {
         Tracker::log_announce(tracker);
         let url = self.build_announce_url(tracker);
-        let response = ureq::get(&url).call().map_err(|err| {
-            BitTorrentError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                err.to_string(),
-            ))
-        })?;
-        let mut body = Vec::new();
-        response
-            .into_reader()
-            .read_to_end(&mut body)
-            .map_err(|err| {
-                BitTorrentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err.to_string(),
-                ))
-            })?;
+        let body = tracker.http_client.get(&url)?;
         Self::decode_announce_response(tracker, &body)
     }
 }

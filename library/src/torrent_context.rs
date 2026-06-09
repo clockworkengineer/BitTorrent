@@ -68,6 +68,7 @@ pub struct TorrentContext {
     pub missing_pieces_count: usize,
     pub maximum_swarm_size: usize,
     pub assembler: Assembler,
+    pub bad_peer_scores: Mutex<HashMap<String, usize>>,
     pieces_missing: Vec<u8>,
     piece_data: Vec<PieceInfo>,
     pub storage: Arc<dyn crate::io_traits::BlockStorage>,
@@ -138,6 +139,7 @@ impl TorrentContext {
             assembler: Assembler::new(),
             pieces_missing,
             piece_data,
+            bad_peer_scores: Mutex::new(HashMap::new()),
             storage,
             config,
         };
@@ -422,7 +424,19 @@ impl TorrentContext {
         piece_number: u32,
         begin: u32,
         block_data: &[u8],
+        peer_ip: &str,
     ) -> Result<bool, crate::error::BitTorrentError> {
+        if piece_number >= self.number_of_pieces as u32 {
+            return Err(crate::error::BitTorrentError::Parse("Invalid piece index".into()));
+        }
+        let expected_piece_length = self.get_piece_length(piece_number);
+        if begin.checked_add(block_data.len() as u32).map_or(true, |end| end > expected_piece_length) {
+            return Err(crate::error::BitTorrentError::Parse("Block out of piece bounds".into()));
+        }
+        if begin % BLOCK_SIZE as u32 != 0 {
+            return Err(crate::error::BitTorrentError::Parse("Block offset not aligned".into()));
+        }
+
         if self.is_piece_local(piece_number) {
             return Ok(false);
         }
@@ -444,10 +458,15 @@ impl TorrentContext {
             let block_offset = (block_index as u64) * BLOCK_SIZE as u64;
             let global_offset = (piece_number as u64) * self.piece_length as u64 + block_offset;
             storage.write_block(global_offset, block_data)?;
-            piece_buffer.add_block(block_index);
+            piece_buffer.add_block(block_index, peer_ip);
         }
 
         let piece_complete = piece_buffer.all_blocks_there();
+        let block_sources = if piece_complete {
+            piece_buffer.block_sources.clone()
+        } else {
+            Vec::new()
+        };
         drop(piece_buffer);
 
         if piece_complete {
@@ -487,6 +506,14 @@ impl TorrentContext {
                     .lock()
                     .unwrap()
                     .remove(&piece_number);
+
+                // Report all peers that contributed blocks to this piece
+                for source_ip_opt in block_sources {
+                    if let Some(ip) = source_ip_opt {
+                        self.report_bad_peer(&ip);
+                    }
+                }
+
                 return Err(crate::error::BitTorrentError::Parse(
                     "Piece failed hash verification".to_string(),
                 ));
@@ -499,6 +526,9 @@ impl TorrentContext {
     /// Registers a peer connection in the active swarm. Returns `true` if registered, `false` if swarm is full.
     pub fn add_peer(&self, peer: Arc<Mutex<Peer>>) -> bool {
         let ip = peer.lock().unwrap().ip.clone();
+        if self.is_peer_blacklisted(&ip) {
+            return false;
+        }
         if self.is_space_in_swarm(&ip) {
             self.peer_swarm.write().unwrap().insert(ip, peer).is_none()
         } else {
@@ -513,6 +543,32 @@ impl TorrentContext {
             if let Ok(mut peer_guard) = peer_arc.lock() {
                 self.unmerge_piece_bitfield(&peer_guard);
                 peer_guard.close();
+            }
+        }
+    }
+
+    /// Checks if a peer IP address is blacklisted (i.e. has 3 or more bad blocks).
+    pub fn is_peer_blacklisted(&self, ip: &str) -> bool {
+        let scores = self.bad_peer_scores.lock().unwrap();
+        if let Some(&score) = scores.get(ip) {
+            score >= 3
+        } else {
+            false
+        }
+    }
+
+    /// Reports a bad block from a peer IP address, potentially blacklisting and disconnecting them.
+    pub fn report_bad_peer(&self, ip: &str) {
+        let mut scores = self.bad_peer_scores.lock().unwrap();
+        let score = scores.entry(ip.to_string()).or_insert(0);
+        *score += 1;
+        if *score >= 3 {
+            crate::log_debug!("[swarm] Blacklisting peer {} due to {} bad blocks", ip, *score);
+            let peer_opt = self.peer_swarm.write().unwrap().remove(ip);
+            if let Some(peer_arc) = peer_opt {
+                if let Ok(mut peer_guard) = peer_arc.lock() {
+                    peer_guard.close();
+                }
             }
         }
     }

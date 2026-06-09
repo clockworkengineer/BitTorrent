@@ -1989,3 +1989,33 @@
 [peer 127.0.0.1:64541] no blocks available (outstanding=6 missing_pieces=0)
 [peer 127.0.0.1:64541] thread exiting
 [stats] peers=0/0 downloaded=351874/351874 (100.00%) speed=0/s reserved_blocks=0
+[peer 127.0.0.1:51420] read error: Parse error: Unexpected EOF reading socket
+[peer 127.0.0.1:51420] thread exiting
+[peer 127.0.0.1:51421] thread exiting
+[peer 127.0.0.1:51424] UNCHOKED by remote
+[peer 127.0.0.1:51424] no blocks available (outstanding=9 missing_pieces=0)
+[peer 127.0.0.1:51424] no blocks available (outstanding=8 missing_pieces=0)
+[peer 127.0.0.1:51424] no blocks available (outstanding=7 missing_pieces=0)
+[peer 127.0.0.1:51424] no blocks available (outstanding=6 missing_pieces=0)
+[peer 127.0.0.1:51424] thread exiting
+[stats] peers=0/0 downloaded=351874/351874 (100.00%) speed=0/s reserved_blocks=0
+[peer 127.0.0.1:51502] read error: Parse error: Unexpected EOF reading socket
+[peer 127.0.0.1:51502] thread exiting
+[peer 127.0.0.1:51503] thread exiting
+[peer 127.0.0.1:51506] UNCHOKED by remote
+[peer 127.0.0.1:51506] no blocks available (outstanding=9 missing_pieces=0)
+[peer 127.0.0.1:51506] no blocks available (outstanding=8 missing_pieces=0)
+[peer 127.0.0.1:51506] no blocks available (outstanding=7 missing_pieces=0)
+[peer 127.0.0.1:51506] no blocks available (outstanding=6 missing_pieces=0)
+[peer 127.0.0.1:51506] thread exiting
+[stats] peers=0/0 downloaded=351874/351874 (100.00%) speed=0/s reserved_blocks=0
+[peer 127.0.0.1:51535] thread exiting
+[peer 127.0.0.1:51536] read error: Parse error: Unexpected EOF reading socket
+[peer 127.0.0.1:51536] thread exiting
+[peer 127.0.0.1:51539] UNCHOKED by remote
+[peer 127.0.0.1:51539] no blocks available (outstanding=9 missing_pieces=0)
+[peer 127.0.0.1:51539] no blocks available (outstanding=8 missing_pieces=0)
+[peer 127.0.0.1:51539] no blocks available (outstanding=7 missing_pieces=0)
+[peer 127.0.0.1:51539] no blocks available (outstanding=6 missing_pieces=0)
+[peer 127.0.0.1:51539] thread exiting
+[stats] peers=0/0 downloaded=351874/351874 (100.00%) speed=0/s reserved_blocks=0

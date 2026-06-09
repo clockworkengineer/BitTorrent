@@ -8,19 +8,19 @@ use crate::error::BitTorrentError;
 use crate::manager::Manager;
 use crate::metainfo::MetaInfoFile;
 use crate::peer::Peer;
-use crate::peer_id;
 use crate::selector::{PieceSelector, RarestFirstSelector};
 use crate::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::{PeerDetails, Tracker};
-use crate::peer_message::PeerMessage;
 use std::fs;
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::log_debug;
+
+pub mod worker;
+use crate::session::worker::delay;
 
 use core::pin::Pin;
 use core::future::Future;
@@ -28,21 +28,47 @@ use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
 
 /// Represents an active Torrent transfer session.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionConfig {
     pub connect_timeout: Duration,
     pub read_timeout: Duration,
     pub write_timeout: Duration,
     pub min_reannounce_interval: u32,
+    pub socket_factory: Arc<dyn crate::io_traits::SocketFactory>,
+    #[cfg(feature = "http-tracker")]
+    pub http_client: Arc<dyn crate::io_traits::HttpClient>,
+}
+
+impl std::fmt::Debug for SessionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut ds = f.debug_struct("SessionConfig");
+        ds.field("connect_timeout", &self.connect_timeout)
+          .field("read_timeout", &self.read_timeout)
+          .field("write_timeout", &self.write_timeout)
+          .field("min_reannounce_interval", &self.min_reannounce_interval);
+        #[cfg(feature = "http-tracker")]
+        ds.field("http_client", &self.http_client);
+        ds.finish()
+    }
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
+        let connect_timeout = Duration::from_secs(10);
+        let read_timeout = Duration::from_secs(5);
+        let write_timeout = Duration::from_secs(5);
         SessionConfig {
-            connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
-            write_timeout: Duration::from_secs(5),
+            connect_timeout,
+            read_timeout,
+            write_timeout,
             min_reannounce_interval: 60,
+            socket_factory: Arc::new(crate::peer_network::TcpSocketFactory {
+                connect_timeout,
+                read_timeout,
+                write_timeout,
+            }),
+            #[cfg(feature = "http-tracker")]
+            http_client: Arc::new(crate::io_traits::UreqHttpClient),
         }
     }
 }
@@ -302,6 +328,11 @@ impl TorrentSession {
         self.context.lock().unwrap().status
     }
 
+    /// Creates and returns a new `Tracker` linked to this session.
+    pub fn tracker(&self) -> Result<crate::tracker::Tracker, BitTorrentError> {
+        crate::tracker::Tracker::new(self.context.clone())
+    }
+
     /// Returns the percentage of download completion (0.0 to 100.0).
     pub fn progress(&self) -> f32 {
         self.context.lock().unwrap().progress_percent()
@@ -368,7 +399,7 @@ impl TorrentSession {
         let peer_workers = self.peer_workers.clone();
 
         let handle = thread::spawn(move || {
-            futures::executor::block_on(handle_peer_session(peer_details, context, manager_clone));
+            futures::executor::block_on(self::worker::handle_peer_session(peer_details, context, manager_clone));
         });
         peer_workers.lock().unwrap().push(handle);
 
@@ -433,7 +464,7 @@ impl TorrentSession {
                     ctx.config.min_reannounce_interval
                 };
                 let interval = tracker.interval.max(min_reannounce as usize);
-                delay(Duration::from_secs(interval as u64)).await;
+                self::worker::delay(Duration::from_secs(interval as u64)).await;
 
                 let status = {
                     let ctx = context.lock().unwrap();
@@ -458,7 +489,7 @@ impl TorrentSession {
                             let peer_workers2 = peer_workers.clone();
 
                             let handle = thread::spawn(move || {
-                                futures::executor::block_on(handle_peer_session(peer_details, ctx2, mgr2));
+                                futures::executor::block_on(self::worker::handle_peer_session(peer_details, ctx2, mgr2));
                             });
                             peer_workers2.lock().unwrap().push(handle);
                         }
@@ -472,258 +503,5 @@ impl TorrentSession {
         }));
 
         thread::spawn(|| {})
-    }
-}
-
-fn mark_peer_dead(manager: &Option<Arc<Manager>>, ip: &str) {
-    if let Some(mgr) = manager {
-        mgr.add_to_dead_peer_list(ip);
-    }
-}
-
-async fn delay(duration: Duration) {
-    let start = Instant::now();
-    while start.elapsed() < duration {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        crate::util::yield_now().await;
-    }
-}
-
-async fn handle_peer_session(
-    peer_details: PeerDetails,
-    context: Arc<Mutex<TorrentContext>>,
-    manager: Option<Arc<Manager>>,
-) {
-    let info_hash = context.lock().unwrap().info_hash.clone();
-    let local_peer_id = peer_id::get();
-
-    if let Some(ref mgr) = manager {
-        if mgr.is_peer_dead(&peer_details.ip) {
-            return;
-        }
-    }
-
-    let config = {
-        let ctx = context.lock().unwrap();
-        ctx.config.clone()
-    };
-
-    let address = format!("{}:{}", peer_details.ip, peer_details.port);
-    let stream = match address
-        .parse::<std::net::SocketAddr>()
-        .ok()
-        .and_then(|addr| {
-            TcpStream::connect_timeout(&addr, config.connect_timeout).ok()
-        }) {
-        Some(s) => s,
-        None => {
-            mark_peer_dead(&manager, &peer_details.ip);
-            return;
-        }
-    };
-
-    let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(config.read_timeout));
-    let _ = stream.set_write_timeout(Some(config.write_timeout));
-
-    let peer = Arc::new(Mutex::new(Peer::new(
-        peer_details.ip.clone(),
-        peer_details.port,
-        stream,
-    )));
-
-    let net = {
-        let mut pg = peer.lock().unwrap();
-        pg.set_torrent_context(context.clone());
-        match &pg.network {
-            Some(n) => n.clone(),
-            None => {
-                mark_peer_dead(&manager, &peer_details.ip);
-                return;
-            }
-        }
-    };
-
-    if net.write_handshake(&info_hash, local_peer_id.as_bytes()).await.is_err() {
-        mark_peer_dead(&manager, &peer_details.ip);
-        return;
-    }
-    println!(
-        "Handshake completed with peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
-    let (_, remote_peer_id) = match net.read_handshake().await {
-        Ok(res) => res,
-        Err(_) => {
-            mark_peer_dead(&manager, &peer_details.ip);
-            return;
-        }
-    };
-    {
-        let mut pg = peer.lock().unwrap();
-        pg.connected = true;
-        pg.remote_peer_id = Some(remote_peer_id);
-    }
-    
-    let bitfield = context.lock().unwrap().bitfield.clone();
-    if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
-        mark_peer_dead(&manager, &peer_details.ip);
-        return;
-    }
-    println!(
-        "Sent Bitfield to peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
-    if net.write_message(PeerMessage::Unchoke).await.is_err() {
-        mark_peer_dead(&manager, &peer_details.ip);
-        return;
-    }
-    {
-        peer.lock().unwrap().am_choking = false;
-    }
-    println!(
-        "Sent Unchoke to peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
-    if net.write_message(PeerMessage::Interested).await.is_err() {
-        mark_peer_dead(&manager, &peer_details.ip);
-        return;
-    }
-    println!(
-        "Sent Interested to peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
-
-    {
-        let ctx = context.lock().unwrap();
-        if !ctx.add_peer(peer.clone()) {
-            return;
-        }
-    }
-
-    let mut static_buf_opt = crate::util::acquire_buffer();
-    let mut _fallback_buf = None;
-    let read_buffer_backing = match &mut static_buf_opt {
-        Some(buf) => buf.as_mut(),
-        None => {
-            _fallback_buf = Some(vec![0u8; crate::util::BUFFER_SIZE]);
-            _fallback_buf.as_mut().unwrap().as_mut_slice()
-        }
-    };
-    let mut last_progress = Instant::now();
-    loop {
-        let status = {
-            let ctx = context.lock().unwrap();
-            if ctx.status == TorrentStatus::Ended {
-                break;
-            }
-            ctx.paused.wait_one(0)
-        };
-        if status {
-            delay(Duration::from_millis(100)).await;
-            continue;
-        }
-        let message = match net.read_message(&mut *read_buffer_backing).await {
-            Ok(m) => m,
-            Err(err) => {
-                if let BitTorrentError::Io(ref io_err) = err {
-                    if io_err.kind() == std::io::ErrorKind::WouldBlock
-                        || io_err.kind() == std::io::ErrorKind::TimedOut
-                    {
-                        if last_progress.elapsed() > Duration::from_secs(30) {
-                            log_debug!("[peer {}:{}] 30s idle timeout, dropping",
-                                peer_details.ip, peer_details.port);
-                            mark_peer_dead(&manager, &peer_details.ip);
-                            break;
-                        }
-                        continue;
-                    }
-                }
-                log_debug!("[peer {}:{}] read error: {}", peer_details.ip, peer_details.port, err);
-                mark_peer_dead(&manager, &peer_details.ip);
-                break;
-            }
-        };
-        
-        let actions_res = {
-            let mut pg = peer.lock().unwrap();
-            let mut ctx = context.lock().unwrap();
-            pg.handle_peer_message(message, &mut ctx)
-        };
-        let actions = match actions_res {
-            Ok(a) => a,
-            Err(_) => {
-                mark_peer_dead(&manager, &peer_details.ip);
-                break;
-            }
-        };
-
-        if Peer::execute_actions(actions, &net, &context, &peer_details.ip).await.is_err() {
-            mark_peer_dead(&manager, &peer_details.ip);
-            break;
-        }
-
-        let (peer_choking_set, outstanding_requests_count, number_of_missing_pieces) = {
-            let pg = peer.lock().unwrap();
-            (pg.peer_choking.wait_one(0), pg.outstanding_requests_count, pg.number_of_missing_pieces)
-        };
-
-        let is_downloading = {
-            context.lock().unwrap().status == TorrentStatus::Downloading
-        };
-
-        if peer_choking_set && is_downloading {
-            let to_send = 10usize.saturating_sub(outstanding_requests_count);
-            let mut send_error = false;
-            let mut none_count = 0;
-            for _ in 0..to_send {
-                let next_req = {
-                    let pg = peer.lock().unwrap();
-                    let mut ctx = context.lock().unwrap();
-                    ctx.next_block_request_for_peer(&pg)
-                };
-                match next_req {
-                    Some((pn, begin, length)) => {
-                        if net.write_message(PeerMessage::Request { index: pn, begin, length }).await.is_err() {
-                            mark_peer_dead(&manager, &peer_details.ip);
-                            send_error = true;
-                            break;
-                        }
-                        {
-                            let mut pg = peer.lock().unwrap();
-                            let bi = begin / crate::constants::BLOCK_SIZE as u32;
-                            pg.reserved_blocks.push((pn, bi));
-                            pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_add(1);
-                        }
-                        last_progress = Instant::now();
-                    }
-                    None => { none_count += 1; break; }
-                }
-            }
-            if none_count > 0 {
-                log_debug!("[peer {}:{}] no blocks available (outstanding={} missing_pieces={})",
-                    peer_details.ip, peer_details.port,
-                    outstanding_requests_count,
-                    number_of_missing_pieces);
-            }
-            if send_error {
-                break;
-            }
-        }
-
-        if context.lock().unwrap().is_download_complete() {
-            break;
-        }
-    }
-
-    log_debug!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port);
-    {
-        let mut ctx = context.lock().unwrap();
-        if let Ok(pg) = peer.try_lock() {
-            for (pn, bi) in &pg.reserved_blocks {
-                ctx.release_block_request(*pn, *bi);
-            }
-        }
-        ctx.remove_peer(&peer_details.ip);
     }
 }

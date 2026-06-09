@@ -12,6 +12,7 @@ pub struct PieceBuffer {
     pub number: u32,
     pub length: u32,
     present_blocks: Vec<bool>,
+    pub block_sources: Vec<Option<alloc::string::String>>,
     block_count: AtomicI32,
 }
 
@@ -23,14 +24,16 @@ impl PieceBuffer {
             number: piece_number,
             length,
             present_blocks: vec![false; block_count as usize],
+            block_sources: vec![None; block_count as usize],
             block_count: AtomicI32::new(block_count),
         }
     }
 
     /// Marks a block index as present in the piece buffer.
-    pub fn add_block(&mut self, block_number: u32) {
+    pub fn add_block(&mut self, block_number: u32, source_ip: &str) {
         if !self.present_blocks[block_number as usize] {
             self.present_blocks[block_number as usize] = true;
+            self.block_sources[block_number as usize] = Some(alloc::string::String::from(source_ip));
             self.block_count.fetch_sub(1, Ordering::SeqCst);
         }
     }

@@ -99,7 +99,7 @@ fn test_process_piece_block_assembly_writes_complete_piece() {
 
     assert!(
         context
-            .process_piece_block(&*disk_io, 1, 0, second_piece_block)
+            .process_piece_block(&*disk_io, 1, 0, second_piece_block, "127.0.0.1")
             .unwrap()
     );
     assert!(context.is_piece_local(1));

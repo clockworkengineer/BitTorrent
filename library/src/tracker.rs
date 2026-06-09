@@ -99,6 +99,8 @@ pub struct TrackerAnnounceContext {
     pub downloaded: u64,
     pub uploaded: u64,
     pub left: u64,
+    #[cfg(feature = "http-tracker")]
+    pub http_client: std::sync::Arc<dyn crate::io_traits::HttpClient>,
 }
 
 impl TrackerAnnounceContext {
@@ -317,6 +319,12 @@ impl Tracker {
 
     /// Constructs the parameters object needed to make an announce request.
     pub fn build_announce_context(&self) -> TrackerAnnounceContext {
+        #[cfg(feature = "http-tracker")]
+        let http_client = {
+            let guard = self.tc.lock().unwrap();
+            guard.config.http_client.clone()
+        };
+
         TrackerAnnounceContext {
             info_hash: self.info_hash.clone(),
             peer_id: self.peer_id.clone(),
@@ -334,6 +342,8 @@ impl Tracker {
             downloaded: self.downloaded(),
             uploaded: self.uploaded(),
             left: self.left(),
+            #[cfg(feature = "http-tracker")]
+            http_client,
         }
     }
 

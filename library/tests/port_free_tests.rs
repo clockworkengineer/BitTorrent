@@ -1,4 +1,6 @@
-use bittorrent_rs::{AsyncSocket, BlockStorage, MemStorage, MockSocket};
+use bittorrent_rs::{AsyncSocket, BlockStorage, MemStorage, MockSocket, SocketFactory, BitTorrentError};
+#[cfg(feature = "http-tracker")]
+use bittorrent_rs::HttpClient;
 use std::sync::Arc;
 
 #[test]
@@ -43,4 +45,54 @@ fn test_mock_socket_communication() {
     // Verify written bytes received on outgoing channel
     let received = out_rx.recv().expect("Failed to receive from outgoing channel");
     assert_eq!(&received, b"outgoing message");
+}
+
+#[derive(Debug)]
+struct TestSocketFactory {
+    socket: Arc<MockSocket>,
+}
+
+impl SocketFactory for TestSocketFactory {
+    fn connect(&self, _ip: &str, _port: u16) -> Result<Arc<dyn AsyncSocket>, BitTorrentError> {
+        Ok(self.socket.clone())
+    }
+}
+
+#[cfg(feature = "http-tracker")]
+#[derive(Debug)]
+struct TestHttpClient {
+    response: Vec<u8>,
+}
+
+#[cfg(feature = "http-tracker")]
+impl HttpClient for TestHttpClient {
+    fn get(&self, _url: &str) -> Result<Vec<u8>, BitTorrentError> {
+        Ok(self.response.clone())
+    }
+}
+
+#[test]
+fn test_socket_factory_injection() {
+    use bittorrent_rs::SocketFactory;
+
+    let (socket, _in_tx, _out_rx) = MockSocket::new();
+    let socket = Arc::new(socket);
+    let factory = TestSocketFactory { socket: socket.clone() };
+    
+    let connected_socket = factory.connect("127.0.0.1", 6881).unwrap();
+    futures::executor::block_on(async {
+        let written = connected_socket.write(b"hello").await.unwrap();
+        assert_eq!(written, 5);
+    });
+}
+
+#[cfg(feature = "http-tracker")]
+#[test]
+fn test_http_client_injection() {
+    use bittorrent_rs::HttpClient;
+
+    let mock_response = b"d8:intervali1800e12:min intervali1800e5:peers0:e".to_vec();
+    let client = TestHttpClient { response: mock_response.clone() };
+    let response = client.get("http://tracker.example.com/announce").unwrap();
+    assert_eq!(response, mock_response);
 }

@@ -77,7 +77,7 @@ pub struct Peer {
     pub peer_interested: bool,
     pub number_of_missing_pieces: usize,
     pub outstanding_requests_count: usize,
-    pub reserved_blocks: Vec<(u32, u32)>,
+    pub reserved_blocks: Vec<(u32, u32, std::time::Instant)>,
 }
 
 impl Peer {
@@ -334,7 +334,7 @@ impl Peer {
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
                 self.reserved_blocks
-                    .retain(|&(p, b)| !(p == index && b == block_index));
+                    .retain(|&(p, b, _)| !(p == index && b == block_index));
                 if tc.is_endgame() {
                     let cancel_length = std::cmp::min(
                         crate::constants::BLOCK_SIZE as u32,
@@ -349,7 +349,7 @@ impl Peer {
                 }
 
                 let storage = tc.storage.clone();
-                let piece_complete = tc.process_piece_block(&*storage, index, begin, block)?;
+                let piece_complete = tc.process_piece_block(&*storage, index, begin, block, &self.ip)?;
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
                     let pieces_remaining = (0..tc.number_of_pieces as u32)
@@ -429,7 +429,7 @@ impl Peer {
                                 }
                                 let other_peer = peer_arc.lock().unwrap();
                                 let should_send = match block_index {
-                                    Some(bi) => other_peer.reserved_blocks.contains(&(index, bi)),
+                                    Some(bi) => other_peer.reserved_blocks.iter().any(|&(p, b, _)| p == index && b == bi),
                                     None => true,
                                 };
                                 if should_send {
