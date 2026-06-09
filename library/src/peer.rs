@@ -146,7 +146,7 @@ impl Peer {
     }
 
     /// Receives and decodes the next message from the remote peer.
-    pub async fn read_message<'a>(&mut self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
+    pub async fn read_message<'a>(&mut self, read_buffer: &'a mut [u8]) -> Result<PeerMessage<'a>, BitTorrentError> {
         let net = self.network.as_mut().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,

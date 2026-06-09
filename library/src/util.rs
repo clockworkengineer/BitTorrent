@@ -136,3 +136,53 @@ impl core::future::Future for YieldNow {
 pub fn yield_now() -> YieldNow {
     YieldNow { yielded: false }
 }
+
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::cell::UnsafeCell;
+
+pub const BUFFER_SIZE: usize = crate::constants::BLOCK_SIZE + 9;
+const MAX_BUFFERS: usize = 8;
+
+pub struct StaticBuffer {
+    index: usize,
+}
+
+impl StaticBuffer {
+    pub fn as_mut(&mut self) -> &mut [u8] {
+        unsafe { &mut *POOL.buffers[self.index].get() }
+    }
+}
+
+impl Drop for StaticBuffer {
+    fn drop(&mut self) {
+        POOL.used[self.index].store(false, Ordering::Release);
+    }
+}
+
+struct Pool {
+    buffers: [UnsafeCell<[u8; BUFFER_SIZE]>; MAX_BUFFERS],
+    used: [AtomicBool; MAX_BUFFERS],
+}
+
+unsafe impl Sync for Pool {}
+
+static POOL: Pool = {
+    const INIT_BOOL: AtomicBool = AtomicBool::new(false);
+    const INIT_BUF: UnsafeCell<[u8; BUFFER_SIZE]> = UnsafeCell::new([0; BUFFER_SIZE]);
+    Pool {
+        buffers: [INIT_BUF; MAX_BUFFERS],
+        used: [INIT_BOOL; MAX_BUFFERS],
+    }
+};
+
+pub fn acquire_buffer() -> Option<StaticBuffer> {
+    for i in 0..MAX_BUFFERS {
+        if POOL.used[i]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return Some(StaticBuffer { index: i });
+        }
+    }
+    None
+}

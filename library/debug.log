@@ -1949,3 +1949,23 @@
 [peer 127.0.0.1:63080] no blocks available (outstanding=6 missing_pieces=0)
 [peer 127.0.0.1:63080] thread exiting
 [stats] peers=0/0 downloaded=351874/351874 (100.0%) speed=0/s reserved_blocks=0
+[peer 127.0.0.1:63312] read error: Parse error: Unexpected EOF reading socket
+[peer 127.0.0.1:63312] thread exiting
+[peer 127.0.0.1:63311] thread exiting
+[peer 127.0.0.1:63315] UNCHOKED by remote
+[peer 127.0.0.1:63315] no blocks available (outstanding=9 missing_pieces=0)
+[peer 127.0.0.1:63315] no blocks available (outstanding=8 missing_pieces=0)
+[peer 127.0.0.1:63315] no blocks available (outstanding=7 missing_pieces=0)
+[peer 127.0.0.1:63315] no blocks available (outstanding=6 missing_pieces=0)
+[peer 127.0.0.1:63315] thread exiting
+[stats] peers=0/0 downloaded=351874/351874 (100.0%) speed=0/s reserved_blocks=0
+[peer 127.0.0.1:64337] read error: Parse error: Unexpected EOF reading socket
+[peer 127.0.0.1:64337] thread exiting
+[peer 127.0.0.1:64338] thread exiting
+[peer 127.0.0.1:64341] UNCHOKED by remote
+[peer 127.0.0.1:64341] no blocks available (outstanding=9 missing_pieces=0)
+[peer 127.0.0.1:64341] no blocks available (outstanding=8 missing_pieces=0)
+[peer 127.0.0.1:64341] no blocks available (outstanding=7 missing_pieces=0)
+[peer 127.0.0.1:64341] no blocks available (outstanding=6 missing_pieces=0)
+[peer 127.0.0.1:64341] thread exiting
+[stats] peers=0/0 downloaded=351874/351874 (100.0%) speed=0/s reserved_blocks=0

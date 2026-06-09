@@ -332,6 +332,53 @@ impl TorrentContext {
             .all(|(a, b)| a == b)
     }
 
+    /// Computes the SHA-1 checksum of the piece by reading it block-by-block from storage.
+    pub fn check_piece_hash_streaming(
+        &self,
+        storage: &dyn crate::io_traits::BlockStorage,
+        piece_number: u32,
+        number_of_bytes: u32,
+    ) -> bool {
+        use sha1::Digest;
+        let mut hasher = sha1::Sha1::new();
+        let mut read_offset = piece_number as u64 * self.piece_length as u64;
+        let mut remaining = number_of_bytes as usize;
+        
+        let mut temp_buf = [0u8; BLOCK_SIZE];
+        while remaining > 0 {
+            let to_read = std::cmp::min(remaining, BLOCK_SIZE);
+            match storage.read_block(read_offset, &mut temp_buf[..to_read]) {
+                Ok(n) if n == to_read => {
+                    hasher.update(&temp_buf[..to_read]);
+                    read_offset += to_read as u64;
+                    remaining -= to_read;
+                }
+                _ => return false,
+            }
+        }
+
+        let hash = hasher.finalize();
+        let offset = piece_number as usize * crate::constants::HASH_LENGTH;
+        hash.iter()
+            .zip(&self.pieces_info_hash[offset..offset + crate::constants::HASH_LENGTH])
+            .all(|(a, b)| a == b)
+    }
+
+    /// Parameter-driven update of bitfield status without buffer reference.
+    pub fn update_bitfield_status(
+        &mut self,
+        piece_number: u32,
+        piece_there: bool,
+        number_of_bytes: u32,
+    ) {
+        if piece_there && !self.is_piece_local(piece_number) {
+            self.total_bytes_downloaded.fetch_add(number_of_bytes as u64, Ordering::Relaxed);
+        }
+        self.set_piece_length(piece_number, number_of_bytes);
+        self.mark_piece_local(piece_number, piece_there);
+        self.mark_piece_missing(piece_number, !piece_there);
+    }
+
     /// Returns the number of bytes remaining to be downloaded.
     pub fn bytes_left_to_download(&self) -> Result<u64, crate::error::BitTorrentError> {
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
@@ -401,24 +448,29 @@ impl TorrentContext {
 
         let piece_buffer_arc2 = piece_buffer_arc.clone();
         let mut piece_buffer = piece_buffer_arc2.lock().unwrap();
-        piece_buffer.add_block(block_data, block_index);
+
+        let already_present = piece_buffer.blocks_present()[block_index as usize];
+        if !already_present {
+            let block_offset = (block_index as u64) * BLOCK_SIZE as u64;
+            let global_offset = (piece_number as u64) * self.piece_length as u64 + block_offset;
+            storage.write_block(global_offset, block_data)?;
+            piece_buffer.add_block(block_index);
+        }
+
         let piece_complete = piece_buffer.all_blocks_there();
+        drop(piece_buffer);
 
         if piece_complete {
-            let finished_piece = std::mem::take(&mut piece_buffer.buffer);
-            drop(piece_buffer);
-
-            if self.check_piece_hash(piece_number, &finished_piece, finished_piece.len() as u32) {
+            if self.check_piece_hash_streaming(storage, piece_number, piece_length) {
                 println!(
-                    "Piece {} passed hash verification ({} bytes), writing to disk",
+                    "Piece {} passed hash verification ({} bytes)",
                     piece_number,
-                    finished_piece.len()
+                    piece_length
                 );
-                storage.write_block(piece_number as u64 * self.piece_length as u64, &finished_piece)?;
-                self.update_bitfield_from_buffer(
+                self.update_bitfield_status(
                     piece_number,
-                    &finished_piece,
-                    finished_piece.len() as u32,
+                    true,
+                    piece_length,
                 );
                 // Broadcast Have to all connected peers so they know we have this piece.
                 {

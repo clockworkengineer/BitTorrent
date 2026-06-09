@@ -472,7 +472,15 @@ async fn handle_peer_session(
         }
     }
 
-    let mut read_buffer = vec![0u8; 1024 * 16 + 2 * 4 + 1];
+    let mut static_buf_opt = crate::util::acquire_buffer();
+    let mut _fallback_buf = None;
+    let read_buffer_backing = match &mut static_buf_opt {
+        Some(buf) => buf.as_mut(),
+        None => {
+            _fallback_buf = Some(vec![0u8; crate::util::BUFFER_SIZE]);
+            _fallback_buf.as_mut().unwrap().as_mut_slice()
+        }
+    };
     let mut last_progress = Instant::now();
     loop {
         let status = {
@@ -486,7 +494,7 @@ async fn handle_peer_session(
             delay(Duration::from_millis(100)).await;
             continue;
         }
-        let message = match net.read_message(&mut read_buffer).await {
+        let message = match net.read_message(&mut *read_buffer_backing).await {
             Ok(m) => m,
             Err(err) => {
                 if let BitTorrentError::Io(ref io_err) = err {

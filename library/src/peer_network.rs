@@ -92,7 +92,7 @@ impl PeerNetwork {
     }
 
     /// Reads the next message length prefix and body from the stream, returning the decoded `PeerMessage`.
-    pub async fn read_message<'a>(&self, read_buffer: &'a mut Vec<u8>) -> Result<PeerMessage<'a>, BitTorrentError> {
+    pub async fn read_message<'a>(&self, read_buffer: &'a mut [u8]) -> Result<PeerMessage<'a>, BitTorrentError> {
         let mut length_buf = [0u8; 4];
         self.read_exact(&mut length_buf).await?;
         let length = u32::from_be_bytes(length_buf) as usize;
@@ -100,7 +100,11 @@ impl PeerNetwork {
             return Ok(PeerMessage::KeepAlive);
         }
         if length > read_buffer.len() {
-            read_buffer.resize(length, 0);
+            return Err(BitTorrentError::Parse(alloc::format!(
+                "Message length {} exceeds read buffer size {}",
+                length,
+                read_buffer.len()
+            )));
         }
         self.read_exact(&mut read_buffer[..length]).await?;
         PeerMessage::decode(&read_buffer[..length])
