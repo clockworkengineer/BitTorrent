@@ -37,6 +37,8 @@ pub struct SessionConfig {
     pub socket_factory: Arc<dyn crate::io_traits::SocketFactory>,
     #[cfg(feature = "http-tracker")]
     pub http_client: Arc<dyn crate::io_traits::HttpClient>,
+    pub dht_enabled: bool,
+    pub dht_port: u16,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -45,7 +47,9 @@ impl std::fmt::Debug for SessionConfig {
         ds.field("connect_timeout", &self.connect_timeout)
           .field("read_timeout", &self.read_timeout)
           .field("write_timeout", &self.write_timeout)
-          .field("min_reannounce_interval", &self.min_reannounce_interval);
+          .field("min_reannounce_interval", &self.min_reannounce_interval)
+          .field("dht_enabled", &self.dht_enabled)
+          .field("dht_port", &self.dht_port);
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
         ds.finish()
@@ -69,6 +73,8 @@ impl Default for SessionConfig {
             }),
             #[cfg(feature = "http-tracker")]
             http_client: Arc::new(crate::io_traits::UreqHttpClient),
+            dht_enabled: true,
+            dht_port: 6881,
         }
     }
 }
@@ -81,6 +87,7 @@ pub struct TorrentSession {
     task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     executor_thread: Option<thread::JoinHandle<()>>,
     manager: Option<Arc<Manager>>,
+    pub dht: Option<Arc<crate::dht::Dht>>,
 }
 
 /// A builder for constructing `TorrentSession` configurations.
@@ -248,6 +255,7 @@ impl TorrentSession {
             task_tx,
             executor_thread: Some(executor_thread),
             manager: None,
+            dht: None,
         };
 
         session.context.lock().unwrap().validate()?;
@@ -296,12 +304,57 @@ impl TorrentSession {
 
     /// Transitions the session status to `Downloading`, commencing active peer-based downloading.
     pub fn start_download(&mut self) -> Result<(), BitTorrentError> {
-        let mut context = self.context.lock().unwrap();
+        let context = self.context.lock().unwrap();
         if context.status == TorrentStatus::Seeding {
             return Err(BitTorrentError::Parse(
                 "Cannot start download while torrent is configured for seeding.".into(),
             ));
         }
+
+        let config = context.config.clone();
+        let info_hash = context.info_hash.clone();
+        drop(context);
+
+        if config.dht_enabled && self.dht.is_none() {
+            if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
+                let _ = d.start();
+                d.bootstrap();
+
+                let d_arc = Arc::new(d);
+                self.dht = Some(d_arc.clone());
+
+                let mut ih = [0u8; 20];
+                if info_hash.len() == 20 {
+                    ih.copy_from_slice(&info_hash);
+                }
+
+                let context_clone = self.context.clone();
+                let manager_clone = self.manager.clone();
+                let peer_workers = self.peer_workers.clone();
+                let (peer_tx, peer_rx) = std::sync::mpsc::channel();
+
+                d_arc.lookup_peers(ih, peer_tx);
+
+                thread::spawn(move || {
+                    while let Ok(peer_details) = peer_rx.recv() {
+                        let pg = context_clone.lock().unwrap();
+                        if pg.status == TorrentStatus::Downloading {
+                            if !pg.peer_swarm.read().unwrap().contains_key(&peer_details.ip) {
+                                let ctx2 = context_clone.clone();
+                                let mgr2 = manager_clone.clone();
+                                let workers = peer_workers.clone();
+                                let handle = thread::spawn(move || {
+                                    futures::executor::block_on(self::worker::handle_peer_session(peer_details, ctx2, mgr2));
+                                });
+                                workers.lock().unwrap().push(handle);
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        let mut context = self.context.lock().unwrap();
         context.start_downloading()
     }
 
@@ -317,6 +370,9 @@ impl TorrentSession {
 
     /// Stops the session, disconnecting all connected peers and releasing resources.
     pub fn stop(&mut self) -> Result<(), BitTorrentError> {
+        if let Some(ref d) = self.dht {
+            d.stop();
+        }
         let context = self.context.lock().unwrap();
         context.disconnect_all_peers();
         drop(context);
