@@ -2,7 +2,8 @@ use bittorrent_rs::announcer::Announcer;
 use bittorrent_rs::disk_io::DiskIO;
 use bittorrent_rs::manager::Manager;
 use bittorrent_rs::metainfo::MetaInfoFile;
-use bittorrent_rs::selector::Selector;
+use bittorrent_rs::selector::RarestFirstSelector;
+use bittorrent_rs::session::SessionConfig;
 use bittorrent_rs::torrent_context::{TorrentContext, TorrentStatus};
 use bittorrent_rs::tracker::PeerDetails;
 use bittorrent_rs::tracker::Tracker;
@@ -57,8 +58,8 @@ fn test_tracker_started_and_peer_list() {
         piece_length,
     ));
     disk_io.create_local_torrent_structure().expect("Failed to create file structure");
-    let selector = Selector::new();
-    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false)
+    let selector = Arc::new(RarestFirstSelector);
+    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false, SessionConfig::default())
         .expect("Failed to create torrent context");
     disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
     let context = Arc::new(Mutex::new(context));
@@ -100,8 +101,8 @@ fn test_tracker_completed_event() {
         piece_length,
     ));
     disk_io.create_local_torrent_structure().expect("Failed to create file structure");
-    let selector = Selector::new();
-    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false)
+    let selector = Arc::new(RarestFirstSelector);
+    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false, SessionConfig::default())
         .expect("Failed to create torrent context");
     disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
     let context = Arc::new(Mutex::new(context));
@@ -156,8 +157,8 @@ fn test_tracker_can_use_manager_queue() {
         piece_length,
     ));
     disk_io.create_local_torrent_structure().expect("Failed to create file structure");
-    let selector = Selector::new();
-    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false)
+    let selector = Arc::new(RarestFirstSelector);
+    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false, SessionConfig::default())
         .expect("Failed to create torrent context");
     disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
     let context = Arc::new(Mutex::new(context));

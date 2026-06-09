@@ -55,6 +55,8 @@ extern crate alloc;
 
 #[cfg(feature = "std")]
 pub mod announcer;
+#[cfg(feature = "std")]
+pub mod assembler;
 pub mod average;
 pub mod bencode;
 pub mod constants;
@@ -80,6 +82,7 @@ pub mod peer_network;
 pub mod piece_buffer;
 #[cfg(feature = "std")]
 pub mod piece_request;
+#[cfg(feature = "std")]
 pub mod selector;
 #[cfg(feature = "std")]
 pub mod session;
@@ -97,11 +100,14 @@ pub use io_traits::{AsyncSocket, BlockStorage};
 pub use manager::Manager;
 pub use metainfo::{FileDetails, MetaInfoFile};
 #[cfg(feature = "std")]
+pub use assembler::Assembler;
+#[cfg(feature = "std")]
 pub use peer::Peer;
 #[cfg(feature = "std")]
 pub use peer_id::get as get_peer_id;
 pub use peer_message::PeerMessage;
-pub use selector::Selector;
+#[cfg(feature = "std")]
+pub use selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
 #[cfg(feature = "std")]
 pub use session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]

@@ -27,13 +27,14 @@ fn test_next_block_request_from_peer_reserves_request() {
         piece_length,
     ));
     disk_io.create_local_torrent_structure().unwrap();
-    let selector = bittorrent_rs::selector::Selector::new();
+    let selector = std::sync::Arc::new(bittorrent_rs::selector::RarestFirstSelector);
     let mut context = bittorrent_rs::torrent_context::TorrentContext::new(
         &meta,
         selector,
         disk_io.clone(),
         &download_path,
         false,
+        bittorrent_rs::session::SessionConfig::default(),
     )
     .expect("Failed to create torrent context");
     disk_io.create_torrent_bitfield(&mut context).unwrap();

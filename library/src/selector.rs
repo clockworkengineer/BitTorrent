@@ -1,33 +1,36 @@
-//! Piece and peer selector
+//! Piece selection strategy traits and implementations
 //!
-//! Implements strategy algorithms for selecting which pieces to request next
-//! (random/missing search) and which peers are the best candidates to fetch pieces from.
+//! Provides the pluggable `PieceSelector` trait to customize piece selection
+//! strategies (e.g. rarest-first vs. sequential download).
 
-#[cfg(feature = "std")]
-use rand::SeedableRng;
-#[cfg(feature = "std")]
-use rand::rngs::StdRng;
+use crate::peer::Peer;
+use crate::torrent_context::TorrentContext;
 
-/// Selects the next piece to download and ranks remote peers for block requests.
-#[derive(Debug)]
-pub struct Selector {
-    #[cfg(feature = "std")]
-    _random_seed: StdRng,
+/// Pluggable piece selection strategy.
+pub trait PieceSelector: std::fmt::Debug + Send + Sync {
+    /// Selects the next piece index to request from the remote peer.
+    fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32>;
 }
 
-impl Default for Selector {
-    /// Returns the default `Selector` initialized with a random entropy seed.
-    fn default() -> Self {
-        Selector::new()
+/// Rarest-First piece selection strategy (default).
+#[derive(Debug, Clone, Copy)]
+pub struct RarestFirstSelector;
+
+impl PieceSelector for RarestFirstSelector {
+    fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32> {
+        (0..context.number_of_pieces as u32)
+            .filter(|&piece| !context.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
+            .min_by_key(|&piece| (context.get_piece_peer_count(piece), piece))
     }
 }
 
-impl Selector {
-    /// Creates a new `Selector` instance using entropy to initialize the random number generator.
-    pub fn new() -> Self {
-        Selector {
-            #[cfg(feature = "std")]
-            _random_seed: StdRng::from_entropy(),
-        }
+/// Sequential piece selection strategy (ideal for media streaming).
+#[derive(Debug, Clone, Copy)]
+pub struct SequentialSelector;
+
+impl PieceSelector for SequentialSelector {
+    fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32> {
+        (0..context.number_of_pieces as u32)
+            .find(|&piece| !context.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
     }
 }

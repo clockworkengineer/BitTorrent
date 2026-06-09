@@ -1,5 +1,4 @@
-use bittorrent_rs::disk_io::DiskIO;
-use bittorrent_rs::{BNode, Bencode, MetaInfoFile, Selector, TorrentContext};
+use bittorrent_rs::{BNode, Bencode, MetaInfoFile, TorrentContext, selector::RarestFirstSelector, session::SessionConfig, disk_io::DiskIO};
 use sha1::Digest;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -93,7 +92,7 @@ fn test_process_piece_block_assembly_writes_complete_piece() {
     ));
     disk_io.create_local_torrent_structure().unwrap();
     let mut context =
-        TorrentContext::new(&meta_info, Selector::new(), disk_io.clone(), &download_path, false).unwrap();
+        TorrentContext::new(&meta_info, std::sync::Arc::new(RarestFirstSelector), disk_io.clone(), &download_path, false, SessionConfig::default()).unwrap();
     disk_io.create_torrent_bitfield(&mut context).unwrap();
 
     let second_piece_block = &file_data[piece_length as usize..];

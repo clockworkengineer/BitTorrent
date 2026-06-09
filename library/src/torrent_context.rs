@@ -3,18 +3,19 @@
 //! Models the state and configuration of an active torrent session, including
 //! files, bitfield vectors, missing piece indices, and the connected peer swarm.
 
-use crate::average::Average;
 use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};
 use crate::manual_reset_event::ManualResetEvent;
 use crate::metainfo::FileDetails;
 use crate::metainfo::MetaInfoFile;
 use crate::peer::Peer;
 use crate::piece_buffer::PieceBuffer;
-use crate::selector::Selector;
+use crate::selector::PieceSelector;
+use crate::assembler::Assembler;
+use crate::session::SessionConfig;
 use crate::util::get_bitfield_index_and_mask;
 use sha1::Digest;
 use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -29,16 +30,7 @@ pub struct PieceInfo {
     pub piece_length: u32,
 }
 
-/// Assembly queues and stats for downloaded blocks.
-#[derive(Debug)]
-pub struct AssemblerData {
-    pub piece_buffers: HashMap<u32, Arc<Mutex<PieceBuffer>>>,
-    pub current_block_requests: usize,
-    pub guard_mutex: Mutex<()>,
-    pub block_requests_done: ManualResetEvent,
-    pub average_assembly_time: Average,
-    pub total_timeouts: usize,
-}
+// Removed AssemblerData definition (now in assembler.rs)
 
 /// Enumeration of states a torrent transfer session can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,25 +63,26 @@ pub struct TorrentContext {
     pub call_back: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     pub paused: ManualResetEvent,
     pub download_finished: Arc<ManualResetEvent>,
-    pub selector: Selector,
+    pub selector: Arc<dyn PieceSelector>,
     pub peer_swarm: RwLock<HashMap<String, Arc<Mutex<Peer>>>>,
     pub missing_pieces_count: usize,
     pub maximum_swarm_size: usize,
-    pub assembly_data: Mutex<AssemblerData>,
-    pub requested_blocks: RwLock<HashSet<(u32, u32)>>,
+    pub assembler: Assembler,
     pieces_missing: Vec<u8>,
     piece_data: Vec<PieceInfo>,
     pub storage: Arc<dyn crate::io_traits::BlockStorage>,
+    pub config: SessionConfig,
 }
 
 impl TorrentContext {
     /// Creates and initializes a `TorrentContext` from parsed metainfo, creating target directories and scanning existing disk files.
     pub fn new(
         torrent_meta_info: &MetaInfoFile,
-        selector: Selector,
+        selector: Arc<dyn PieceSelector>,
         storage: Arc<dyn crate::io_traits::BlockStorage>,
         download_path: &std::path::Path,
         seeding: bool,
+        config: SessionConfig,
     ) -> Result<Self, crate::error::BitTorrentError> {
         let info_hash = torrent_meta_info.get_info_hash()?;
         let tracker_urls = torrent_meta_info.get_tracker_urls()?;
@@ -142,18 +135,11 @@ impl TorrentContext {
             peer_swarm: RwLock::new(HashMap::new()),
             missing_pieces_count: 0,
             maximum_swarm_size: crate::constants::MAXIMUM_SWARM_SIZE,
-            assembly_data: Mutex::new(AssemblerData {
-                piece_buffers: HashMap::new(),
-                current_block_requests: 0,
-                guard_mutex: Mutex::new(()),
-                block_requests_done: ManualResetEvent::new(false),
-                average_assembly_time: Average::default(),
-                total_timeouts: 0,
-            }),
-            requested_blocks: RwLock::new(HashSet::new()),
+            assembler: Assembler::new(),
             pieces_missing,
             piece_data,
             storage,
+            config,
         };
         Ok(context)
     }
@@ -443,13 +429,12 @@ impl TorrentContext {
         let piece_length = self.get_piece_length(piece_number);
         let block_index = begin / BLOCK_SIZE as u32;
 
-        let mut assembly_data = self.assembly_data.lock().unwrap();
-        let piece_buffer_arc = assembly_data
-            .piece_buffers
+        let mut piece_buffers = self.assembler.piece_buffers.lock().unwrap();
+        let piece_buffer_arc = piece_buffers
             .entry(piece_number)
             .or_insert_with(|| Arc::new(Mutex::new(PieceBuffer::new(piece_number, piece_length))))
             .clone();
-        drop(assembly_data);
+        drop(piece_buffers);
 
         let piece_buffer_arc2 = piece_buffer_arc.clone();
         let mut piece_buffer = piece_buffer_arc2.lock().unwrap();
@@ -488,19 +473,19 @@ impl TorrentContext {
                 }
                 self.try_complete_download();
                 self.clear_piece_requests(piece_number);
-                self.assembly_data
+                self.assembler
+                    .piece_buffers
                     .lock()
                     .unwrap()
-                    .piece_buffers
                     .remove(&piece_number);
                 return Ok(true);
             } else {
                 println!("Piece {} failed hash verification", piece_number);
                 self.clear_piece_requests(piece_number);
-                self.assembly_data
+                self.assembler
+                    .piece_buffers
                     .lock()
                     .unwrap()
-                    .piece_buffers
                     .remove(&piece_number);
                 return Err(crate::error::BitTorrentError::Parse(
                     "Piece failed hash verification".to_string(),
@@ -551,6 +536,11 @@ impl TorrentContext {
         self.piece_data[piece_number as usize].piece_length
     }
 
+    /// Returns the number of peers that have announced possession of the specified piece.
+    pub fn get_piece_peer_count(&self, piece_number: u32) -> usize {
+        self.piece_data[piece_number as usize].peer_count
+    }
+
     /// Sets the byte length for a given piece index.
     pub fn set_piece_length(&mut self, piece_number: u32, piece_length: u32) {
         if piece_length <= self.piece_length {
@@ -583,41 +573,27 @@ impl TorrentContext {
 
     /// Checks if a block request has been registered in the context.
     pub fn is_block_requested(&self, piece_number: u32, block_index: u32) -> bool {
-        self.requested_blocks
-            .read()
-            .unwrap()
-            .contains(&(piece_number, block_index))
+        self.assembler.is_block_requested(piece_number, block_index)
     }
 
     /// Marks a block index as requested/reserved in the session context.
     pub fn reserve_block_request(&self, piece_number: u32, block_index: u32) -> bool {
-        self.requested_blocks
-            .write()
-            .unwrap()
-            .insert((piece_number, block_index))
+        self.assembler.reserve_block_request(piece_number, block_index)
     }
 
     /// Releases a block reservation, allowing other peers to request it.
     pub fn release_block_request(&self, piece_number: u32, block_index: u32) {
-        self.requested_blocks
-            .write()
-            .unwrap()
-            .remove(&(piece_number, block_index));
+        self.assembler.release_block_request(piece_number, block_index);
     }
 
     /// Drops all block request reservations registered under a given piece index.
     pub fn clear_piece_requests(&self, piece_number: u32) {
-        self.requested_blocks
-            .write()
-            .unwrap()
-            .retain(|(piece, _)| *piece != piece_number);
+        self.assembler.clear_piece_requests(piece_number);
     }
 
     /// Selects the rarest missing piece that the remote peer possesses.
     pub fn select_next_piece_for_peer(&self, remote_peer: &Peer) -> Option<u32> {
-        (0..self.number_of_pieces as u32)
-            .filter(|&piece| !self.is_piece_local(piece) && remote_peer.is_piece_on_remote_peer(piece))
-            .min_by_key(|&piece| (self.piece_data[piece as usize].peer_count, piece))
+        self.selector.select_piece(self, remote_peer)
     }
 
     /// Identifies and reserves the next download block from a piece available on the specified peer.
@@ -685,10 +661,10 @@ impl TorrentContext {
     /// Estimates the current download transfer rate in bytes per second.
     pub fn bytes_per_second(&self) -> i64 {
         let ms = self
-            .assembly_data
+            .assembler
+            .average_assembly_time
             .lock()
             .unwrap()
-            .average_assembly_time
             .get();
         if ms != 0 {
             (self.piece_length as i64 * 1000) / ms

@@ -9,10 +9,9 @@ use crate::manager::Manager;
 use crate::metainfo::MetaInfoFile;
 use crate::peer::Peer;
 use crate::peer_id;
-use crate::selector::Selector;
+use crate::selector::{PieceSelector, RarestFirstSelector};
 use crate::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::{PeerDetails, Tracker};
-use crate::peer_network::PeerNetwork;
 use crate::peer_message::PeerMessage;
 use std::fs;
 use std::net::TcpStream;
@@ -27,6 +26,26 @@ use core::pin::Pin;
 use core::future::Future;
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
+
+/// Represents an active Torrent transfer session.
+#[derive(Debug, Clone)]
+pub struct SessionConfig {
+    pub connect_timeout: Duration,
+    pub read_timeout: Duration,
+    pub write_timeout: Duration,
+    pub min_reannounce_interval: u32,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        SessionConfig {
+            connect_timeout: Duration::from_secs(10),
+            read_timeout: Duration::from_secs(5),
+            write_timeout: Duration::from_secs(5),
+            min_reannounce_interval: 60,
+        }
+    }
+}
 
 /// Represents an active Torrent transfer session.
 pub struct TorrentSession {
@@ -44,6 +63,8 @@ pub struct TorrentSessionBuilder {
     download_path: PathBuf,
     seeding: bool,
     manager: Option<Arc<Manager>>,
+    config: SessionConfig,
+    selector: Arc<dyn PieceSelector>,
 }
 
 impl TorrentSessionBuilder {
@@ -54,6 +75,8 @@ impl TorrentSessionBuilder {
             download_path: download_path.as_ref().to_path_buf(),
             seeding: false,
             manager: None,
+            config: SessionConfig::default(),
+            selector: Arc::new(RarestFirstSelector),
         }
     }
 
@@ -69,9 +92,27 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Sets the dynamic configuration of session timeouts and intervals.
+    pub fn config(mut self, config: SessionConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Sets the pluggable piece selector strategy.
+    pub fn selector(mut self, selector: Arc<dyn PieceSelector>) -> Self {
+        self.selector = selector;
+        self
+    }
+
     /// Builds the `TorrentSession` using the configured parameters.
     pub fn build(self) -> Result<TorrentSession, BitTorrentError> {
-        let mut session = TorrentSession::new(self.torrent_path, self.download_path, self.seeding)?;
+        let mut session = TorrentSession::new_with_options(
+            self.torrent_path,
+            self.download_path,
+            self.seeding,
+            self.config,
+            self.selector,
+        )?;
         session.manager = self.manager;
         Ok(session)
     }
@@ -89,6 +130,23 @@ impl TorrentSession {
         download_path: impl AsRef<Path>,
         seeding: bool,
     ) -> Result<Self, BitTorrentError> {
+        Self::new_with_options(
+            torrent_path,
+            download_path,
+            seeding,
+            SessionConfig::default(),
+            Arc::new(RarestFirstSelector),
+        )
+    }
+
+    /// Creates and initializes a new `TorrentSession` using options.
+    pub fn new_with_options(
+        torrent_path: impl AsRef<Path>,
+        download_path: impl AsRef<Path>,
+        seeding: bool,
+        config: SessionConfig,
+        selector: Arc<dyn PieceSelector>,
+    ) -> Result<Self, BitTorrentError> {
         let torrent_path = torrent_path.as_ref();
         let download_path = download_path.as_ref().to_path_buf();
         fs::create_dir_all(&download_path)?;
@@ -104,13 +162,13 @@ impl TorrentSession {
             files_to_download,
             piece_length,
         ));
-        let selector = Selector::new();
         let context = Arc::new(Mutex::new(TorrentContext::new(
             &meta_info,
             selector,
             disk_io.clone(),
             &download_path,
             seeding,
+            config.clone(),
         )?));
 
         disk_io.create_local_torrent_structure()?;
@@ -188,7 +246,7 @@ impl TorrentSession {
                     let done = ctx.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
                     let total = ctx.total_bytes_to_download;
                     let bps = ctx.bytes_per_second();
-                    let reserved = ctx.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
+                    let reserved = ctx.assembler.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
                     let progress = if total > 0 { (done * 10000) / total } else { 0 };
                     log_debug!(
                         "[stats] peers={}/{} downloaded={}/{} ({}.{:02}%) speed={}/s reserved_blocks={}",
@@ -370,7 +428,11 @@ impl TorrentSession {
         let _ = self.task_tx.send(Box::pin(async move {
             let mut announced_completed = false;
             loop {
-                let interval = tracker.interval.max(60);
+                let min_reannounce = {
+                    let ctx = context.lock().unwrap();
+                    ctx.config.min_reannounce_interval
+                };
+                let interval = tracker.interval.max(min_reannounce as usize);
                 delay(Duration::from_secs(interval as u64)).await;
 
                 let status = {
@@ -441,12 +503,17 @@ async fn handle_peer_session(
         }
     }
 
+    let config = {
+        let ctx = context.lock().unwrap();
+        ctx.config.clone()
+    };
+
     let address = format!("{}:{}", peer_details.ip, peer_details.port);
     let stream = match address
         .parse::<std::net::SocketAddr>()
         .ok()
         .and_then(|addr| {
-            TcpStream::connect_timeout(&addr, Duration::from_secs(10)).ok()
+            TcpStream::connect_timeout(&addr, config.connect_timeout).ok()
         }) {
         Some(s) => s,
         None => {
@@ -456,8 +523,8 @@ async fn handle_peer_session(
     };
 
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    let _ = stream.set_read_timeout(Some(config.read_timeout));
+    let _ = stream.set_write_timeout(Some(config.write_timeout));
 
     let peer = Arc::new(Mutex::new(Peer::new(
         peer_details.ip.clone(),
@@ -591,54 +658,8 @@ async fn handle_peer_session(
             }
         };
 
-        let mut action_error = false;
-        for action in actions {
-            match action {
-                crate::peer::PeerAction::SendUnchoke => {
-                    if net.write_message(PeerMessage::Unchoke).await.is_err() {
-                        mark_peer_dead(&manager, &peer_details.ip);
-                        action_error = true;
-                        break;
-                    }
-                }
-                crate::peer::PeerAction::SendPiece { index, begin, block } => {
-                    let msg = PeerMessage::Piece { index, begin, block: &block };
-                    if net.write_message(msg).await.is_err() {
-                        mark_peer_dead(&manager, &peer_details.ip);
-                        action_error = true;
-                        break;
-                    }
-                }
-                crate::peer::PeerAction::BroadcastCancel { index, begin, length, block_index } => {
-                    let peers: Vec<PeerNetwork> = {
-                        let ctx_guard = context.lock().unwrap();
-                        let swarm = ctx_guard.peer_swarm.read().unwrap();
-                        swarm
-                            .iter()
-                            .filter_map(|(ip, peer_arc)| {
-                                if ip == &peer_details.ip {
-                                    return None;
-                                }
-                                let other_peer = peer_arc.lock().unwrap();
-                                let should_send = match block_index {
-                                    Some(bi) => other_peer.reserved_blocks.contains(&(index, bi)),
-                                    None => true,
-                                };
-                                if should_send {
-                                    other_peer.network.clone()
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect()
-                    };
-                    for peer_net in peers {
-                        let _ = peer_net.write_message(PeerMessage::Cancel { index, begin, length }).await;
-                    }
-                }
-            }
-        }
-        if action_error {
+        if Peer::execute_actions(actions, &net, &context, &peer_details.ip).await.is_err() {
+            mark_peer_dead(&manager, &peer_details.ip);
             break;
         }
 

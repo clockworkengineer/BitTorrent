@@ -1,6 +1,6 @@
 use bittorrent_rs::bencode::{BNode, Bencode};
 use bittorrent_rs::disk_io::DiskIO;
-use bittorrent_rs::{MetaInfoFile, Selector, TorrentContext};
+use bittorrent_rs::{MetaInfoFile, TorrentContext, selector::RarestFirstSelector, session::SessionConfig};
 use sha1::Digest;
 use std::fs;
 use std::io::Read;
@@ -143,7 +143,7 @@ fn test_write_piece_across_multiple_files() {
     disk_io.create_local_torrent_structure().unwrap();
 
     let mut _context =
-        TorrentContext::new(&meta_info, Selector::new(), disk_io.clone(), &download_path, false).unwrap();
+        TorrentContext::new(&meta_info, std::sync::Arc::new(RarestFirstSelector), disk_io.clone(), &download_path, false, SessionConfig::default()).unwrap();
     disk_io.create_torrent_bitfield(&mut _context).unwrap();
     let file_one = download_path.join("downloads").join("part1.bin");
     let file_two = download_path.join("downloads").join("part2.bin");
@@ -198,7 +198,7 @@ fn test_process_piece_block_writes_complete_piece_to_disk() {
     ));
     disk_io.create_local_torrent_structure().unwrap();
     let mut context =
-        TorrentContext::new(&meta_info, Selector::new(), disk_io.clone(), &download_path, false).unwrap();
+        TorrentContext::new(&meta_info, std::sync::Arc::new(RarestFirstSelector), disk_io.clone(), &download_path, false, SessionConfig::default()).unwrap();
     disk_io.create_torrent_bitfield(&mut context).unwrap();
 
     let completed = context

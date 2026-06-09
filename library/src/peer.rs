@@ -394,4 +394,52 @@ impl Peer {
         }
         Ok(actions)
     }
+
+    /// Executes peer action commands (Unchoke, SendPiece, BroadcastCancel).
+    pub async fn execute_actions(
+        actions: Vec<PeerAction>,
+        net: &PeerNetwork,
+        context: &Mutex<TorrentContext>,
+        peer_details_ip: &str,
+    ) -> Result<(), BitTorrentError> {
+        for action in actions {
+            match action {
+                PeerAction::SendUnchoke => {
+                    net.write_message(PeerMessage::Unchoke).await?;
+                }
+                PeerAction::SendPiece { index, begin, block } => {
+                    let msg = PeerMessage::Piece { index, begin, block: &block };
+                    net.write_message(msg).await?;
+                }
+                PeerAction::BroadcastCancel { index, begin, length, block_index } => {
+                    let peers: Vec<PeerNetwork> = {
+                        let ctx_guard = context.lock().unwrap();
+                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        swarm
+                            .iter()
+                            .filter_map(|(ip, peer_arc)| {
+                                if ip == peer_details_ip {
+                                    return None;
+                                }
+                                let other_peer = peer_arc.lock().unwrap();
+                                let should_send = match block_index {
+                                    Some(bi) => other_peer.reserved_blocks.contains(&(index, bi)),
+                                    None => true,
+                                };
+                                if should_send {
+                                    other_peer.network.clone()
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    };
+                    for peer_net in peers {
+                        let _ = peer_net.write_message(PeerMessage::Cancel { index, begin, length }).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
