@@ -1,80 +1,103 @@
 # Architecture Overview
 
-## Crate layout
-- `library/src/` — library code
-- `library/tests/` — test suite
-- `clients/torrent_client/` — CLI client binary
-- `examples/torrent_session_example/` — example application
+This document describes the design, key components, and data flows of the BitTorrent client library.
 
-## Key components
+---
 
-### Session layer
-- `TorrentSession` — high-level download orchestrator; owns `TorrentContext`, `DiskIO`, and a pool of per-peer worker threads; exposes `start_download()`, `pause()`, `resume()`, `stop()`, and `wait_for_download_finished()`
-- `Manager` — registry for active torrents (keyed by info hash) and a blacklist of dead peers; routes newly discovered peers via an MPSC sender
+## Crate Layout & Workspace
+- [library/src/](file:///c:/Projects/BitTorrent/library/src/) — Core BitTorrent library code (optionally `#![no_std]`).
+- [library/tests/](file:///c:/Projects/BitTorrent/library/tests/) — Crate test suite (unit and integration tests).
+- [clients/torrent_client/](file:///c:/Projects/BitTorrent/clients/torrent_client/src/main.rs) — Desktop client binary implementing an interactive UI using `egui`/`eframe`.
+- [examples/torrent_session_example/](file:///c:/Projects/BitTorrent/examples/torrent_session_example/src/main.rs) — Simple CLI session runner demonstrating top-level programmatic usage.
 
-### Torrent state
-- `TorrentContext` — central mutable state: info hash, piece metadata, local bitfield, peer swarm (`HashMap<String, Arc<Mutex<Peer>>>`), in-progress piece buffers (`AssemblerData`), and outstanding block requests; exposes `next_block_request_for_peer()` (rarest-first selection) and `process_piece_block()` (assembly + SHA1 validation)
-- `TorrentStatus` enum — `Initialised → Downloading → Paused → Seeding → Ended`
-- `MetaInfoFile` — parses `.torrent` metadata: info hash (SHA1 of info dict), piece hashes, piece length, file layout, and tracker URL list (primary + backup)
+---
 
-### Peer layer
-- `Peer` — per-peer state: remote bitfield, choke/interest flags, outstanding request count, reserved block list; performs handshake and drives the message loop
-- `PeerNetwork` — raw TCP socket wrapper; encodes and decodes handshake and length-prefixed messages
-- `PeerMessage` — enum covering the full peer wire protocol: `KeepAlive`, `Choke`, `Unchoke`, `Interested`, `NotInterested`, `Have`, `Bitfield`, `Request`, `Piece`, `Cancel`, `Port`; implements `encode()`/`decode()`
+## Key Components
 
-### Tracker layer
-- `Tracker` — manages announce lifecycle (Started, Completed, Stopped, None); parses compact peer lists into `PeerDetails`
-- `Announcer` trait — implemented by `HttpAnnouncer` (bencode response) and `UdpAnnouncer` (binary connection/announce protocol); `AnnouncerFactory` selects implementation by URL scheme
+### Session & Concurrency Layer
+- **`TorrentSession`**: The high-level entry point orchestrating transfers. It encapsulates download paths, running threads, and peer connection setups.
+- **`TorrentSessionBuilder`**: Implements the builder pattern to construct a session configuration, including file validation and manager injection.
+- **`Manager`**: Serves as a global registry for torrents (keyed by info-hash) and aggregates a shared blacklist of slow or dead peers.
+- **Background Tasks & Thread Redirection**: Standard tasks (stats logging, tracker announcements) run as asynchronous tasks on a cooperative single-threaded `futures::executor::LocalPool` executor. Network connection attempts (`TcpStream::connect_timeout`), which are blocking, are redirected to dedicated OS worker threads on the `std` target so they do not block the shared executor loop.
 
-### Disk layer
-- `DiskIO` — creates local file/directory structure, scans existing data to build the initial bitfield, writes assembled pieces to the correct file offsets (handles pieces that span file boundaries), and exposes a background write queue (MPSC channel)
-- `PieceBuffer` — assembles incoming blocks into a complete piece; tracks per-block completion with a countdown; signals readiness via `all_blocks_there()`
-- `PieceRequest` — message type carried on the disk I/O queue (info hash, peer IP, piece number, block offset, block size)
+### Torrent State & Metadata
+- **`TorrentContext`**: The core thread-safe state container. It manages the active `peer_swarm`, piece bitfield progress, and missing pieces tracking, and delegates piece block assembly tasks.
+- **`TorrentStatus`**: Represents the transfer lifecycle: `Initialised → Downloading → Paused → Seeding → Ended`.
+- **`MetaInfoFile`**: Decodes `.torrent` metainfo dicts, computes info-hashes, validates file names against path traversal, and returns details like piece counts and announce URLs.
 
-### Selection
-- `Selector` — rarest-first piece selection and peer ranking by average latency
+### Peer Wire Protocol
+- **`Peer`**: Manages remote peer state (choke/interest flags, outstanding requests count, timestamps for rate limiting) and processes peer wire packets.
+- **`PeerNetwork`**: Wraps the network socket transport layer, framing length-prefixed bytes into structured messages.
+- **`PeerMessage<'a>`**: Zero-copy enum framing all wire messages (`Choke`, `Unchoke`, `Interested`, `NotInterested`, `Have`, `Bitfield`, `Request`, `Piece`, `Cancel`, `Port`). Payload buffers slice directly from read buffers.
 
-### Utilities
-- `Bencode` / `BNode` — recursive bencode parser and encoder for torrent files and tracker responses
-- `ManualResetEvent` — thread synchronization primitive (set/reset/wait) used for pause and download-complete signals
-- `Average` — running mean for latency/bandwidth metrics
-- `peer_id` — generates a random peer ID (`-AZ1000-{12-char random}`)
-- `host` — resolves the local IP address via a non-sending UDP probe
-- `constants` — `BLOCK_SIZE` (16 KiB), `HASH_LENGTH` (20), `PEER_ID_LENGTH` (20), `INITIAL_HANDSHAKE_LENGTH` (68), `MAXIMUM_SWARM_SIZE` (100)
-- `util` — big-endian pack/unpack helpers and info-hash hex encoding
-- `error` — `BitTorrentError` enum (`Io`, `InvalidBencode`, `MissingField`, `Parse`, `NotParsed`)
+### DHT Discovery (BEP 5)
+- **`Dht`**: Implements Kademlia Distributed Hash Table peer discovery.
+- **`RoutingTable`**: Composed of 160 routing buckets (8 nodes each), indexed using the leading zeros of XOR distances between node IDs.
+- **`KRPC`**: Zero-allocation Bencode query/response parser for UDP discovery.
 
-## Data flow
+### Tracker Announcement
+- **`Tracker`**: Drives start, complete, and stop events. Implements exponential backoff with retries for request fallbacks.
+- **`AnnouncerEnum`**: Static dispatch enum wrapper representing either `HttpAnnouncer` (BEP 3) or `UdpAnnouncer` (BEP 15), completely avoiding dynamic dispatch vtable allocations.
+
+### Block Assembly & Disk I/O
+- **`DiskIO`**: Manages filesystem layouts. Maps global linear torrent offsets into target files and handles piece writes across boundaries.
+- **`Assembler`**: Tracks in-progress piece assemblies, blocks countdowns, and request timeouts.
+- **`PieceBuffer`**: Lightweight metadata tracker indicating which blocks are present, storing data directly to storage to avoid RAM buffer exhaustion.
+
+### Piece Selection
+- **`PieceSelector`**: Pluggable trait for downloading strategies.
+  - `RarestFirstSelector`: Prioritizes pieces with the lowest peer availability.
+  - `SequentialSelector`: Downloads pieces sequentially (optimized for media streaming).
+
+### Hardware Abstractions
+- **`AsyncSocket`**: Abstract trait for reading and writing network packets asynchronously.
+- **`BlockStorage`**: Abstract trait for reading and writing blocks of file contents.
+- **`MemStorage`** & **`MockSocket`**: In-memory test implementations of hardware traits, allowing port-free and filesystem-free integration tests.
+
+---
+
+## Data Flow
+
+The diagram below outlines the standard flow of operations when initiating a download session:
 
 ```
+TorrentSessionBuilder::build() -> TorrentSession
+  │
+  ├─ DiskIO::create_local_torrent_structure()  [Initializes file tree]
+  ├─ DiskIO::create_torrent_bitfield()         [Scans verified files on disk]
+  │
 TorrentSession::start_download()
   │
-  ├─ DiskIO::create_local_torrent_structure()
-  ├─ DiskIO::create_torrent_bitfield()     ← resume support
-  ├─ Tracker::announce_started()           ← discovers PeerDetails
+  ├─ Dht::start() & Dht::bootstrap()           [Initializes DHT discovery]
+  ├─ Tracker::start_announcing()               [Discovers Tracker peers]
   │
-  └─ per peer: spawn connect_and_download_peer() thread
-       │
-       ├─ Peer::handshake()                ← TCP connect + protocol handshake
-       ├─ send/receive Bitfield            ← update remote_piece_bitfield
-       ├─ send Interested / receive Unchoke
-       │
-       └─ message loop
-            ├─ TorrentContext::next_block_request_for_peer()  ← rarest-first
-            ├─ Peer::send_message(Request)
-            ├─ Peer::read_message() → PeerMessage::Piece
-            ├─ TorrentContext::process_piece_block()
-            │    └─ PieceBuffer::add_block()
-            │         └─ all blocks present → SHA1 check
-            │              └─ DiskIO::write_piece() → filesystem
-            └─ TorrentContext::mark_piece_local()
+  ├─ Spawn peer connection threads:
+  │    │
+  │    ├─ Peer::new_with_socket() -> Handshake exchange
+  │    ├─ send Bitfield & Interested
+  │    ├─ receive Unchoke
+  │    │
+  │    └─ Peer Message Loop (Cooperative Async tasks)
+  │         ├─ TorrentContext::next_block_request_for_peer()
+  │         ├─ Peer::send_message(Request)
+  │         │
+  │         ├─ receive PeerMessage::Piece
+  │         ├─ BlockStorage::write_block()     [Write directly to disk/memory]
+  │         ├─ check_piece_hash_streaming()    [Verifies checksum block-by-block]
+  │         ├─ if verification passes:
+  │         │    ├─ TorrentContext::mark_piece_local()
+  │         │    ├─ Peer::broadcast_cancel()   [Endgame cancellations]
+  │         │    ├─ Peer::send_have()          [Announces to active swarm]
+  │         │    └─ try_complete_download()    [Transition to Seeding]
+  │         │
+  │         └─ check_request_timeouts()        [Cancels and re-requests stale blocks]
 ```
 
-## Known gaps and future work
+---
 
-- **Endgame mode** — no special handling for the final few pieces
-- **Upload / seeding** — `TorrentStatus::Seeding` exists but upload logic is not implemented
-- **Peer liveness** — no keepalive timeout or reconnect logic
-- **Choking algorithm** — no tit-for-tat or optimistic unchoke; peers are unchoked unconditionally
-- **DHT / PEX** — no peer discovery beyond the tracker announce
-- **Magnet links** — metadata extension not implemented
+## Known Gaps & Future Work
+
+- **Magnet Link Metadata Exchange**: Support parsing magnet links and downloading the metainfo dictionary via the extension protocol (BEP 9 / BEP 10).
+- **Tit-for-Tat Choking Algorithm**: Optimize upload distribution using a rolling average of download bandwidth to prioritize peers that actively upload to us.
+- **Optimistic Unchoking**: Periodically unchoke a random peer to discover unused upload capacity in the swarm.
+- **Keep-Alive Reconnect Logic**: Detect dropped TCP sockets via regular KeepAlive timeouts and trigger reconnection attempts.

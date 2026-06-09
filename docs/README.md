@@ -1,13 +1,22 @@
 # Project Documentation
 
-This folder contains planning and design documents for the BitTorrent library.
+This folder contains the architecture, API reference, roadmap, and design documents for the BitTorrent Rust library.
 
-- `roadmap.md` — concrete implementation steps to make the client fully functional
-- `architecture.md` — current architecture analysis and missing pieces
-- `api-proposal.md` — proposed public API for torrent download usage
+## Core Design & Reference
+- [architecture.md](file:///c:/Projects/BitTorrent/docs/architecture.md) — System architecture, module layouts, and core data flow.
+- [api-reference.md](file:///c:/Projects/BitTorrent/docs/api-reference.md) — Public API reference, builder configurations, and usage patterns.
+- [ui-layout.md](file:///c:/Projects/BitTorrent/docs/ui-layout.md) — Recommended desktop client layout and egui framework notes.
 
-Use these documents as the guide for the next development milestones.
+## Technical Details & Features
+- [dht.md](file:///c:/Projects/BitTorrent/docs/dht.md) — Kademlia DHT peer discovery (BEP 5) and KRPC wire protocols.
+- [portability.md](file:///c:/Projects/BitTorrent/docs/portability.md) — `#![no_std]` bare-metal support, hardware-agnostic traits, and port-free mock testing.
+- [performance.md](file:///c:/Projects/BitTorrent/docs/performance.md) — Zero-copy slice parsing, streaming hash validation, and static buffer pools.
 
-## Getting started
+## History & Planning
+- [roadmap.md](file:///c:/Projects/BitTorrent/docs/roadmap.md) — Implementation milestones, completed phases, and future improvements.
 
-For usage and example code, see the root `README.md` and the `examples/` package.
+---
+
+## Getting Started
+
+For usage and runnable code, see the root [README.md](file:///c:/Projects/BitTorrent/README.md) and the [examples/torrent_session_example](file:///c:/Projects/BitTorrent/examples/torrent_session_example/src/main.rs).
