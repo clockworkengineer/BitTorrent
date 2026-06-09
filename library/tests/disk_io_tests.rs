@@ -130,19 +130,27 @@ fn test_write_piece_across_multiple_files() {
         piece_hash.clone(),
     );
 
-    let disk_io = DiskIO::new();
-    let meta_info = MetaInfoFile::new(&torrent_file).unwrap();
-    let mut meta_info = meta_info;
+    let mut meta_info = MetaInfoFile::new(&torrent_file).unwrap();
     meta_info.parse().unwrap();
     meta_info.validate().unwrap();
+    let piece_length = meta_info.get_piece_length().unwrap();
+    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).unwrap();
+    let disk_io = std::sync::Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().unwrap();
 
-    let context =
-        TorrentContext::new(&meta_info, Selector::new(), &disk_io, &download_path, false).unwrap();
+    let mut _context =
+        TorrentContext::new(&meta_info, Selector::new(), disk_io.clone(), &download_path, false).unwrap();
+    disk_io.create_torrent_bitfield(&mut _context).unwrap();
     let file_one = download_path.join("downloads").join("part1.bin");
     let file_two = download_path.join("downloads").join("part2.bin");
 
     let piece_bytes = piece_data;
-    disk_io.write_piece(&context, 0, &piece_bytes).unwrap();
+    use bittorrent_rs::BlockStorage;
+    disk_io.write_block(0, &piece_bytes).unwrap();
 
     let mut first = Vec::new();
     fs::File::open(&file_one)
@@ -178,15 +186,23 @@ fn test_process_piece_block_writes_complete_piece_to_disk() {
         piece_hash.clone(),
     );
 
-    let disk_io = DiskIO::new();
     let mut meta_info = MetaInfoFile::new(&torrent_file).unwrap();
     meta_info.parse().unwrap();
     meta_info.validate().unwrap();
+    let piece_length = meta_info.get_piece_length().unwrap();
+    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).unwrap();
+    let disk_io = std::sync::Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().unwrap();
     let mut context =
-        TorrentContext::new(&meta_info, Selector::new(), &disk_io, &download_path, false).unwrap();
+        TorrentContext::new(&meta_info, Selector::new(), disk_io.clone(), &download_path, false).unwrap();
+    disk_io.create_torrent_bitfield(&mut context).unwrap();
 
     let completed = context
-        .process_piece_block(&disk_io, 0, 0, &piece_data)
+        .process_piece_block(&*disk_io, 0, 0, &piece_data)
         .unwrap();
 
     assert!(completed);

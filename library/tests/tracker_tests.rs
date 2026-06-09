@@ -49,10 +49,18 @@ fn test_tracker_started_and_peer_list() {
     let mut meta =
         MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
     meta.parse().expect("Failed to parse torrent");
-    let disk_io = DiskIO::new();
+    let piece_length = meta.get_piece_length().expect("Failed to get piece length");
+    let (_, files_to_download) = meta.local_files_to_download_list(&download_path).expect("Failed to get files list");
+    let disk_io = Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().expect("Failed to create file structure");
     let selector = Selector::new();
-    let context = TorrentContext::new(&meta, selector, &disk_io, &download_path, false)
+    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false)
         .expect("Failed to create torrent context");
+    disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
     let context = Arc::new(Mutex::new(context));
 
     let mut tracker = Tracker::new_with_announcer(context.clone(), Box::new(FakeAnnouncer {}))
@@ -84,10 +92,18 @@ fn test_tracker_completed_event() {
     let mut meta =
         MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
     meta.parse().expect("Failed to parse torrent");
-    let disk_io = DiskIO::new();
+    let piece_length = meta.get_piece_length().expect("Failed to get piece length");
+    let (_, files_to_download) = meta.local_files_to_download_list(&download_path).expect("Failed to get files list");
+    let disk_io = Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().expect("Failed to create file structure");
     let selector = Selector::new();
-    let context = TorrentContext::new(&meta, selector, &disk_io, &download_path, false)
+    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false)
         .expect("Failed to create torrent context");
+    disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
     let context = Arc::new(Mutex::new(context));
 
     let mut tracker = Tracker::new_with_announcer(context.clone(), Box::new(FakeAnnouncer {}))
@@ -132,10 +148,18 @@ fn test_tracker_can_use_manager_queue() {
     let mut meta =
         MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
     meta.parse().expect("Failed to parse torrent");
-    let disk_io = DiskIO::new();
+    let piece_length = meta.get_piece_length().expect("Failed to get piece length");
+    let (_, files_to_download) = meta.local_files_to_download_list(&download_path).expect("Failed to get files list");
+    let disk_io = Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().expect("Failed to create file structure");
     let selector = Selector::new();
-    let context = TorrentContext::new(&meta, selector, &disk_io, &download_path, false)
+    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false)
         .expect("Failed to create torrent context");
+    disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
     let context = Arc::new(Mutex::new(context));
 
     let manager = Arc::new(Manager::new());

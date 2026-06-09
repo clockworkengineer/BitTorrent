@@ -16,6 +16,7 @@ pub mod constants;
 #[cfg(feature = "std")]
 pub mod disk_io;
 pub mod error;
+pub mod io_traits;
 #[cfg(feature = "std")]
 pub mod host;
 #[cfg(feature = "std")]
@@ -46,6 +47,7 @@ pub mod util;
 pub use average::Average;
 pub use bencode::{BNode, Bencode};
 pub use error::BitTorrentError;
+pub use io_traits::{AsyncSocket, BlockStorage};
 #[cfg(feature = "std")]
 pub use manager::Manager;
 pub use metainfo::{FileDetails, MetaInfoFile};

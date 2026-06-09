@@ -4,7 +4,6 @@
 //! state, message transmitting/receiving, block requesting, and bitfield syncing.
 
 use crate::average::Average;
-use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
@@ -57,8 +56,9 @@ pub struct Peer {
 impl Peer {
     /// Creates a new `Peer` representing a remote client connected via the provided TCP stream.
     pub fn new(ip: String, port: u16, stream: TcpStream) -> Self {
+        let socket = Arc::new(crate::peer_network::TcpSocket::new(stream));
         Peer {
-            network: Some(PeerNetwork::new(stream)),
+            network: Some(PeerNetwork::new(socket)),
             packet_response_timer: None,
             average_packet_response: Average::default(),
             connected: false,
@@ -86,26 +86,26 @@ impl Peer {
     }
 
     /// Helper to write raw bytes to the peer connection stream.
-    pub async fn write(&self, buffer: &[u8]) -> std::io::Result<usize> {
+    pub async fn write(&self, buffer: &[u8]) -> Result<usize, BitTorrentError> {
         if let Some(net) = &self.network {
             net.write(buffer).await
         } else {
-            Err(std::io::Error::new(
+            Err(BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "No network available",
-            ))
+            )))
         }
     }
 
     /// Helper to read raw bytes from the peer connection stream.
-    pub async fn read(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    pub async fn read(&self, buffer: &mut [u8]) -> Result<usize, BitTorrentError> {
         if let Some(net) = &self.network {
             net.read(buffer, buffer.len()).await
         } else {
-            Err(std::io::Error::new(
+            Err(BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "No network available",
-            ))
+            )))
         }
     }
 
@@ -195,14 +195,9 @@ impl Peer {
         self.send_message(PeerMessage::Unchoke).await
     }
 
-    /// Closes the peer network connection and updates local swarm bitfields.
+    /// Closes the peer network connection.
     pub fn close(&mut self) {
-        if self.connected {
-            if let Some(tc) = &self.tc {
-                tc.lock().unwrap().unmerge_piece_bitfield(self);
-            }
-            self.connected = false;
-        }
+        self.connected = false;
         if let Some(net) = &self.network {
             net.close();
         }
@@ -260,7 +255,6 @@ impl Peer {
         &mut self,
         message: PeerMessage<'_>,
         tc: &mut TorrentContext,
-        disk_io: &DiskIO,
     ) -> Result<Vec<PeerAction>, BitTorrentError> {
         let mut actions = Vec::new();
         match message {
@@ -322,7 +316,8 @@ impl Peer {
                     });
                 }
 
-                let piece_complete = tc.process_piece_block(disk_io, index, begin, block)?;
+                let storage = tc.storage.clone();
+                let piece_complete = tc.process_piece_block(&*storage, index, begin, block)?;
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
                     let pieces_remaining = (0..tc.number_of_pieces as u32)
@@ -350,8 +345,10 @@ impl Peer {
             } => {
                 // Serve the block if we have the piece and are not choking the remote peer.
                 if !self.am_choking && tc.is_piece_local(index) {
-                    match disk_io.read_piece_block(tc, index, begin, length) {
-                        Ok(block) => {
+                    let offset = index as u64 * tc.piece_length as u64 + begin as u64;
+                    let mut block = vec![0u8; length as usize];
+                    match tc.storage.read_block(offset, &mut block) {
+                        Ok(_) => {
                             actions.push(PeerAction::SendPiece {
                                 index,
                                 begin,

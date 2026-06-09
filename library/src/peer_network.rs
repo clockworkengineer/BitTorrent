@@ -5,89 +5,65 @@
 
 use crate::error::BitTorrentError;
 use crate::peer_message::PeerMessage;
-use std::io::{Read, Result as IoResult, Write};
-use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+use crate::io_traits::AsyncSocket;
+use std::sync::Arc;
 use alloc::vec::Vec;
 
+#[cfg(feature = "std")]
+use std::net::TcpStream;
+#[cfg(feature = "std")]
+use std::sync::Mutex;
+#[cfg(feature = "std")]
+use std::io::{Read, Write};
+#[cfg(feature = "std")]
+use core::pin::Pin;
+#[cfg(feature = "std")]
+use core::future::Future;
+
 /// A socket communication helper for sending and receiving raw BitTorrent peer messages.
-#[derive(Debug, Clone)]
 pub struct PeerNetwork {
-    stream: Arc<Mutex<TcpStream>>,
+    socket: Arc<dyn AsyncSocket>,
+}
+
+impl core::fmt::Debug for PeerNetwork {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PeerNetwork").finish()
+    }
+}
+
+impl Clone for PeerNetwork {
+    fn clone(&self) -> Self {
+        PeerNetwork {
+            socket: self.socket.clone(),
+        }
+    }
 }
 
 impl PeerNetwork {
-    /// Creates a new `PeerNetwork` instance wrapping the given `TcpStream`.
-    pub fn new(stream: TcpStream) -> Self {
-        let _ = stream.set_nonblocking(true);
-        PeerNetwork {
-            stream: Arc::new(Mutex::new(stream)),
-        }
+    /// Creates a new `PeerNetwork` instance wrapping the given `AsyncSocket` implementation.
+    pub fn new(socket: Arc<dyn AsyncSocket>) -> Self {
+        PeerNetwork { socket }
     }
 
-    /// Writes raw bytes to the underlying TCP stream.
-    pub async fn write(&self, buffer: &[u8]) -> IoResult<usize> {
+    /// Writes raw bytes to the underlying socket.
+    pub async fn write(&self, buffer: &[u8]) -> Result<usize, BitTorrentError> {
+        self.socket.write(buffer).await
+    }
+
+    /// Reads up to `length` bytes from the socket into the provided buffer.
+    pub async fn read(&self, buffer: &mut [u8], length: usize) -> Result<usize, BitTorrentError> {
+        self.socket.read(&mut buffer[..length]).await
+    }
+
+    /// Reads exactly enough bytes from the socket to fill the provided buffer.
+    pub async fn read_exact(&self, buffer: &mut [u8]) -> Result<(), BitTorrentError> {
         let mut offset = 0;
         while offset < buffer.len() {
-            let write_res = {
-                let mut lock = self.stream.lock().unwrap();
-                lock.write(&buffer[offset..])
-            };
-            match write_res {
-                Ok(n) => {
-                    offset += n;
-                    if offset >= buffer.len() {
-                        break;
-                    }
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    crate::util::yield_now().await;
-                }
-                Err(e) => return Err(e),
+            let n = self.socket.read(&mut buffer[offset..]).await?;
+            if n == 0 {
+                return Err(BitTorrentError::Parse("Unexpected EOF reading socket".into()));
             }
-        }
-        Ok(buffer.len())
-    }
-
-    /// Reads up to `length` bytes from the stream into the provided buffer.
-    pub async fn read(&self, buffer: &mut [u8], length: usize) -> IoResult<usize> {
-        loop {
-            let read_res = {
-                let mut lock = self.stream.lock().unwrap();
-                lock.read(&mut buffer[..length])
-            };
-            match read_res {
-                Ok(n) => return Ok(n),
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    crate::util::yield_now().await;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    /// Reads exactly enough bytes from the stream to fill the provided buffer.
-    pub async fn read_exact(&self, buffer: &mut [u8]) -> IoResult<()> {
-        let mut offset = 0;
-        while offset < buffer.len() {
-            let read_res = {
-                let mut lock = self.stream.lock().unwrap();
-                lock.read(&mut buffer[offset..])
-            };
-            match read_res {
-                Ok(0) => return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "failed to fill whole buffer",
-                )),
-                Ok(n) => {
-                    offset += n;
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                    crate::util::yield_now().await;
-                }
-                Err(e) => return Err(e),
-            }
+            offset += n;
         }
         Ok(())
     }
@@ -135,8 +111,84 @@ impl PeerNetwork {
         // current implementation reads on demand through read_message()
     }
 
-    /// Closes the connection by shutting down both read and write halves of the stream.
+    /// Closes the connection.
     pub fn close(&self) {
+        self.socket.close();
+    }
+}
+
+/// Standard library `TcpStream` wrapper implementing `AsyncSocket`.
+#[cfg(feature = "std")]
+#[derive(Debug)]
+pub struct TcpSocket {
+    stream: Arc<Mutex<TcpStream>>,
+}
+
+#[cfg(feature = "std")]
+impl TcpSocket {
+    /// Creates a new `TcpSocket` wrapping the standard `TcpStream` and setting it to non-blocking mode.
+    pub fn new(stream: TcpStream) -> Self {
+        let _ = stream.set_nonblocking(true);
+        TcpSocket {
+            stream: Arc::new(Mutex::new(stream)),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl AsyncSocket for TcpSocket {
+    fn read<'a>(
+        &'a self,
+        buf: &'a mut [u8],
+    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
+        Box::pin(async move {
+            loop {
+                let read_res = {
+                    let mut lock = self.stream.lock().unwrap();
+                    lock.read(buf)
+                };
+                match read_res {
+                    Ok(n) => return Ok(n),
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        crate::util::yield_now().await;
+                    }
+                    Err(e) => return Err(BitTorrentError::Io(e)),
+                }
+            }
+        })
+    }
+
+    fn write<'a>(
+        &'a self,
+        buf: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut offset = 0;
+            while offset < buf.len() {
+                let write_res = {
+                    let mut lock = self.stream.lock().unwrap();
+                    lock.write(&buf[offset..])
+                };
+                match write_res {
+                    Ok(n) => {
+                        offset += n;
+                        if offset >= buf.len() {
+                            break;
+                        }
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        crate::util::yield_now().await;
+                    }
+                    Err(e) => return Err(BitTorrentError::Io(e)),
+                }
+            }
+            Ok(buf.len())
+        })
+    }
+
+    fn close(&self) {
         let lock = self.stream.lock().unwrap();
         let _ = lock.shutdown(std::net::Shutdown::Both);
     }
@@ -164,7 +216,8 @@ mod tests {
         });
 
         let stream = TcpStream::connect(addr).unwrap();
-        let network = PeerNetwork::new(stream);
+        let socket = Arc::new(TcpSocket::new(stream));
+        let network = PeerNetwork::new(socket);
         futures::executor::block_on(async {
             let written = network.write(&vec![0xAB; 64]).await.unwrap();
             assert_eq!(written, 64);

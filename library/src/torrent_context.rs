@@ -5,7 +5,6 @@
 
 use crate::average::Average;
 use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};
-use crate::disk_io::DiskIO;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::metainfo::FileDetails;
 use crate::metainfo::MetaInfoFile;
@@ -80,6 +79,7 @@ pub struct TorrentContext {
     pub requested_blocks: RwLock<HashSet<(u32, u32)>>,
     pieces_missing: Vec<u8>,
     piece_data: Vec<PieceInfo>,
+    pub storage: Arc<dyn crate::io_traits::BlockStorage>,
 }
 
 impl TorrentContext {
@@ -87,7 +87,7 @@ impl TorrentContext {
     pub fn new(
         torrent_meta_info: &MetaInfoFile,
         selector: Selector,
-        disk_io: &DiskIO,
+        storage: Arc<dyn crate::io_traits::BlockStorage>,
         download_path: &std::path::Path,
         seeding: bool,
     ) -> Result<Self, crate::error::BitTorrentError> {
@@ -111,7 +111,7 @@ impl TorrentContext {
             number_of_pieces
         ];
 
-        let mut context = TorrentContext {
+        let context = TorrentContext {
             info_hash,
             tracker_url,
             number_of_pieces,
@@ -153,16 +153,8 @@ impl TorrentContext {
             requested_blocks: RwLock::new(HashSet::new()),
             pieces_missing,
             piece_data,
+            storage,
         };
-        disk_io.create_local_torrent_structure(&context)?;
-        if seeding {
-            disk_io.fully_downloaded_torrent_bitfield(&mut context)?;
-            context.total_bytes_downloaded.store(context.total_bytes_to_download, Ordering::Relaxed);
-            context.initial_bytes_downloaded = context.total_bytes_to_download;
-        } else {
-            disk_io.create_torrent_bitfield(&mut context)?;
-            context.initial_bytes_downloaded = context.total_bytes_downloaded.load(Ordering::Relaxed);
-        }
         Ok(context)
     }
 
@@ -359,7 +351,7 @@ impl TorrentContext {
         number_of_bytes: u32,
     ) {
         let piece_there = self.check_piece_hash(piece_number, piece_buffer, number_of_bytes);
-        if piece_there {
+        if piece_there && !self.is_piece_local(piece_number) {
             self.total_bytes_downloaded.fetch_add(number_of_bytes as u64, Ordering::Relaxed);
         }
         self.set_piece_length(piece_number, number_of_bytes);
@@ -388,11 +380,14 @@ impl TorrentContext {
     /// Appends incoming sub-block data, writing the fully assembled piece to disk upon completion and hash validation.
     pub fn process_piece_block(
         &mut self,
-        disk_io: &DiskIO,
+        storage: &dyn crate::io_traits::BlockStorage,
         piece_number: u32,
         begin: u32,
         block_data: &[u8],
     ) -> Result<bool, crate::error::BitTorrentError> {
+        if self.is_piece_local(piece_number) {
+            return Ok(false);
+        }
         let piece_length = self.get_piece_length(piece_number);
         let block_index = begin / BLOCK_SIZE as u32;
 
@@ -419,7 +414,7 @@ impl TorrentContext {
                     piece_number,
                     finished_piece.len()
                 );
-                disk_io.write_piece(self, piece_number, &finished_piece)?;
+                storage.write_block(piece_number as u64 * self.piece_length as u64, &finished_piece)?;
                 self.update_bitfield_from_buffer(
                     piece_number,
                     &finished_piece,
@@ -470,8 +465,14 @@ impl TorrentContext {
     }
 
     /// Unregisters and drops a peer connection from the swarm by IP address.
-    pub fn remove_peer(&self, ip: &str) {
-        self.peer_swarm.write().unwrap().remove(ip);
+    pub fn remove_peer(&mut self, ip: &str) {
+        let peer_opt = self.peer_swarm.write().unwrap().remove(ip);
+        if let Some(peer_arc) = peer_opt {
+            if let Ok(mut peer_guard) = peer_arc.lock() {
+                self.unmerge_piece_bitfield(&peer_guard);
+                peer_guard.close();
+            }
+        }
     }
 
     /// Safely terminates connection streams and unregisters all active peers in the swarm.

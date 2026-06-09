@@ -19,16 +19,24 @@ fn test_next_block_request_from_peer_reserves_request() {
     let mut meta = bittorrent_rs::MetaInfoFile::new(sample_file("singlefile.torrent"))
         .expect("Failed to load torrent metadata");
     meta.parse().expect("Failed to parse torrent metadata");
-    let disk_io = bittorrent_rs::disk_io::DiskIO::new();
+    let piece_length = meta.get_piece_length().unwrap();
+    let (_, files_to_download) = meta.local_files_to_download_list(&download_path).unwrap();
+    let disk_io = std::sync::Arc::new(bittorrent_rs::disk_io::DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().unwrap();
     let selector = bittorrent_rs::selector::Selector::new();
     let mut context = bittorrent_rs::torrent_context::TorrentContext::new(
         &meta,
         selector,
-        &disk_io,
+        disk_io.clone(),
         &download_path,
         false,
     )
     .expect("Failed to create torrent context");
+    disk_io.create_torrent_bitfield(&mut context).unwrap();
     context.status = bittorrent_rs::torrent_context::TorrentStatus::Downloading;
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");

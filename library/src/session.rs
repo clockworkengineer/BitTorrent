@@ -53,15 +53,33 @@ impl TorrentSession {
         meta_info.parse()?;
         meta_info.validate()?;
 
-        let disk_io = Arc::new(DiskIO::new());
+        let piece_length = meta_info.get_piece_length()?;
+        let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path)?;
+        let disk_io = Arc::new(DiskIO::new(
+            &download_path,
+            files_to_download,
+            piece_length,
+        ));
         let selector = Selector::new();
         let context = Arc::new(Mutex::new(TorrentContext::new(
             &meta_info,
             selector,
-            &disk_io,
+            disk_io.clone(),
             &download_path,
             seeding,
         )?));
+
+        disk_io.create_local_torrent_structure()?;
+        if seeding {
+            disk_io.fully_downloaded_torrent_bitfield(&mut context.lock().unwrap())?;
+            let total = context.lock().unwrap().total_bytes_to_download;
+            context.lock().unwrap().total_bytes_downloaded.store(total, std::sync::atomic::Ordering::Relaxed);
+            context.lock().unwrap().initial_bytes_downloaded = total;
+        } else {
+            disk_io.create_torrent_bitfield(&mut context.lock().unwrap())?;
+            let downloaded = context.lock().unwrap().total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+            context.lock().unwrap().initial_bytes_downloaded = downloaded;
+        }
 
         let (task_tx, task_rx) = std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
         let context_stats = context.clone();
@@ -239,11 +257,10 @@ impl TorrentSession {
         }
 
         let context = self.context.clone();
-        let disk_io = self.disk_io.clone();
         let manager_clone = manager.clone();
 
         let _ = self.task_tx.send(Box::pin(async move {
-            handle_peer_session(peer_details, context, disk_io, manager_clone).await;
+            handle_peer_session(peer_details, context, manager_clone).await;
         }));
 
         Ok(())
@@ -274,6 +291,9 @@ impl TorrentSession {
 
     /// Joins and halts all peer worker threads spawned during the session.
     pub fn join_peer_workers(&mut self) {
+        if self.status() != TorrentStatus::Ended {
+            let _ = self.stop();
+        }
         while let Some(handle) = self.peer_workers.pop() {
             let _ = handle.join();
         }
@@ -291,7 +311,6 @@ impl TorrentSession {
         manager: Option<Arc<Manager>>,
     ) -> thread::JoinHandle<()> {
         let context = self.context.clone();
-        let disk_io = self.disk_io.clone();
         let task_tx = self.task_tx.clone();
 
         let _ = self.task_tx.send(Box::pin(async move {
@@ -319,11 +338,10 @@ impl TorrentSession {
                     Ok(response) => {
                         for peer_details in response.peer_list {
                             let ctx2 = context.clone();
-                            let disk2 = disk_io.clone();
                             let mgr2 = manager.clone();
 
                             let _ = task_tx.send(Box::pin(async move {
-                                handle_peer_session(peer_details, ctx2, disk2, mgr2).await;
+                                handle_peer_session(peer_details, ctx2, mgr2).await;
                             }));
                         }
                     }
@@ -356,7 +374,6 @@ async fn delay(duration: Duration) {
 async fn handle_peer_session(
     peer_details: PeerDetails,
     context: Arc<Mutex<TorrentContext>>,
-    disk_io: Arc<DiskIO>,
     manager: Option<Arc<Manager>>,
 ) {
     let info_hash = context.lock().unwrap().info_hash.clone();
@@ -494,7 +511,7 @@ async fn handle_peer_session(
         let actions_res = {
             let mut pg = peer.lock().unwrap();
             let mut ctx = context.lock().unwrap();
-            pg.handle_peer_message(message, &mut ctx, disk_io.as_ref())
+            pg.handle_peer_message(message, &mut ctx)
         };
         let actions = match actions_res {
             Ok(a) => a,
@@ -610,7 +627,7 @@ async fn handle_peer_session(
 
     log(&format!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port));
     {
-        let ctx = context.lock().unwrap();
+        let mut ctx = context.lock().unwrap();
         if let Ok(pg) = peer.try_lock() {
             for (pn, bi) in &pg.reserved_blocks {
                 ctx.release_block_request(*pn, *bi);

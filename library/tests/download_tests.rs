@@ -82,18 +82,25 @@ fn test_process_piece_block_assembly_writes_complete_piece() {
         pieces,
     );
 
-    let disk_io = DiskIO::new();
     let mut meta_info = MetaInfoFile::new(&torrent_file).unwrap();
     meta_info.parse().unwrap();
     meta_info.validate().unwrap();
+    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).unwrap();
+    let disk_io = std::sync::Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().unwrap();
     let mut context =
-        TorrentContext::new(&meta_info, Selector::new(), &disk_io, &download_path, false).unwrap();
+        TorrentContext::new(&meta_info, Selector::new(), disk_io.clone(), &download_path, false).unwrap();
+    disk_io.create_torrent_bitfield(&mut context).unwrap();
 
     let second_piece_block = &file_data[piece_length as usize..];
 
     assert!(
         context
-            .process_piece_block(&disk_io, 1, 0, second_piece_block)
+            .process_piece_block(&*disk_io, 1, 0, second_piece_block)
             .unwrap()
     );
     assert!(context.is_piece_local(1));

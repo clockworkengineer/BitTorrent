@@ -61,10 +61,18 @@ fn test_local_file_structure_creation() {
     meta_info.parse().expect("Failed to parse torrent");
     meta_info.validate().expect("Torrent validation failed");
 
-    let disk_io = DiskIO::new();
+    let piece_length = meta_info.get_piece_length().expect("Failed to get piece length");
+    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).expect("Failed to get files list");
+    let disk_io = Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().expect("Failed to create file structure");
     let selector = Selector::new();
-    let context = TorrentContext::new(&meta_info, selector, &disk_io, &download_path, false)
+    let mut context = TorrentContext::new(&meta_info, selector, disk_io.clone(), &download_path, false)
         .expect("Failed to create torrent context");
+    disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
 
     for file in &context.files_to_download {
         assert!(std::path::Path::new(&file.name).exists());
@@ -86,10 +94,18 @@ fn test_tracker_announce_with_fake_announcer() {
     meta_info.parse().expect("Failed to parse torrent");
     meta_info.validate().expect("Torrent validation failed");
 
-    let disk_io = DiskIO::new();
+    let piece_length = meta_info.get_piece_length().expect("Failed to get piece length");
+    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).expect("Failed to get files list");
+    let disk_io = Arc::new(DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    ));
+    disk_io.create_local_torrent_structure().expect("Failed to create file structure");
     let selector = Selector::new();
-    let context = TorrentContext::new(&meta_info, selector, &disk_io, &download_path, false)
+    let mut context = TorrentContext::new(&meta_info, selector, disk_io.clone(), &download_path, false)
         .expect("Failed to create torrent context");
+    disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
     let context = Arc::new(Mutex::new(context));
 
     let mut tracker = Tracker::new_with_announcer(context.clone(), Box::new(FakeAnnouncer {}))
