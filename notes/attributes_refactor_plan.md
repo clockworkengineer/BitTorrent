@@ -1,160 +1,124 @@
-# Library Attributes Refactoring & Improvement Plan
+# Library Attributes Refactoring & Improvement Plan - Phase 2
 
-This document outlines a concrete, actionable plan to align the `bittorrent-rs` library with the 10 core attributes of high-quality software libraries, as detailed in [attributes.md](file:///c:/Projects/BitTorrent/notes/attributes.md).
+This document outlines an updated, concrete, and actionable plan to further elevate the `bittorrent-rs` library in alignment with the 10 core attributes of high-quality software libraries detailed in [attributes.md](file:///c:/Projects/BitTorrent/notes/attributes.md).
 
 ---
 
 ## 1. Intuitive API Design
 ### Current Assessment
-- `TorrentSession::new` requires concrete path inputs and a boolean seeding parameter.
-- Internal structures like `context` (`Arc<Mutex<TorrentContext>>`) and `disk_io` are exposed directly, exposing implementation details.
-- Several methods like `connect_and_download_peer` and `download_from_peers` require passing an external `Option<Arc<Manager>>` (dead peer tracker) which exposes internal peer-management details.
-
-### Specific Gaps
-- Leaked abstractions on [session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs#L31-L39).
-- Hard-to-read configuration parameters (e.g. `seeding: bool`) instead of descriptive config structures.
-
+- We introduced `TorrentSessionBuilder` and encapsulated internal context/worker fields.
+### Gaps
+- `TorrentSessionBuilder` does not permit direct customization of the piece selection strategy (it defaults to `RarestFirstSelector`).
+- The public API of `Tracker` requires consumers to pass `Arc<Mutex<TorrentContext>>` directly, which leaks concurrency synchronization details.
 ### Proposed Changes
 - **Target File**: [session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs)
-- Make `context` and `disk_io` private fields in `TorrentSession`.
-- Introduce a builder pattern (`TorrentSessionBuilder`) to instantiate sessions cleanly.
-- Encapsulate the `Manager` instance internally within `TorrentSession` so that public methods do not require passing it as an option.
+- Add a `.selector(Arc<dyn PieceSelector>)` setter to `TorrentSessionBuilder`.
+- Add a `.config(SessionConfig)` setter to `TorrentSessionBuilder`.
+- Introduce a high-level wrapper on `TorrentSession` to announcement/peer discovery without exposing context locks.
 
 ---
 
 ## 2. Comprehensive Documentation
 ### Current Assessment
-- The crate features comments on most methods, but does not provide complete code snippets or usage instructions in the library docs.
-- State machines inside the peer communication loop lack high-level process documentation.
-
-### Specific Gaps
-- Missing documentation examples at the crate root in [lib.rs](file:///c:/Projects/BitTorrent/library/src/lib.rs).
-- Lack of sequence diagrams or protocol docs for peer connection handshakes.
-
+- Crate-level docs and peer wire state machine ASCII diagrams have been added.
+### Gaps
+- There is no explanation or code examples on how to configure and use `MemStorage` and `MockSocket` for testing or embedded environments.
 ### Proposed Changes
 - **Target File**: [lib.rs](file:///c:/Projects/BitTorrent/library/src/lib.rs)
-- Add comprehensive doc examples at the top of [lib.rs](file:///c:/Projects/BitTorrent/library/src/lib.rs) demonstrating how to parse a metainfo file and download a torrent.
-- Document peer wire transitions (Choke, Unchoke, Interested, Request) as a state-diagram comment at the top of [peer.rs](file:///c:/Projects/BitTorrent/library/src/peer.rs).
+- Add a dedicated `### Portability and Testing` section to the crate-level documentation illustrating how to boot the client in-memory via `MemStorage` and mock peer connections with `MockSocket`.
 
 ---
 
 ## 3. High Reliability
 ### Current Assessment
-- Network connection timeouts and file I/O operations are handled cleanly, but HTTP tracker connection drops or DNS failures in `tracker.rs` are not automatically retried, which can result in peer discovery stalling.
-
-### Specific Gaps
-- Single-point tracker query failure in [tracker.rs](file:///c:/Projects/BitTorrent/library/src/tracker.rs#L338-L350).
-
+- Timeout configs and exponential announcement retries have been implemented.
+### Gaps
+- When a peer connection drops or halts block transfers, requested blocks remain in the "pending" state until a timeout occurs, stalling the download speed.
+- If a peer sends a corrupted block hash, the client discards the entire piece, but does not identify or ban/choke the bad peer.
 ### Proposed Changes
-- **Target File**: [tracker.rs](file:///c:/Projects/BitTorrent/library/src/tracker.rs)
-- Introduce a retry mechanism with exponential backoff for tracker HTTP announcements.
-- Add strict validation checks to verify DNS lookup results and handle tracker redirect URLs safely.
+- **Target File**: [peer.rs](file:///c:/Projects/BitTorrent/library/src/peer.rs) and [torrent_context.rs](file:///c:/Projects/BitTorrent/library/src/torrent_context.rs)
+- Implement request cancellation and timeout fallback: if a peer fails to fulfill a block request within 2 seconds, cancel the request and re-request from a different peer.
+- Implement bad peer blacklisting: track hash verification failures and disconnect/blacklist peers that repeatedly supply corrupted blocks.
 
 ---
 
 ## 4. Performance and Efficiency
 ### Current Assessment
-- The library uses static memory pools and streaming SHA-1 verification.
-- However, when sockets block on standard targets, the cooperative read/write loop sleeps for a fixed `2ms` duration, which limits performance and throughput on gigabit networks.
-
-### Specific Gaps
-- Fixed sleep polling in `TcpSocket` on [peer_network.rs](file:///c:/Projects/BitTorrent/library/src/peer_network.rs#L156-L159).
-
+- Zero-copy wire parsing, single-pass piece selection, and static buffer pools are implemented.
+### Gaps
+- The client requests only one block at a time per peer connection. On high-bandwidth, high-latency connections, this suffers from round-trip time (RTT) starvation.
 ### Proposed Changes
-- **Target File**: [peer_network.rs](file:///c:/Projects/BitTorrent/library/src/peer_network.rs)
-- Integrate event-driven wakers (using conditional compiling for `mio` or `tokio` on `std` target) to wake the cooperative tasks immediately when the socket is ready, instead of waiting for a timer ticks.
+- **Target File**: [peer.rs](file:///c:/Projects/BitTorrent/library/src/peer.rs)
+- Implement block request pipelining (queueing up to 5 concurrent block requests per peer connection) to saturate the network pipe and maximize downloading throughput.
 
 ---
 
 ## 5. Maintainability
 ### Current Assessment
-- The code is modular, but files like `session.rs` and `torrent_context.rs` contain too many responsibilities (combining networking, disk I/O coordination, stats logging, and peer worker threads).
-
-### Specific Gaps
-- Monolithic state management in [torrent_context.rs](file:///c:/Projects/BitTorrent/library/src/torrent_context.rs) (~720 lines).
-
+- Peer action runner and `Assembler` block tracker have been modularized.
+### Gaps
+- `session.rs` is still quite long and coordinates thread workers, local thread pools, and re-announcing cycles.
 ### Proposed Changes
-- **Target Files**: [torrent_context.rs](file:///c:/Projects/BitTorrent/library/src/torrent_context.rs) and [session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs)
-- Extract peer message routing and processing out of `handle_peer_session` in `session.rs` and delegate it to a dedicated handler inside `peer.rs`.
-- Extract the assembler and block storage tracking from `TorrentContext` to a separate `Assembler` struct.
+- **Target Files**: [session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs)
+- Extract the thread coordination logic and background task scheduling from `session.rs` into a dedicated worker module `session/worker.rs`.
 
 ---
 
 ## 6. Flexibility and Customization
 ### Current Assessment
-- Swarm size, connect timeout, read timeout, block size, and piece selection logic (Rarest-First) are completely hardcoded.
-
-### Specific Gaps
-- Hardcoded constants in [constants.rs](file:///c:/Projects/BitTorrent/library/src/constants.rs) and [session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs#L390-L406).
-
+- Pluggable `PieceSelector` trait and dynamic configuration options exist.
+### Gaps
+- Peer network connections strictly invoke `TcpStream::connect` directly. Users cannot customize socket creation parameters or route connections through proxy layers (like SOCKS5 or Tor/I2P).
 ### Proposed Changes
-- **Target Files**: [selector.rs](file:///c:/Projects/BitTorrent/library/src/selector.rs) and [session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs)
-- Introduce a pluggable piece selection trait:
+- **Target File**: [io_traits.rs](file:///c:/Projects/BitTorrent/library/src/io_traits.rs)
+- Introduce a `SocketFactory` trait:
   ```rust
-  pub trait PieceSelector {
-      fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32>;
+  pub trait SocketFactory: Send + Sync {
+      fn connect(&self, ip: &str, port: u16) -> Result<Arc<dyn AsyncSocket>, BitTorrentError>;
   }
   ```
-  This allows users to choose between `RarestFirst` (default) and `Sequential` (optimal for streaming video).
-- Expose connection timeouts, write timeouts, and re-announce floors dynamically in a `SessionConfig` struct.
+- Store `Arc<dyn SocketFactory>` in the session configuration, permitting complete transport customization.
 
 ---
 
 ## 7. Strong Security
 ### Current Assessment
-- The library validates file details relative paths to prevent directory traversal.
-- However, the root directory name (`root_name` or `name` field of the torrent `info` section) is not validated during multi-file parsing, allowing a malicious torrent to escape the download path.
-
-### Specific Gaps
-- Missing folder name validation in [metainfo.rs](file:///c:/Projects/BitTorrent/library/src/metainfo.rs#L281-L286).
-
+- Path traversal protections are active for multi-file outputs.
+### Gaps
+- The client does not validate incoming piece block offsets and lengths against the active torrent piece metadata, which could allow a malicious peer to overflow buffers or write blocks outside expected ranges.
 ### Proposed Changes
-- **Target File**: [metainfo.rs](file:///c:/Projects/BitTorrent/library/src/metainfo.rs)
-- Validate `root_name` in `local_files_to_download_list` using `validate_relative_path(&root_name)` to prevent directory traversals targeting parent directory folders.
+- **Target File**: [torrent_context.rs](file:///c:/Projects/BitTorrent/library/src/torrent_context.rs)
+- Add strict boundary checks in `process_piece_block` to verify that `begin + block_len <= piece_length` before executing write commands.
 
 ---
 
 ## 8. High Testability
 ### Current Assessment
-- Testing network messages currently requires binding to localhost TCP listener ports, which depends on OS resources and makes tests slow and flaky.
-
-### Specific Gaps
-- Binding dependencies in [tests/session_tests.rs](file:///c:/Projects/BitTorrent/library/tests/session_tests.rs#L33-L34).
-
+- Mock socket and in-memory storage implementations are present.
+### Gaps
+- Testing the `Tracker` announce loop requires binding local TCP listeners and spinning up local HTTP servers, which is resource-intensive and prone to flakiness.
 ### Proposed Changes
-- **Target File**: [io_traits.rs](file:///c:/Projects/BitTorrent/library/src/io_traits.rs)
-- Implement a `MockSocket` wrapper:
-  ```rust
-  pub struct MockSocket {
-      pub incoming: std::sync::mpsc::Receiver<Vec<u8>>,
-      pub outgoing: std::sync::mpsc::Sender<Vec<u8>>,
-  }
-  ```
-  This enables unit tests to feed bytes directly into the protocol state machine without binding standard TCP ports.
+- **Target File**: [tracker.rs](file:///c:/Projects/BitTorrent/library/src/tracker.rs)
+- Abstract HTTP client operations under a pluggable `HttpClient` trait, enabling in-memory mocking of tracker announcements without binding ports.
 
 ---
 
 ## 9. Compatibility and Portability
 ### Current Assessment
-- The core of the library supports `#![no_std]`, but a filesystem implementation does not exist for systems without directories.
-
-### Specific Gaps
-- Standard file reliance in [disk_io.rs](file:///c:/Projects/BitTorrent/library/src/disk_io.rs).
-
+- `#![no_std]` core target support and `MemStorage` are active.
+### Gaps
+- Time metrics and latency calculations in `Average` and timeout trackers rely on `Instant::now` and `Duration`, which do not compile on platforms without standard system clocks.
 ### Proposed Changes
-- **Target File**: [io_traits.rs](file:///c:/Projects/BitTorrent/library/src/io_traits.rs)
-- Introduce a default in-memory storage adapter `MemStorage` implementing `BlockStorage` to store block arrays in standard memory buffers, enabling portability onto targets without disk storage or partition drivers.
+- **Target File**: [util.rs](file:///c:/Projects/BitTorrent/library/src/util.rs)
+- Gate dynamic statistics tracking and performance metrics calculation under standard target features, or inject a clock interface to maintain portability.
 
 ---
 
 ## 10. Low Dependency Footprint
 ### Current Assessment
-- The library separates target environments cleanly, but pulling in `ureq`, `url`, and `urlencoding` is mandatory on all standard target targets.
-
-### Specific Gaps
-- Large standard dependency list in [Cargo.toml](file:///c:/Projects/BitTorrent/library/Cargo.toml#L8-L15).
-
+- Splitting the HTTP tracker feature allows compiling standard library targets without HTTP dependencies.
+### Gaps
+- The `futures` library is still required even for core target builds.
 ### Proposed Changes
 - **Target File**: [Cargo.toml](file:///c:/Projects/BitTorrent/library/Cargo.toml)
-- Split the `std` feature: introduce a new `http-tracker` feature gating HTTP clients.
-- Allow compiling a `std` client using only raw sockets (e.g. manual peer feeding or UDP tracker announcements) without pulling in HTTP request parsing engines.
+- Move futures dependency entirely into the `std` target feature configuration, leaving the core `#![no_std]` parser completely dependency-free.
