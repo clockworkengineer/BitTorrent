@@ -95,7 +95,9 @@ pub mod util;
 pub use average::Average;
 pub use bencode::{BNode, Bencode};
 pub use error::BitTorrentError;
-pub use io_traits::{AsyncSocket, BlockStorage};
+pub use io_traits::{AsyncSocket, BlockStorage, MemStorage};
+#[cfg(feature = "std")]
+pub use io_traits::MockSocket;
 #[cfg(feature = "std")]
 pub use manager::Manager;
 pub use metainfo::{FileDetails, MetaInfoFile};

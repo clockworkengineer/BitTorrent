@@ -160,7 +160,16 @@ pub struct Tracker {
 impl Tracker {
     /// Outputs debug log data detailing an outgoing announce request structure.
     pub fn log_announce(tracker: &TrackerAnnounceContext) {
+        #[cfg(feature = "http-tracker")]
         let info_hash = urlencoding::encode_binary(&tracker.info_hash);
+        #[cfg(not(feature = "http-tracker"))]
+        let info_hash = {
+            let mut s = String::new();
+            for &b in &tracker.info_hash {
+                s.push_str(&format!("{:02x}", b));
+            }
+            s
+        };
         println!(
             "Announce: info_hash={} peer_id={} port={} compact={} no_peer_id={} uploaded={} downloaded={} left={} event={} ip={} key={:?} trackerid={:?} numwanted={}",
             info_hash,

@@ -4,14 +4,17 @@
 //! and UDP (`UdpAnnouncer`) protocols to announce client status to trackers and receive peer lists.
 
 use crate::error::BitTorrentError;
-use crate::tracker::{
-    AnnounceResponse, PeerDetails, Tracker, TrackerAnnounceContext, TrackerEvent,
-};
+use crate::tracker::{AnnounceResponse, Tracker, TrackerAnnounceContext};
+#[cfg(feature = "http-tracker")]
+use crate::tracker::{PeerDetails, TrackerEvent};
 use crate::util::{pack_u32, pack_u64, unpack_u32, unpack_u64};
+#[cfg(feature = "http-tracker")]
 use std::io::Read;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
+#[cfg(feature = "http-tracker")]
 use urlencoding::encode;
+#[cfg(feature = "http-tracker")]
 use urlencoding::encode_binary;
 
 /// Trait defining the announcement interface to communicate with a BitTorrent tracker.
@@ -28,8 +31,10 @@ pub mod announcer_trait {
 pub use announcer_trait::Announcer;
 
 /// An announcer that uses the HTTP/HTTPS protocol to communicate with trackers.
+#[cfg(feature = "http-tracker")]
 pub struct HttpAnnouncer;
 
+#[cfg(feature = "http-tracker")]
 impl HttpAnnouncer {
     /// Creates a new `HttpAnnouncer`.
     pub fn new() -> Self {
@@ -164,6 +169,7 @@ impl HttpAnnouncer {
     }
 }
 
+#[cfg(feature = "http-tracker")]
 impl Announcer for HttpAnnouncer {
     /// Executes the HTTP GET request to the tracker and decodes the response.
     fn announce(
@@ -389,6 +395,7 @@ impl Announcer for UdpAnnouncer {
 
 /// An enum dispatcher for different announcer implementations to avoid dynamic dispatch.
 pub enum AnnouncerEnum {
+    #[cfg(feature = "http-tracker")]
     Http(HttpAnnouncer),
     Udp(UdpAnnouncer),
     Custom(Box<dyn Announcer>),
@@ -400,6 +407,7 @@ impl AnnouncerEnum {
         tracker: &TrackerAnnounceContext,
     ) -> Result<AnnounceResponse, BitTorrentError> {
         match self {
+            #[cfg(feature = "http-tracker")]
             AnnouncerEnum::Http(a) => a.announce(tracker),
             AnnouncerEnum::Udp(a) => a.announce(tracker),
             AnnouncerEnum::Custom(a) => a.announce(tracker),
@@ -414,7 +422,14 @@ impl AnnouncerFactory {
     /// Instantiates the appropriate `AnnouncerEnum` variant for a given URL.
     pub fn create(url: &str) -> Result<AnnouncerEnum, BitTorrentError> {
         if url.starts_with("http://") || url.starts_with("https://") {
-            Ok(AnnouncerEnum::Http(HttpAnnouncer::new()))
+            #[cfg(feature = "http-tracker")]
+            {
+                Ok(AnnouncerEnum::Http(HttpAnnouncer::new()))
+            }
+            #[cfg(not(feature = "http-tracker"))]
+            {
+                Err(BitTorrentError::Parse("HTTP tracker support is disabled".into()))
+            }
         } else if url.starts_with("udp://") {
             Ok(AnnouncerEnum::Udp(UdpAnnouncer::new(url)?))
         } else {

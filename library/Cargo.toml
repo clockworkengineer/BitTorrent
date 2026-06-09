@@ -4,14 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["std"]
+default = ["std", "http-tracker"]
 std = [
     "dep:rand",
-    "dep:ureq",
-    "dep:urlencoding",
     "dep:url",
     "futures/executor",
     "futures/std",
+]
+http-tracker = [
+    "std",
+    "dep:ureq",
+    "dep:urlencoding",
 ]
 
 [dependencies]
