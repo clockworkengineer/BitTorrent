@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::util::log_debug as log;
+use crate::log_debug;
 
 use core::pin::Pin;
 use core::future::Future;
@@ -145,14 +145,15 @@ impl TorrentSession {
                     let total = ctx.total_bytes_to_download;
                     let bps = ctx.bytes_per_second();
                     let reserved = ctx.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
-                    log(&format!(
-                        "[stats] peers={}/{} downloaded={}/{} ({:.1}%) speed={}/s reserved_blocks={}",
+                    let progress = if total > 0 { (done * 10000) / total } else { 0 };
+                    log_debug!(
+                        "[stats] peers={}/{} downloaded={}/{} ({}.{:02}%) speed={}/s reserved_blocks={}",
                         unchoked, peers,
                         done, total,
-                        if total > 0 { done as f64 / total as f64 * 100.0 } else { 0.0 },
+                        progress / 100, progress % 100,
                         bps,
                         reserved,
-                    ));
+                    );
                 }
             }
         }));
@@ -412,7 +413,13 @@ async fn handle_peer_session(
     let net = {
         let mut pg = peer.lock().unwrap();
         pg.set_torrent_context(context.clone());
-        pg.network.clone().unwrap()
+        match &pg.network {
+            Some(n) => n.clone(),
+            None => {
+                mark_peer_dead(&manager, &peer_details.ip);
+                return;
+            }
+        }
     };
 
     if net.write_handshake(&info_hash, local_peer_id.as_bytes()).await.is_err() {
@@ -502,15 +509,15 @@ async fn handle_peer_session(
                         || io_err.kind() == std::io::ErrorKind::TimedOut
                     {
                         if last_progress.elapsed() > Duration::from_secs(30) {
-                            log(&format!("[peer {}:{}] 30s idle timeout, dropping",
-                                peer_details.ip, peer_details.port));
+                            log_debug!("[peer {}:{}] 30s idle timeout, dropping",
+                                peer_details.ip, peer_details.port);
                             mark_peer_dead(&manager, &peer_details.ip);
                             break;
                         }
                         continue;
                     }
                 }
-                log(&format!("[peer {}:{}] read error: {}", peer_details.ip, peer_details.port, err));
+                log_debug!("[peer {}:{}] read error: {}", peer_details.ip, peer_details.port, err);
                 mark_peer_dead(&manager, &peer_details.ip);
                 break;
             }
@@ -618,10 +625,10 @@ async fn handle_peer_session(
                 }
             }
             if none_count > 0 {
-                log(&format!("[peer {}:{}] no blocks available (outstanding={} missing_pieces={})",
+                log_debug!("[peer {}:{}] no blocks available (outstanding={} missing_pieces={})",
                     peer_details.ip, peer_details.port,
                     outstanding_requests_count,
-                    number_of_missing_pieces));
+                    number_of_missing_pieces);
             }
             if send_error {
                 break;
@@ -633,7 +640,7 @@ async fn handle_peer_session(
         }
     }
 
-    log(&format!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port));
+    log_debug!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port);
     {
         let mut ctx = context.lock().unwrap();
         if let Ok(pg) = peer.try_lock() {

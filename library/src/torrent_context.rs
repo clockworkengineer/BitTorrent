@@ -246,15 +246,20 @@ impl TorrentContext {
         Ok(())
     }
 
-    /// Computes percentage completion from bytes downloaded versus total.
-    pub fn progress_percent(&self) -> f32 {
+    /// Returns the progress in parts per ten thousand (0 to 10000).
+    pub fn progress_ppm(&self) -> u32 {
         if self.total_bytes_to_download == 0 {
-            return 100.0;
+            return 10000;
         }
+        let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
+        let ppm = (downloaded * 10000) / self.total_bytes_to_download;
+        ppm.min(10000) as u32
+    }
 
-        let percent =
-            self.total_bytes_downloaded.load(Ordering::Relaxed) as f64 / self.total_bytes_to_download as f64 * 100.0;
-        percent.min(100.0) as f32
+    /// Computes percentage completion from bytes downloaded versus total.
+    #[cfg(feature = "std")]
+    pub fn progress_percent(&self) -> f32 {
+        self.progress_ppm() as f32 / 100.0
     }
 
     /// Sets or clears a specific piece completion bit in the local bitfield.
@@ -679,15 +684,14 @@ impl TorrentContext {
 
     /// Estimates the current download transfer rate in bytes per second.
     pub fn bytes_per_second(&self) -> i64 {
-        let seconds = self
+        let ms = self
             .assembly_data
             .lock()
             .unwrap()
             .average_assembly_time
-            .get() as f64
-            / 1000.0;
-        if seconds != 0.0 {
-            (self.piece_length as f64 / seconds) as i64
+            .get();
+        if ms != 0 {
+            (self.piece_length as i64 * 1000) / ms
         } else {
             0
         }

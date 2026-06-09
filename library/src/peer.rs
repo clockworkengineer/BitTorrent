@@ -10,7 +10,7 @@ use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;
 use crate::util::get_bitfield_index_and_mask;
-use crate::util::log_debug as log;
+use crate::log_debug;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use alloc::vec::Vec;
@@ -260,17 +260,17 @@ impl Peer {
         match message {
             PeerMessage::KeepAlive => {}
             PeerMessage::Choke => {
-                log(&format!(
+                log_debug!(
                     "[peer {}:{}] CHOKED by remote",
                     self.ip, self.port
-                ));
+                );
                 self.peer_choking.reset();
             }
             PeerMessage::Unchoke => {
-                log(&format!(
+                log_debug!(
                     "[peer {}:{}] UNCHOKED by remote",
                     self.ip, self.port
-                ));
+                );
                 self.peer_choking.set();
             }
             PeerMessage::Interested => {
@@ -357,10 +357,10 @@ impl Peer {
                             tc.total_bytes_uploaded.fetch_add(length as u64, std::sync::atomic::Ordering::Relaxed);
                         }
                         Err(e) => {
-                            log(&format!(
+                            log_debug!(
                                 "[peer {}:{}] failed to read piece {} for upload: {}",
                                 self.ip, self.port, index, e
-                            ));
+                            );
                         }
                     }
                 }

@@ -70,7 +70,7 @@ pub fn get_bitfield_index_and_mask(piece_number: u32) -> (usize, u8) {
 }
 
 #[cfg(feature = "std")]
-static DEBUG_LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
+static DEBUG_LOG: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
 #[cfg(feature = "std")]
 static LOG_SENDER: OnceLock<Mutex<Option<std::sync::mpsc::Sender<String>>>> = OnceLock::new();
 
@@ -92,12 +92,14 @@ pub fn log_debug(msg: &str) {
                 .create(true)
                 .append(true)
                 .open("debug.log")
-                .expect("cannot open debug.log");
+                .ok();
             Mutex::new(f)
         });
-        if let Ok(mut f) = file.lock() {
-            let _ = writeln!(f, "{}", msg);
-            let _ = f.flush();
+        if let Ok(mut guard) = file.lock() {
+            if let Some(ref mut f) = *guard {
+                let _ = writeln!(f, "{}", msg);
+                let _ = f.flush();
+            }
         }
 
         if let Some(mutex) = LOG_SENDER.get() {
@@ -113,6 +115,16 @@ pub fn log_debug(msg: &str) {
         // No-op or custom light print in embedded systems
         let _ = msg;
     }
+}
+
+#[macro_export]
+macro_rules! log_debug {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "std")]
+        {
+            $crate::util::log_debug(&alloc::format!($($arg)*));
+        }
+    };
 }
 
 pub struct YieldNow {
