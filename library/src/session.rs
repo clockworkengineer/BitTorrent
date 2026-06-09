@@ -338,7 +338,7 @@ impl TorrentSession {
                 thread::spawn(move || {
                     while let Ok(peer_details) = peer_rx.recv() {
                         let pg = context_clone.lock().unwrap();
-                        if pg.status == TorrentStatus::Downloading {
+                        if pg.status == TorrentStatus::Downloading || pg.status == TorrentStatus::Seeding {
                             if !pg.peer_swarm.read().unwrap().contains_key(&peer_details.ip) {
                                 let ctx2 = context_clone.clone();
                                 let mgr2 = manager_clone.clone();

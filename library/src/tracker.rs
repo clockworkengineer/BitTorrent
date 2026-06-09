@@ -416,7 +416,10 @@ impl Tracker {
             return;
         }
 
-        if self.tc.lock().unwrap().status != crate::torrent_context::TorrentStatus::Downloading {
+        let status = self.tc.lock().unwrap().status;
+        if status != crate::torrent_context::TorrentStatus::Downloading
+            && status != crate::torrent_context::TorrentStatus::Seeding
+        {
             return;
         }
 
@@ -438,7 +441,9 @@ impl Tracker {
     fn update_running_status_from_announce(&mut self, response: &AnnounceResponse) {
         self.tracker_id = response.tracker_id.clone();
         self.min_interval = response.min_interval;
-        if self.tc.lock().unwrap().status == crate::torrent_context::TorrentStatus::Downloading
+        let status = self.tc.lock().unwrap().status;
+        if (status == crate::torrent_context::TorrentStatus::Downloading
+            || status == crate::torrent_context::TorrentStatus::Seeding)
             && response.interval > self.min_interval
         {
             self.interval = response.interval;

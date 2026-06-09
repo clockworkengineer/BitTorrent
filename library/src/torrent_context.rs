@@ -200,9 +200,9 @@ impl TorrentContext {
 
     /// Pauses the torrent download thread, updating state flags.
     pub fn pause(&mut self) -> Result<(), crate::error::BitTorrentError> {
-        if self.status != TorrentStatus::Downloading {
+        if self.status != TorrentStatus::Downloading && self.status != TorrentStatus::Seeding {
             return Err(crate::error::BitTorrentError::Parse(
-                "Torrent can only be paused while downloading.".to_string(),
+                "Torrent can only be paused while downloading or seeding.".to_string(),
             ));
         }
         self.status = TorrentStatus::Paused;
@@ -217,7 +217,11 @@ impl TorrentContext {
                 "Torrent can only be resumed when paused.".to_string(),
             ));
         }
-        self.status = TorrentStatus::Downloading;
+        if self.is_download_complete() {
+            self.status = TorrentStatus::Seeding;
+        } else {
+            self.status = TorrentStatus::Downloading;
+        }
         self.paused.reset();
         Ok(())
     }
