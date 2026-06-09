@@ -30,15 +30,59 @@ use futures::task::LocalSpawnExt;
 
 /// Represents an active Torrent transfer session.
 pub struct TorrentSession {
-    pub context: Arc<Mutex<TorrentContext>>,
-    pub disk_io: Arc<DiskIO>,
-    pub download_path: PathBuf,
-    pub peer_workers: Vec<thread::JoinHandle<()>>,
+    context: Arc<Mutex<TorrentContext>>,
+    download_path: PathBuf,
+    peer_workers: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
     task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     executor_thread: Option<thread::JoinHandle<()>>,
+    manager: Option<Arc<Manager>>,
+}
+
+/// A builder for constructing `TorrentSession` configurations.
+pub struct TorrentSessionBuilder {
+    torrent_path: PathBuf,
+    download_path: PathBuf,
+    seeding: bool,
+    manager: Option<Arc<Manager>>,
+}
+
+impl TorrentSessionBuilder {
+    /// Creates a new `TorrentSessionBuilder` with the specified torrent file path and target download directory path.
+    pub fn new(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> Self {
+        TorrentSessionBuilder {
+            torrent_path: torrent_path.as_ref().to_path_buf(),
+            download_path: download_path.as_ref().to_path_buf(),
+            seeding: false,
+            manager: None,
+        }
+    }
+
+    /// Sets whether the session is for seeding.
+    pub fn seeding(mut self, seeding: bool) -> Self {
+        self.seeding = seeding;
+        self
+    }
+
+    /// Sets the peer manager registry for the session.
+    pub fn manager(mut self, manager: Arc<Manager>) -> Self {
+        self.manager = Some(manager);
+        self
+    }
+
+    /// Builds the `TorrentSession` using the configured parameters.
+    pub fn build(self) -> Result<TorrentSession, BitTorrentError> {
+        let mut session = TorrentSession::new(self.torrent_path, self.download_path, self.seeding)?;
+        session.manager = self.manager;
+        Ok(session)
+    }
 }
 
 impl TorrentSession {
+    /// Creates a builder to configure and construct a new `TorrentSession`.
+    pub fn builder(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> TorrentSessionBuilder {
+        TorrentSessionBuilder::new(torrent_path, download_path)
+    }
+
     /// Creates and initializes a new `TorrentSession` using the specified torrent file and target download path.
     pub fn new(
         torrent_path: impl AsRef<Path>,
@@ -115,11 +159,11 @@ impl TorrentSession {
 
         let session = TorrentSession {
             context,
-            disk_io,
             download_path,
-            peer_workers: Vec::new(),
+            peer_workers: Arc::new(Mutex::new(Vec::new())),
             task_tx,
             executor_thread: Some(executor_thread),
+            manager: None,
         };
 
         session.context.lock().unwrap().validate()?;
@@ -159,6 +203,11 @@ impl TorrentSession {
         }));
 
         Ok(session)
+    }
+
+    /// Returns a reference-counted mutex guarding the active torrent's context.
+    pub fn context(&self) -> Arc<Mutex<TorrentContext>> {
+        self.context.clone()
     }
 
     /// Transitions the session status to `Downloading`, commencing active peer-based downloading.
@@ -249,20 +298,21 @@ impl TorrentSession {
     pub fn connect_and_download_peer(
         &mut self,
         peer_details: PeerDetails,
-        manager: Option<Arc<Manager>>,
     ) -> Result<(), BitTorrentError> {
-        if let Some(manager) = &manager {
+        if let Some(manager) = &self.manager {
             if manager.is_peer_dead(&peer_details.ip) {
                 return Ok(());
             }
         }
 
         let context = self.context.clone();
-        let manager_clone = manager.clone();
+        let manager_clone = self.manager.clone();
+        let peer_workers = self.peer_workers.clone();
 
-        let _ = self.task_tx.send(Box::pin(async move {
-            handle_peer_session(peer_details, context, manager_clone).await;
-        }));
+        let handle = thread::spawn(move || {
+            futures::executor::block_on(handle_peer_session(peer_details, context, manager_clone));
+        });
+        peer_workers.lock().unwrap().push(handle);
 
         Ok(())
     }
@@ -271,7 +321,6 @@ impl TorrentSession {
     pub fn download_from_peers(
         &mut self,
         peers: Vec<PeerDetails>,
-        manager: Option<Arc<Manager>>,
     ) -> Result<(), BitTorrentError> {
         if peers.is_empty() {
             return Err(BitTorrentError::Parse(
@@ -279,7 +328,7 @@ impl TorrentSession {
             ));
         }
         for peer in peers {
-            self.connect_and_download_peer(peer, manager.clone())?;
+            self.connect_and_download_peer(peer)?;
         }
         Ok(())
     }
@@ -295,7 +344,11 @@ impl TorrentSession {
         if self.status() != TorrentStatus::Ended {
             let _ = self.stop();
         }
-        while let Some(handle) = self.peer_workers.pop() {
+        let mut workers = {
+            let mut guard = self.peer_workers.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+        while let Some(handle) = workers.pop() {
             let _ = handle.join();
         }
         if let Some(handle) = self.executor_thread.take() {
@@ -309,10 +362,10 @@ impl TorrentSession {
     pub fn start_reannounce_loop(
         &self,
         mut tracker: Tracker,
-        manager: Option<Arc<Manager>>,
     ) -> thread::JoinHandle<()> {
         let context = self.context.clone();
-        let task_tx = self.task_tx.clone();
+        let peer_workers = self.peer_workers.clone();
+        let manager = self.manager.clone();
 
         let _ = self.task_tx.send(Box::pin(async move {
             let mut announced_completed = false;
@@ -340,10 +393,12 @@ impl TorrentSession {
                         for peer_details in response.peer_list {
                             let ctx2 = context.clone();
                             let mgr2 = manager.clone();
+                            let peer_workers2 = peer_workers.clone();
 
-                            let _ = task_tx.send(Box::pin(async move {
-                                handle_peer_session(peer_details, ctx2, mgr2).await;
-                            }));
+                            let handle = thread::spawn(move || {
+                                futures::executor::block_on(handle_peer_session(peer_details, ctx2, mgr2));
+                            });
+                            peer_workers2.lock().unwrap().push(handle);
                         }
                     }
                     Err(_) => {}

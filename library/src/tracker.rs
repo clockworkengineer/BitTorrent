@@ -340,19 +340,30 @@ impl Tracker {
                     Err(_) => continue,
                 }
             }
-            let announce_context = self.build_announce_context();
-            let response = self.announcer.announce(&announce_context);
-            match response {
-                Ok(response) => {
-                    if response.failure {
-                        last_error = Some(BitTorrentError::Parse(response.status_message.clone()));
-                        continue;
+            for attempt in 0..3 {
+                let announce_context = self.build_announce_context();
+                let response = self.announcer.announce(&announce_context);
+                match response {
+                    Ok(response) => {
+                        if response.failure {
+                            last_error = Some(BitTorrentError::Parse(response.status_message.clone()));
+                            if attempt < 2 {
+                                let sleep_ms = 200 * (1 << attempt);
+                                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                                continue;
+                            }
+                        } else {
+                            return Ok(response);
+                        }
                     }
-                    return Ok(response);
-                }
-                Err(err) => {
-                    last_error = Some(err);
-                    continue;
+                    Err(err) => {
+                        last_error = Some(err);
+                        if attempt < 2 {
+                            let sleep_ms = 200 * (1 << attempt);
+                            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                            continue;
+                        }
+                    }
                 }
             }
         }

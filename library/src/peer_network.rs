@@ -130,9 +130,11 @@ pub struct TcpSocket {
 
 #[cfg(feature = "std")]
 impl TcpSocket {
-    /// Creates a new `TcpSocket` wrapping the standard `TcpStream` and setting it to non-blocking mode.
+    /// Creates a new `TcpSocket` wrapping the standard `TcpStream`.
     pub fn new(stream: TcpStream) -> Self {
-        let _ = stream.set_nonblocking(true);
+        // Ensure read/write timeouts are configured to prevent indefinite blocking
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
         TcpSocket {
             stream: Arc::new(Mutex::new(stream)),
         }
@@ -146,19 +148,13 @@ impl AsyncSocket for TcpSocket {
         buf: &'a mut [u8],
     ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
         Box::pin(async move {
-            loop {
-                let read_res = {
-                    let mut lock = self.stream.lock().unwrap();
-                    lock.read(buf)
-                };
-                match read_res {
-                    Ok(n) => return Ok(n),
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(std::time::Duration::from_millis(2));
-                        crate::util::yield_now().await;
-                    }
-                    Err(e) => return Err(BitTorrentError::Io(e)),
-                }
+            let read_res = {
+                let mut lock = self.stream.lock().unwrap();
+                lock.read(buf)
+            };
+            match read_res {
+                Ok(n) => Ok(n),
+                Err(e) => Err(BitTorrentError::Io(e)),
             }
         })
     }
@@ -168,27 +164,14 @@ impl AsyncSocket for TcpSocket {
         buf: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
         Box::pin(async move {
-            let mut offset = 0;
-            while offset < buf.len() {
-                let write_res = {
-                    let mut lock = self.stream.lock().unwrap();
-                    lock.write(&buf[offset..])
-                };
-                match write_res {
-                    Ok(n) => {
-                        offset += n;
-                        if offset >= buf.len() {
-                            break;
-                        }
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(std::time::Duration::from_millis(2));
-                        crate::util::yield_now().await;
-                    }
-                    Err(e) => return Err(BitTorrentError::Io(e)),
-                }
+            let write_res = {
+                let mut lock = self.stream.lock().unwrap();
+                lock.write_all(buf)
+            };
+            match write_res {
+                Ok(_) => Ok(buf.len()),
+                Err(e) => Err(BitTorrentError::Io(e)),
             }
-            Ok(buf.len())
         })
     }
 

@@ -63,7 +63,7 @@ impl SessionState {
             last_downloaded: 0,
             last_total: 0,
         };
-        if let Ok(ctx_guard) = state.session.context.lock() {
+        if let Ok(ctx_guard) = state.session.context().lock() {
             state.last_file_name = std::path::Path::new(&ctx_guard.file_name)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -165,7 +165,7 @@ impl eframe::App for TorrentClientApp {
                 .id_source("sessions_scroll")
                 .show(ui, |ui| {
                     for session_state in &mut self.sessions {
-                        if let Ok(ctx_guard) = session_state.session.context.try_lock() {
+                        if let Ok(ctx_guard) = session_state.session.context().try_lock() {
                             session_state.last_file_name = std::path::Path::new(&ctx_guard.file_name)
                                 .file_name()
                                 .map(|n| n.to_string_lossy().to_string())
@@ -275,7 +275,7 @@ impl TorrentClientApp {
                 return;
             }
 
-            let mut tracker = match Tracker::new(session.context.clone()) {
+            let mut tracker = match Tracker::new(session.context()) {
                 Ok(t) => t,
                 Err(e) => {
                     let err_msg = format!("[{}] Tracker setup failed: {}", session_id, e);
@@ -301,7 +301,7 @@ impl TorrentClientApp {
                         let msg = format!("[{}] No peers; waiting.", session_id);
                         let _ = msg_tx.send(msg.clone());
                         println!("{}", msg);
-                    } else if let Err(e) = session.download_from_peers(response.peer_list, None) {
+                    } else if let Err(e) = session.download_from_peers(response.peer_list) {
                         let msg = format!(
                             "[{}] Download from peers failed: {}",
                             session_id, e
@@ -315,7 +315,7 @@ impl TorrentClientApp {
                     }
 
                     // Start the re-announce loop thread (runs in background)
-                    let _reannounce_thread = session.start_reannounce_loop(tracker, None);
+                    let _reannounce_thread = session.start_reannounce_loop(tracker);
 
                     // Send the session to the GUI thread immediately so it shows up in the UI
                     let _ = session_tx.send(session);

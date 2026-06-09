@@ -283,6 +283,7 @@ impl MetaInfoFile {
                 .get("name")
                 .ok_or_else(|| BitTorrentError::MissingField("name".into()))?;
             let root_name = String::from_utf8_lossy(name_bytes);
+            Self::validate_relative_path(&root_name)?;
             let directory = download_path.join(root_name.as_ref());
             let mut file_no = 0;
             loop {

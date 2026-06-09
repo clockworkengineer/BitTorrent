@@ -3,6 +3,51 @@
 //! A comprehensive BitTorrent protocol implementation in Rust, containing
 //! metainfo parsing, tracker communication, peer wire protocol, piece selection,
 //! disk I/O, and session management.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use bittorrent_rs::{TorrentSession, Tracker};
+//! use std::path::Path;
+//! use std::sync::Arc;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let torrent_path = Path::new("torrents/wired-cd.torrent");
+//!     let download_dir = Path::new("downloads");
+//!
+//!     // Initialize a new BitTorrent session using the builder pattern
+//!     let mut session = TorrentSession::builder(torrent_path, download_dir)
+//!         .seeding(false)
+//!         .build()?;
+//!
+//!     // Start the download thread and initialize storage
+//!     session.start_download()?;
+//!
+//!     // Initialize the tracker client for peer discovery
+//!     let mut tracker = Tracker::new(session.context())?;
+//!
+//!     // Query trackers to retrieve the list of active peers
+//!     let announce_response = tracker.start_announcing()?;
+//!     println!("Discovered {} peers", announce_response.peer_list.len());
+//!
+//!     // Start downloading pieces from discovered peers
+//!     session.download_from_peers(announce_response.peer_list)?;
+//!
+//!     // Monitor progress in a loop or await completion
+//!     loop {
+//!         if let Ok(ctx) = session.context().lock() {
+//!             println!("Progress: {:.2}%", ctx.progress_percent());
+//!             if ctx.progress_percent() >= 100.0 {
+//!                 println!("Download completed!");
+//!                 break;
+//!             }
+//!         }
+//!         std::thread::sleep(std::time::Duration::from_secs(5));
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -58,7 +103,7 @@ pub use peer_id::get as get_peer_id;
 pub use peer_message::PeerMessage;
 pub use selector::Selector;
 #[cfg(feature = "std")]
-pub use session::TorrentSession;
+pub use session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
 pub use torrent_context::{TorrentContext, TorrentStatus};
 #[cfg(feature = "std")]

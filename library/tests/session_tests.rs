@@ -26,8 +26,8 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
 
     let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
         .expect("Failed to create torrent session");
-    let expected_info_hash = session.context.lock().unwrap().info_hash.clone();
-    let expected_bitfield = session.context.lock().unwrap().bitfield.clone();
+    let expected_info_hash = session.context().lock().unwrap().info_hash.clone();
+    let expected_bitfield = session.context().lock().unwrap().bitfield.clone();
     let expected_info_hash_clone = expected_info_hash.clone();
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
@@ -64,7 +64,7 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
         port: addr.port(),
     };
     session
-        .connect_and_download_peer(peer_details, None)
+        .connect_and_download_peer(peer_details)
         .expect("Failed to connect to peer");
 
     thread::sleep(Duration::from_secs(1));
@@ -82,7 +82,7 @@ fn test_uploads_piece_when_peer_requests_block() {
 
     let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, true)
         .expect("Failed to create seeding torrent session");
-    let expected_info_hash = session.context.lock().unwrap().info_hash.clone();
+    let expected_info_hash = session.context().lock().unwrap().info_hash.clone();
     let expected_info_hash_clone = expected_info_hash.clone();
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
@@ -131,7 +131,7 @@ fn test_uploads_piece_when_peer_requests_block() {
         port: addr.port(),
     };
     session
-        .connect_and_download_peer(peer_details, None)
+        .connect_and_download_peer(peer_details)
         .expect("Failed to connect to peer");
 
     thread::sleep(Duration::from_secs(1));
@@ -151,10 +151,10 @@ fn test_create_session_for_download() {
         .expect("Failed to create torrent session");
 
     assert_eq!(session.status(), TorrentStatus::Initialised);
-    assert!(session.context.lock().unwrap().files_to_download.len() >= 1);
+    assert!(session.context().lock().unwrap().files_to_download.len() >= 1);
     assert!(
         session
-            .context
+            .context()
             .lock()
             .unwrap()
             .files_to_download
@@ -205,14 +205,14 @@ fn test_download_piece_from_peer() {
     let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
         .expect("Failed to create torrent session");
 
-    let expected_info_hash = session.context.lock().unwrap().info_hash.clone();
+    let expected_info_hash = session.context().lock().unwrap().info_hash.clone();
     let expected_info_hash_clone = expected_info_hash.clone();
 
     {
         use sha1::Digest;
         let mut new_hashes = Vec::new();
-        let num_pieces = session.context.lock().unwrap().number_of_pieces;
-        let piece_length = session.context.lock().unwrap().piece_length as usize;
+        let num_pieces = session.context().lock().unwrap().number_of_pieces;
+        let piece_length = session.context().lock().unwrap().piece_length as usize;
         let file_length = 351874;
         for i in 0..num_pieces {
             let current_piece_len = if i == num_pieces - 1 {
@@ -224,7 +224,7 @@ fn test_download_piece_from_peer() {
             let hash = sha1::Sha1::digest(&data);
             new_hashes.extend_from_slice(&hash);
         }
-        session.context.lock().unwrap().pieces_info_hash = new_hashes;
+        session.context().lock().unwrap().pieces_info_hash = new_hashes;
     }
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
@@ -293,7 +293,7 @@ fn test_download_piece_from_peer() {
     session.start_download().expect("Failed to start download");
 
     session
-        .connect_and_download_peer(peer_details, None)
+        .connect_and_download_peer(peer_details)
         .expect("Failed to connect to peer");
 
     let finished = session.wait_for_download_finished(15000);

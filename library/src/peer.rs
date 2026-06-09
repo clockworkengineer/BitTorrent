@@ -2,6 +2,32 @@
 //!
 //! Models a connection to a remote BitTorrent peer. Handles peer wire protocol
 //! state, message transmitting/receiving, block requesting, and bitfield syncing.
+//!
+//! # Peer Wire Protocol State Machine
+//!
+//! ```text
+//!       [ Start / Discovered ]
+//!                 |
+//!                 v  (TCP Connection Established)
+//!        [ Handshake Sent ]
+//!                 |
+//!                 v  (Receive Peer Handshake & Bitfield)
+//!       [ Connected / Handshaked ]
+//!                 |
+//!        +--------+--------+
+//!        |                 |
+//!        v                 v
+//!   (Our State)       (Peer State)
+//!  Am Interested     Peer Choking
+//!  Am Choking        Peer Interested
+//!        |                 |
+//!        v (We Unchoke)    v (Peer Unchoke)
+//!  +------------+    +------------+
+//!  | Can Upload |    | Can Request| <---+ (Send Request)
+//!  +------------+    +------------+     |
+//!                          |            | (Receive Block)
+//!                          +------------+
+//! ```
 
 use crate::average::Average;
 use crate::error::BitTorrentError;
