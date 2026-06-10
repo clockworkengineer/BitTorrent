@@ -1,112 +1,105 @@
-# Future Missing Features Implementation Plan: bittorrent-rs
+# Future Missing Features Implementation Plan: bittorrent-rs (Phase II)
 
-This plan outlines the analysis and concrete design for adding five additional standard BitTorrent protocol features to the `bittorrent-rs` library:
-1. **Local Service Discovery (LSD / LPD - BEP 14)**
-2. **Fast Extension (BEP 6)**
-3. **WebSeeding (HTTP Seeding - BEP 17 & BEP 19)**
-4. **Dual-Stack IPv6 Support & IPv6 PEX (BEP 32 & BEP 11)**
-5. **Tracker Scrape Support (BEP 48)**
-
----
-
-## 1. Local Service Discovery (LSD / LPD - BEP 14)
-
-### Purpose
-Allows discovering peers on the same local area network (LAN) without querying trackers or traversing the global DHT. This reduces external ISP bandwidth and increases local download rates.
-
-### Design Details
-- **Multicast Configuration**:
-  - IPv4 Multicast Address: `239.192.152.143`
-  - Port: `6771`
-  - Announcement Interval: Every 5 minutes (300 seconds)
-- **Announcement Format**: An HTTP-like multicast packet:
-  ```http
-  BT-SEARCH * HTTP/1.1
-  Host: 239.192.152.143:6771
-  Port: <local-peer-listen-port>
-  Infohash: <hex-encoded-infohash>
-  cookie: <opaque-session-id>
-  ```
-- **Proposed Code Changes**:
-  - **`library/src/lsd.rs` [NEW]**:
-    - Implement an `LsdListener` that binds to UDP port `6771` and joins the multicast group.
-    - Parse incoming messages, verify the `Infohash`, and enqueue peer IP/ports directly to the session's discovery channel.
-    - Spawn a periodic task that broadcasts the multicast search packet to advertise local existence.
+This document outlines the analysis and concrete design for adding five next-generation standard BitTorrent protocol features to the `bittorrent-rs` library:
+1. **Private Torrents (BEP 27)**
+2. **Handshake Encryption / Message Stream Encryption (MSE)**
+3. **uTorrent Transport Protocol (uTP - BEP 29)**
+4. **Auto Port Forwarding via UPnP & NAT-PMP**
+5. **BitTorrent v2 Support (BEP 52)**
 
 ---
 
-## 2. Fast Extension (BEP 6)
+## 1. Private Torrents (BEP 27)
 
 ### Purpose
-Improves startup speeds and bandwidth utilization, particularly when a peer is choked, by allowing them to download selected blocks from an "allowed fast" set.
+Restricts peer discovery exclusively to the trackers specified in the `.torrent` metadata for torrents flagged as private. This is vital for private trackers to enforce ratio limits and swarm security.
 
 ### Design Details
-- **New Peer Message IDs**:
-  - `HaveAll` (ID `14`): Announces possession of all pieces (sent instead of a large bitfield).
-  - `HaveNone` (ID `15`): Announces possession of zero pieces.
-  - `Suggest` (ID `13`): Suggests a piece index the receiver should request next.
-  - `Reject` (ID `16`): Rejects a block request (prevents hanging requests on choke).
-  - `AllowedFast` (ID `17`): Exposes a piece index that is allowed to be requested even when choked.
-- **Proposed Code Changes**:
-  - **`library/src/peer_message.rs`**:
-    - Add variants to the `PeerMessage` enum representing `HaveAll`, `HaveNone`, `Suggest`, `Reject`, and `AllowedFast` messages.
-    - Implement encoding and decoding logic matching the wire formats.
-  - **`library/src/peer.rs`**:
-    - Add `supports_fast_extension` property initialized during the reserved-byte handshake analysis (bit `2` of byte `7`).
-    - Handle `Reject` to immediately release block requests and prevent timeouts.
-  - **`library/src/selector.rs`**:
-    - Update `PieceSelector` to maintain a set of "allowed fast" pieces when choked by a peer.
+- **Flag Parsing**: Look for the `"private"` integer key inside the `"info"` dictionary of the torrent metadata.
+- **Enforcement Rules**: If `"private": 1`:
+  - **Disable DHT**: Do not query or announce to Kademlia DHT routers.
+  - **Disable LSD**: Suppress local multicast search queries and ignore incoming local searches for this torrent.
+  - **Disable PEX**: Do not serialize PEX messages (`added`/`dropped`/`added6`/`dropped6`) or process incoming PEX updates.
+
+### Proposed Code Changes
+- **[metainfo.rs](file:///c:/Projects/BitTorrent/library/src/metainfo.rs)**:
+  - Add `is_private()` helper parsing the `"private"` entry from the `"info"` dictionary.
+- **[torrent_context.rs](file:///c:/Projects/BitTorrent/library/src/torrent_context.rs)**:
+  - Expose a `pub is_private: bool` field on the `TorrentContext` struct.
+- **[session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs)** & **[session/worker.rs](file:///c:/Projects/BitTorrent/library/src/session/worker.rs)**:
+  - Check `is_private` before spinning up LSD announcer/listener, bootstrap DHT, or broadcasting/processing PEX lists.
 
 ---
 
-## 3. WebSeeding (HTTP Seeding - BEP 17 & BEP 19)
+## 2. Handshake Encryption / Message Stream Encryption (MSE)
 
 ### Purpose
-Allows clients to download piece blocks directly from web servers (CDNs/HTTP mirrors) when swarm peer speeds are insufficient or when no seeders are online.
+Obfuscates the protocol header and payload to prevent passive traffic analysis, helping bypass ISP traffic shaping and throttling of BitTorrent streams.
 
 ### Design Details
-- **BEP 19 (GetRight-style)**: Uses `url-list` in the metainfo dictionary containing URL endpoints.
-- **HTTP Range Requests**: Fetch blocks using the `Range: bytes=start-end` HTTP header.
-- **Proposed Code Changes**:
-  - **`library/src/metainfo.rs`**:
-    - Parse the `url-list` key (which can be a single string or a list of strings) from the metainfo dictionary.
-  - **`library/src/webseed.rs` [NEW]**:
-    - Model a `WebSeedWorker` that acts as a mock peer.
-    - Translate block request indexes into absolute file offsets.
-    - Use `HttpClient` to submit HTTP GET queries with `Range` headers to the mirrors.
-    - Pass downloaded bytes to `TorrentContext` to assemble and verify pieces on disk.
+- **Negotiation Cryptography**:
+  - Diffie-Hellman (DH) key exchange with a 768-bit or 1024-bit prime to establish a shared secret.
+  - RC4 stream cipher to wrap the payload stream.
+- **Fallback Configurations**:
+  - Support configuration profiles: Plaintext only, Encryption preferred, Encryption required.
+
+### Proposed Code Changes
+- **[peer_network.rs](file:///c:/Projects/BitTorrent/library/src/peer_network.rs)** [NEW helper mod / traits]:
+  - Implement DH key negotiation and RC4 cipher wrapping layers.
+- **[session/worker.rs](file:///c:/Projects/BitTorrent/library/src/session/worker.rs)**:
+  - Insert cryptographic negotiation phase prior to executing standard handshake writes.
 
 ---
 
-## 4. Dual-Stack IPv6 Support & IPv6 PEX (BEP 32 & BEP 11)
+## 3. uTorrent Transport Protocol (uTP - BEP 29)
 
 ### Purpose
-Allows the library to work seamlessly over IPv6, query IPv6 trackers/DHT, and exchange IPv6 peer lists using Peer Exchange.
+Implements a UDP-based congestion control protocol (using the LEDBAT algorithm) to throttle transfer speed based on latency cues, preventing the torrent client from overloading local home routers and choking domestic traffic.
 
 ### Design Details
-- **PEX Keys**:
-  - `added6`: Compact byte string representation of IPv6 peers (18 bytes per peer: 16-byte IP + 2-byte port).
-  - `dropped6`: Compact representation of dropped IPv6 peers.
-- **Proposed Code Changes**:
-  - **`library/src/peer_network.rs`**:
-    - Update socket resolution and creation to handle dual-stack IPv6 endpoints.
-  - **`library/src/peer.rs`**:
-    - Extend PEX parsing under `Extended` message types to extract and validate IPv6 chunks from `added6` and `dropped6` payloads.
-  - **`library/src/session/worker.rs`**:
-    - Extend the periodic PEX broadcast task to partition the swarm into IPv4 and IPv6 swarms, encoding both `added`/`dropped` and `added6`/`dropped6` dictionaries.
+- **Frame Packaging**: Custom header structure (Type, Version, Extension, Connection ID, Timestamp, Delay Difference, Ack Number).
+- **Delay-Based Control**: Measure one-way delay differences to determine network queuing delay. If queuing delay exceeds 100ms, decrease congestion window size.
+
+### Proposed Code Changes
+- **`library/src/utp.rs` [NEW]**:
+  - Implement the LEDBAT algorithm, connection state machines (SYN, ACK, DATA, FIN), and frame parsing.
+- **[peer_network.rs](file:///c:/Projects/BitTorrent/library/src/peer_network.rs)**:
+  - Support binding UDP sockets as a socket factory source for standard peer sessions.
 
 ---
 
-## 5. Tracker Scrape Support (BEP 48)
+## 4. Port Forwarding via UPnP & NAT-PMP
 
 ### Purpose
-Enables querying tracker statistics (seed count, leecher count, download completion stats) for one or more info-hashes in a single transaction without making a full announce request.
+Automatically opens ports on home NAT routers, allowing the client to receive incoming TCP/UDP connections from remote peers, which significantly enhances peer discovery and transfer speeds.
 
 ### Design Details
-- **URL Mapping**: Convert announcer endpoint `/announce` to `/scrape`.
-- **Response Format**: Parse a bencoded dictionary of the form:
-  `d5:filesd20:<info-hash>d8:completei5e10:downloadedi100e10:incompletei10eeee`
-- **Proposed Code Changes**:
-  - **`library/src/tracker.rs`**:
-    - Add a `scrape(&self, info_hashes: &[Vec<u8>])` method to query UDP and HTTP trackers.
-    - Decode the stats and expose them to the client interface to display health summaries before launching download threads.
+- **UPnP (Universal Plug and Play)**:
+  - Broadcast SSDP M-SEARCH queries over UDP `239.255.255.250:1900` to locate router IGD (Internet Gateway Device).
+  - Use SOAP calls over HTTP to map ports.
+- **NAT-PMP / PCP (Port Control Protocol)**:
+  - Query router gateway IP on port `5351` using UDP to map ports.
+
+### Proposed Code Changes
+- **`library/src/nat.rs` [NEW]**:
+  - Implement SSDP discovery, SOAP request builder, and NAT-PMP packet layout.
+- **[session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs)**:
+  - Map external ports on session instantiation, and clean up mappings (delete port map actions) on session exit.
+
+---
+
+## 5. BitTorrent v2 Support (BEP 52)
+
+### Purpose
+Transitions metadata parsing and verification systems to BitTorrent v2 guidelines, addressing security risks in SHA-1 and enabling more efficient file verification.
+
+### Design Details
+- **Hash Functions**: Upgrades piece validation and info-hash computation from SHA-1 (20-byte) to SHA-256 (32-byte).
+- **File Trees**: Replaces the flat `"files"` dictionary with a `"file tree"` directory dictionary structure.
+- **Merkle Trees**: Validates piece block lists via per-file Merkle trees rather than a global flat hash block array, allowing verification of individual blocks/files on demand.
+
+### Proposed Code Changes
+- **[metainfo.rs](file:///c:/Projects/BitTorrent/library/src/metainfo.rs)**:
+  - Support parsing v2 structures and calculating SHA-256 info-hashes.
+- **[torrent_context.rs](file:///c:/Projects/BitTorrent/library/src/torrent_context.rs)** & **[disk_io.rs](file:///c:/Projects/BitTorrent/library/src/disk_io.rs)**:
+  - Implement Merkle path validation and store 32-byte piece verification hashes.
