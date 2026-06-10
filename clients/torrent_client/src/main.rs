@@ -25,6 +25,7 @@ fn main() {
         options,
         Box::new(move |_cc| {
             let mut app = TorrentClientApp::new(log_rx, log_tx);
+            app.load_state();
             if let (Some(torrent_path), Some(download_dir)) =
                 (initial_torrent_path, initial_download_dir)
             {
@@ -40,6 +41,7 @@ fn main() {
 
 struct SessionState {
     session: TorrentSession,
+    torrent_path: String,
     last_file_name: String,
     last_progress: f32,
     last_status: String,
@@ -48,12 +50,14 @@ struct SessionState {
     last_bps: u64,
     last_downloaded: u64,
     last_total: u64,
+    last_uploaded: u64,
 }
 
 impl SessionState {
-    fn new(session: TorrentSession) -> Self {
+    fn new(session: TorrentSession, torrent_path: String) -> Self {
         let mut state = Self {
             session,
+            torrent_path,
             last_file_name: String::new(),
             last_progress: 0.0,
             last_status: String::new(),
@@ -62,6 +66,7 @@ impl SessionState {
             last_bps: 0,
             last_downloaded: 0,
             last_total: 0,
+            last_uploaded: 0,
         };
         if let Ok(ctx_guard) = state.session.context().lock() {
             state.last_file_name = std::path::Path::new(&ctx_guard.file_name)
@@ -75,9 +80,15 @@ impl SessionState {
             state.last_bps = ctx_guard.bytes_per_second() as u64;
             state.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
             state.last_total = ctx_guard.total_bytes_to_download;
+            state.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
         }
         state
     }
+}
+
+struct PendingSession {
+    torrent_path: String,
+    rx: mpsc::Receiver<TorrentSession>,
 }
 
 struct TorrentClientApp {
@@ -85,7 +96,7 @@ struct TorrentClientApp {
     download_dir: String,
     messages: Vec<String>,
     sessions: Vec<SessionState>,
-    pending_sessions: Vec<mpsc::Receiver<TorrentSession>>,
+    pending_sessions: Vec<PendingSession>,
     log_rx: mpsc::Receiver<String>,
     log_tx: mpsc::Sender<String>,
 }
@@ -116,14 +127,19 @@ impl eframe::App for TorrentClientApp {
 
         // Move ready sessions into self.sessions
         let mut ready = vec![];
-        for (i, rx) in self.pending_sessions.iter().enumerate() {
-            if let Ok(session) = rx.try_recv() {
-                self.sessions.push(SessionState::new(session));
+        let mut should_save = false;
+        for (i, pending) in self.pending_sessions.iter().enumerate() {
+            if let Ok(session) = pending.rx.try_recv() {
+                self.sessions.push(SessionState::new(session, pending.torrent_path.clone()));
                 ready.push(i);
+                should_save = true;
             }
         }
         for i in ready.into_iter().rev() {
             self.pending_sessions.remove(i);
+        }
+        if should_save {
+            self.save_state();
         }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -153,7 +169,9 @@ impl eframe::App for TorrentClientApp {
             });
             ui.horizontal(|ui| {
                 ui.label("Download dir:");
-                ui.text_edit_singleline(&mut self.download_dir);
+                if ui.text_edit_singleline(&mut self.download_dir).changed() {
+                    self.save_state();
+                }
             });
             if ui.button("Add Session").clicked() {
                 self.create_session();
@@ -178,6 +196,7 @@ impl eframe::App for TorrentClientApp {
                             session_state.last_bps = ctx_guard.bytes_per_second() as u64;
                             session_state.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
                             session_state.last_total = ctx_guard.total_bytes_to_download;
+                            session_state.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
                         }
 
                         let file_name = &session_state.last_file_name;
@@ -188,6 +207,7 @@ impl eframe::App for TorrentClientApp {
                         let bps = session_state.last_bps;
                         let downloaded = session_state.last_downloaded;
                         let total = session_state.last_total;
+                        let uploaded = session_state.last_uploaded;
 
                         ui.group(|ui| {
                             ui.label(egui::RichText::new(file_name).strong());
@@ -205,6 +225,8 @@ impl eframe::App for TorrentClientApp {
                                     fmt_bytes(downloaded),
                                     fmt_bytes(total)
                                 ));
+                                ui.separator();
+                                ui.label(format!("Uploaded: {}", fmt_bytes(uploaded)));
                                 ui.separator();
                                 ui.label(format!("Speed: {}/s", fmt_bytes(bps)));
                             });
@@ -235,6 +257,44 @@ fn fmt_bytes(bytes: u64) -> String {
 }
 
 impl TorrentClientApp {
+    fn save_state(&self) {
+        let state_path = "torrent_client_state.txt";
+        let mut content = String::new();
+        content.push_str(&self.download_dir);
+        content.push('\n');
+        for session in &self.sessions {
+            content.push_str(&session.torrent_path);
+            content.push('\n');
+        }
+        for pending in &self.pending_sessions {
+            content.push_str(&pending.torrent_path);
+            content.push('\n');
+        }
+        if let Err(e) = std::fs::write(state_path, content) {
+            eprintln!("Failed to save client state: {}", e);
+        }
+    }
+
+    fn load_state(&mut self) {
+        let state_path = "torrent_client_state.txt";
+        if let Ok(content) = std::fs::read_to_string(state_path) {
+            let mut lines = content.lines();
+            if let Some(dir) = lines.next() {
+                self.download_dir = dir.to_string();
+            }
+            let mut paths_to_load = Vec::new();
+            for line in lines {
+                let path = line.trim().to_string();
+                if !path.is_empty() {
+                    paths_to_load.push(path);
+                }
+            }
+            for path in paths_to_load {
+                self.add_session_by_path(path, self.download_dir.clone());
+            }
+        }
+    }
+
     fn create_session(&mut self) {
         let torrent_path = self.torrent_path.trim().to_string();
         let download_dir = self.download_dir.trim().to_string();
@@ -244,21 +304,36 @@ impl TorrentClientApp {
             return;
         }
 
+        if self.sessions.iter().any(|s| s.torrent_path == torrent_path)
+            || self.pending_sessions.iter().any(|s| s.torrent_path == torrent_path)
+        {
+            self.messages.push(format!("Torrent is already added: {}", torrent_path));
+            return;
+        }
+
+        self.add_session_by_path(torrent_path, download_dir);
+    }
+
+    fn add_session_by_path(&mut self, torrent_path: String, download_dir: String) {
         let (session_tx, session_rx) = mpsc::channel::<TorrentSession>();
         let msg_tx = self.log_tx.clone();
-        self.pending_sessions.push(session_rx);
+        self.pending_sessions.push(PendingSession {
+            torrent_path: torrent_path.clone(),
+            rx: session_rx,
+        });
+        self.save_state();
 
         // All blocking network work happens in a background thread so the UI
         // is never frozen and the window appears immediately.
         std::thread::spawn(move || {
-            let torrent_path = PathBuf::from(&torrent_path);
-            let download_dir = PathBuf::from(&download_dir);
-            let session_id = torrent_path.display().to_string();
+            let torrent_path_buf = PathBuf::from(&torrent_path);
+            let download_dir_buf = PathBuf::from(&download_dir);
+            let session_id = torrent_path_buf.display().to_string();
 
             let _ = msg_tx.send(format!("[{}] Connecting to tracker…", session_id));
             println!("[{}] Connecting to tracker…", session_id);
 
-            let mut session = match TorrentSession::new(&torrent_path, &download_dir, false) {
+            let mut session = match TorrentSession::new(&torrent_path_buf, &download_dir_buf, false) {
                 Ok(s) => s,
                 Err(e) => {
                     let err_msg = format!("Failed to create session: {}", e);

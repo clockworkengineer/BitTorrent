@@ -1,3 +1,4 @@
 /target/
 /downloads/
-*.log
+*.log
+torrent_client_state.txt
