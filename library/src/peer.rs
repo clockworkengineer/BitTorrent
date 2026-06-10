@@ -42,6 +42,8 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 /// Actions returned by message handling to be executed asynchronously outside locks.
 #[derive(Debug)]
@@ -57,6 +59,10 @@ pub enum PeerAction {
         begin: u32,
         length: u32,
         block_index: Option<u32>,
+    },
+    SendExtended {
+        ext_id: u8,
+        payload: Vec<u8>,
     },
 }
 
@@ -78,6 +84,9 @@ pub struct Peer {
     pub number_of_missing_pieces: usize,
     pub outstanding_requests_count: usize,
     pub reserved_blocks: Vec<(u32, u32, std::time::Instant)>,
+    pub supports_extensions: bool,
+    pub extension_ids: BTreeMap<String, u8>,
+    pub metadata_size: Option<usize>,
 }
 
 impl Peer {
@@ -100,6 +109,9 @@ impl Peer {
             number_of_missing_pieces: 0,
             outstanding_requests_count: 0,
             reserved_blocks: Vec::new(),
+            supports_extensions: false,
+            extension_ids: BTreeMap::new(),
+            metadata_size: None,
         }
     }
 
@@ -154,7 +166,7 @@ impl Peer {
             ))
         })?;
         net.write_handshake(info_hash, local_peer_id).await?;
-        let (remote_info_hash, remote_peer_id) = net.read_handshake().await?;
+        let (remote_info_hash, remote_peer_id, reserved) = net.read_handshake().await?;
         if remote_info_hash != info_hash {
             return Err(BitTorrentError::Parse(
                 "Peer handshake info hash mismatch".into(),
@@ -162,6 +174,7 @@ impl Peer {
         }
         self.connected = true;
         self.remote_peer_id = Some(remote_peer_id.clone());
+        self.supports_extensions = (reserved[5] & 0x10) != 0;
         net.start_reads();
         Ok(remote_peer_id)
     }
@@ -397,6 +410,90 @@ impl Peer {
                     }
                 }
             }
+            PeerMessage::Extended { ext_id, payload } => {
+                if ext_id == 0 {
+                    if let Ok(bnode) = crate::bencode::Bencode::decode(payload) {
+                        if let Some(m_node) = bnode.dict_get(b"m") {
+                            if let crate::bencode::BNode::Dictionary(entries) = m_node {
+                                for (key_bytes, val_node) in entries {
+                                    if let crate::bencode::BNode::Number(num_bytes) = val_node {
+                                        if let Ok(num_str) = core::str::from_utf8(num_bytes) {
+                                            if let Ok(id) = num_str.parse::<u8>() {
+                                                if let Ok(key_str) = core::str::from_utf8(key_bytes) {
+                                                    self.extension_ids.insert(key_str.to_string(), id);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(crate::bencode::BNode::Number(num_bytes)) = bnode.dict_get(b"metadata_size") {
+                            if let Ok(num_str) = core::str::from_utf8(num_bytes) {
+                                if let Ok(size) = num_str.parse::<usize>() {
+                                    self.metadata_size = Some(size);
+                                    tc.metadata_size = Some(size);
+                                }
+                            }
+                        }
+                    }
+                } else if ext_id == 1 {
+                    if let Ok((bnode, consumed)) = crate::bencode::Bencode::decode_partial(payload) {
+                        let msg_type = bnode.dict_get(b"msg_type")
+                            .and_then(|n| n.as_number_bytes())
+                            .and_then(|b| core::str::from_utf8(b).ok())
+                            .and_then(|s| s.parse::<u8>().ok());
+                        let piece = bnode.dict_get(b"piece")
+                            .and_then(|n| n.as_number_bytes())
+                            .and_then(|b| core::str::from_utf8(b).ok())
+                            .and_then(|s| s.parse::<u32>().ok());
+                        
+                        match msg_type {
+                            Some(1) => { // Data
+                                if let Some(p) = piece {
+                                    let raw_data = &payload[consumed..];
+                                    tc.metadata_pieces.insert(p, raw_data.to_vec());
+                                    if let Some(crate::bencode::BNode::Number(num_bytes)) = bnode.dict_get(b"total_size") {
+                                        if let Ok(num_str) = core::str::from_utf8(num_bytes) {
+                                            if let Ok(size) = num_str.parse::<usize>() {
+                                                self.metadata_size = Some(size);
+                                                tc.metadata_size = Some(size);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Some(0) => { // Request
+                                if let Some(ref metadata) = tc.info_dict_bytes {
+                                    if let Some(p) = piece {
+                                        let offset = p as usize * 16384;
+                                        if offset < metadata.len() {
+                                            let end = (offset + 16384).min(metadata.len());
+                                            let chunk = &metadata[offset..end];
+                                            let header = alloc::format!("d8:msg_typei1e5:piecei{}e10:total_sizei{}ee", p, metadata.len());
+                                            let mut res_payload = header.into_bytes();
+                                            res_payload.extend_from_slice(chunk);
+                                            actions.push(PeerAction::SendExtended {
+                                                ext_id: *self.extension_ids.get("ut_metadata").unwrap_or(&1),
+                                                payload: res_payload,
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    if let Some(p) = piece {
+                                        let header = alloc::format!("d8:msg_typei2e5:piecei{}eee", p);
+                                        actions.push(PeerAction::SendExtended {
+                                            ext_id: *self.extension_ids.get("ut_metadata").unwrap_or(&1),
+                                            payload: header.into_bytes(),
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
         }
         Ok(actions)
     }
@@ -415,6 +512,10 @@ impl Peer {
                 }
                 PeerAction::SendPiece { index, begin, block } => {
                     let msg = PeerMessage::Piece { index, begin, block: &block };
+                    net.write_message(msg).await?;
+                }
+                PeerAction::SendExtended { ext_id, payload } => {
+                    let msg = PeerMessage::Extended { ext_id, payload: &payload };
                     net.write_message(msg).await?;
                 }
                 PeerAction::BroadcastCancel { index, begin, length, block_index } => {

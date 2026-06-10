@@ -68,6 +68,17 @@ impl Bencode {
         Ok(node)
     }
 
+    /// Decodes a Bencode byte slice and returns the BNode alongside the number of bytes consumed.
+    /// This is useful when raw payload bytes follow the Bencode message.
+    pub fn decode_partial(buffer: &[u8]) -> Result<(BNode<'_>, usize), BitTorrentError> {
+        let mut parser = Parser {
+            buffer,
+            position: 0,
+        };
+        let node = parser.decode_bnode()?;
+        Ok((node, parser.position))
+    }
+
     /// Encodes a `BNode` structure into a Bencode-compliant byte vector.
     pub fn encode(bnode: &BNode<'_>) -> Vec<u8> {
         let mut output = Vec::new();

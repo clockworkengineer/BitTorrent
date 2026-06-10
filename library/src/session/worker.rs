@@ -121,28 +121,44 @@ pub async fn handle_peer_session(
         "Handshake completed with peer {}:{}",
         peer_details.ip, peer_details.port
     );
-    let (_, remote_peer_id) = match net.read_handshake().await {
+    let (remote_info_hash, remote_peer_id, reserved) = match net.read_handshake().await {
         Ok(res) => res,
         Err(_) => {
             mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
     };
+    if remote_info_hash != info_hash {
+        mark_peer_dead(&manager, &peer_details.ip);
+        return;
+    }
+    let supports_extensions = (reserved[5] & 0x10) != 0;
     {
         let mut pg = peer.lock().unwrap();
         pg.connected = true;
         pg.remote_peer_id = Some(remote_peer_id);
+        pg.supports_extensions = supports_extensions;
+    }
+    
+    if supports_extensions {
+        let payload = b"d1:md11:ut_metadatai1eee";
+        if net.write_message(PeerMessage::Extended { ext_id: 0, payload }).await.is_err() {
+            mark_peer_dead(&manager, &peer_details.ip);
+            return;
+        }
     }
     
     let bitfield = context.lock().unwrap().bitfield.clone();
-    if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
-        mark_peer_dead(&manager, &peer_details.ip);
-        return;
+    if !bitfield.is_empty() {
+        if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
+            mark_peer_dead(&manager, &peer_details.ip);
+            return;
+        }
+        println!(
+            "Sent Bitfield to peer {}:{}",
+            peer_details.ip, peer_details.port
+        );
     }
-    println!(
-        "Sent Bitfield to peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
     if net.write_message(PeerMessage::Unchoke).await.is_err() {
         mark_peer_dead(&manager, &peer_details.ip);
         return;
@@ -245,7 +261,97 @@ pub async fn handle_peer_session(
             context.lock().unwrap().status == TorrentStatus::Downloading
         };
 
-        if peer_choking_set && is_downloading {
+        let is_magnet_bootstrap = {
+            let ctx = context.lock().unwrap();
+            ctx.pieces_info_hash.is_empty()
+        };
+
+        if is_magnet_bootstrap && is_downloading {
+            let request_piece = {
+                let pg = peer.lock().unwrap();
+                let mut ctx = context.lock().unwrap();
+                if pg.supports_extensions {
+                    if let Some(&peer_ext_id) = pg.extension_ids.get("ut_metadata") {
+                        if let Some(size) = ctx.metadata_size {
+                            let num_pieces = (size + 16383) / 16384;
+                            let mut target_piece = None;
+                            for p in 0..num_pieces as u32 {
+                                if !ctx.metadata_pieces.contains_key(&p) {
+                                    let is_requested = ctx.requested_metadata_pieces.get(&p)
+                                        .map(|t| t.elapsed() < Duration::from_secs(5))
+                                        .unwrap_or(false);
+                                    if !is_requested {
+                                        ctx.requested_metadata_pieces.insert(p, Instant::now());
+                                        target_piece = Some((p, peer_ext_id));
+                                        break;
+                                    }
+                                }
+                            }
+                            target_piece
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some((p, peer_ext_id)) = request_piece {
+                let payload = alloc::format!("d8:msg_typei0e5:piecei{}ee", p).into_bytes();
+                if net.write_message(PeerMessage::Extended { ext_id: peer_ext_id, payload: &payload }).await.is_err() {
+                    mark_peer_dead(&manager, &peer_details.ip);
+                    break;
+                }
+                last_progress = Instant::now();
+            }
+
+            let transition_data = {
+                let mut ctx = context.lock().unwrap();
+                if let Some(size) = ctx.metadata_size {
+                    let num_pieces = (size + 16383) / 16384;
+                    if ctx.metadata_pieces.len() == num_pieces && ctx.info_dict_bytes.is_none() {
+                        let mut assembled = Vec::with_capacity(size);
+                        for p in 0..num_pieces as u32 {
+                            if let Some(chunk) = ctx.metadata_pieces.get(&p) {
+                                assembled.extend_from_slice(chunk);
+                            }
+                        }
+                        use sha1::Digest;
+                        let mut hasher = sha1::Sha1::new();
+                        hasher.update(&assembled);
+                        let hash = hasher.finalize().to_vec();
+                        if hash == ctx.info_hash {
+                            Some(assembled)
+                        } else {
+                            ctx.metadata_pieces.clear();
+                            ctx.requested_metadata_pieces.clear();
+                            println!("Metadata hash mismatch! Re-downloading...");
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some(assembled) = transition_data {
+                let mut ctx = context.lock().unwrap();
+                let dl_path = ctx.download_path.clone();
+                if let Err(e) = ctx.transition_from_metadata(&assembled, &dl_path) {
+                    log_debug!("Failed transition from metadata: {}", e);
+                    mark_peer_dead(&manager, &peer_details.ip);
+                    break;
+                }
+                println!("Successfully transitioned from metadata to standard download!");
+            }
+        }
+
+        if !is_magnet_bootstrap && peer_choking_set && is_downloading {
             let to_send = 10usize.saturating_sub(outstanding_requests_count);
             let mut send_error = false;
             let mut none_count = 0;

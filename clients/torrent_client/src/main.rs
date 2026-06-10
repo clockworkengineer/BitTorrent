@@ -328,18 +328,38 @@ impl TorrentClientApp {
         std::thread::spawn(move || {
             let torrent_path_buf = PathBuf::from(&torrent_path);
             let download_dir_buf = PathBuf::from(&download_dir);
-            let session_id = torrent_path_buf.display().to_string();
+            let session_id = if torrent_path.starts_with("magnet:?") {
+                if let Ok(mag) = bittorrent_rs::MagnetLink::parse(&torrent_path) {
+                    mag.display_name.clone().unwrap_or_else(|| bittorrent_rs::util::info_hash_to_string(&mag.info_hash))
+                } else {
+                    "Magnet Link".to_string()
+                }
+            } else {
+                torrent_path_buf.display().to_string()
+            };
 
             let _ = msg_tx.send(format!("[{}] Connecting to tracker…", session_id));
             println!("[{}] Connecting to tracker…", session_id);
 
-            let mut session = match TorrentSession::new(&torrent_path_buf, &download_dir_buf, false) {
-                Ok(s) => s,
-                Err(e) => {
-                    let err_msg = format!("Failed to create session: {}", e);
-                    let _ = msg_tx.send(err_msg.clone());
-                    eprintln!("{}", err_msg);
-                    return;
+            let mut session = if torrent_path.starts_with("magnet:?") {
+                match TorrentSession::new_magnet(&torrent_path, &download_dir_buf) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let err_msg = format!("Failed to create magnet session: {}", e);
+                        let _ = msg_tx.send(err_msg.clone());
+                        eprintln!("{}", err_msg);
+                        return;
+                    }
+                }
+            } else {
+                match TorrentSession::new(&torrent_path_buf, &download_dir_buf, false) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let err_msg = format!("Failed to create session: {}", e);
+                        let _ = msg_tx.send(err_msg.clone());
+                        eprintln!("{}", err_msg);
+                        return;
+                    }
                 }
             };
 

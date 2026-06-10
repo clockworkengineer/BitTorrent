@@ -34,6 +34,10 @@ pub enum PeerMessage<'a> {
         length: u32,
     },
     Port(u16),
+    Extended {
+        ext_id: u8,
+        payload: &'a [u8],
+    },
 }
 
 impl<'a> PeerMessage<'a> {
@@ -87,6 +91,14 @@ impl<'a> PeerMessage<'a> {
                 buffer.extend_from_slice(&3u32.to_be_bytes());
                 buffer.push(9);
                 buffer.extend_from_slice(&port.to_be_bytes());
+                buffer
+            }
+            PeerMessage::Extended { ext_id, payload } => {
+                let mut buffer = Vec::with_capacity(6 + payload.len());
+                buffer.extend_from_slice(&((1 + 1 + payload.len()) as u32).to_be_bytes());
+                buffer.push(20);
+                buffer.push(*ext_id);
+                buffer.extend_from_slice(payload);
                 buffer
             }
         }
@@ -150,6 +162,17 @@ impl<'a> PeerMessage<'a> {
                 let port = u16::from_be_bytes(payload.try_into().unwrap());
                 Ok(PeerMessage::Port(port))
             }
+            20 => {
+                if payload.is_empty() {
+                    return Err(BitTorrentError::Parse("Invalid EXTENDED payload length".into()));
+                }
+                let ext_id = payload[0];
+                let ext_payload = &payload[1..];
+                Ok(PeerMessage::Extended {
+                    ext_id,
+                    payload: ext_payload,
+                })
+            }
             _ => Err(BitTorrentError::Parse("Unknown peer message ID".into())),
         }
     }
@@ -166,14 +189,16 @@ impl<'a> PeerMessage<'a> {
         let mut buffer = Vec::with_capacity(crate::constants::INITIAL_HANDSHAKE_LENGTH);
         buffer.push(19);
         buffer.extend_from_slice(b"BitTorrent protocol");
-        buffer.extend_from_slice(&[0u8; 8]);
+        let mut reserved = [0u8; 8];
+        reserved[5] |= 0x10; // Support Extension Protocol (BEP 10)
+        buffer.extend_from_slice(&reserved);
         buffer.extend_from_slice(info_hash);
         buffer.extend_from_slice(peer_id);
         Ok(buffer)
     }
 
-    /// Decodes a 68-byte peer handshake packet and extracts the 20-byte `info_hash` and `peer_id`.
-    pub fn handshake_decode(buffer: &[u8]) -> Result<(Vec<u8>, Vec<u8>), BitTorrentError> {
+    /// Decodes a 68-byte peer handshake packet and extracts the 20-byte `info_hash`, `peer_id`, and 8 reserved bytes.
+    pub fn handshake_decode(buffer: &[u8]) -> Result<(Vec<u8>, Vec<u8>, [u8; 8]), BitTorrentError> {
         if buffer.len() != crate::constants::INITIAL_HANDSHAKE_LENGTH {
             return Err(BitTorrentError::Parse("Invalid handshake length".into()));
         }
@@ -188,9 +213,11 @@ impl<'a> PeerMessage<'a> {
                 "Invalid handshake protocol string".into(),
             ));
         }
+        let mut reserved = [0u8; 8];
+        reserved.copy_from_slice(&buffer[20..28]);
         let info_hash = buffer[28..48].to_vec();
         let peer_id = buffer[48..68].to_vec();
-        Ok((info_hash, peer_id))
+        Ok((info_hash, peer_id, reserved))
     }
 
     fn encode_triple_u32(message_id: u8, v1: u32, v2: u32, v3: u32) -> Vec<u8> {

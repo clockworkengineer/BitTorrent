@@ -11,6 +11,7 @@ use crate::peer::Peer;
 use crate::selector::{PieceSelector, RarestFirstSelector};
 use crate::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::{PeerDetails, Tracker};
+use crate::magnet::MagnetLink;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -290,6 +291,135 @@ impl TorrentSession {
                         bps,
                         reserved,
                     );
+                }
+            }
+        }));
+
+        Ok(session)
+    }
+
+    /// Creates and initializes a new `TorrentSession` using a magnet link.
+    pub fn new_magnet(
+        magnet_link: &str,
+        download_path: impl AsRef<Path>,
+    ) -> Result<Self, BitTorrentError> {
+        Self::new_magnet_with_options(
+            magnet_link,
+            download_path,
+            SessionConfig::default(),
+            Arc::new(RarestFirstSelector),
+        )
+    }
+
+    /// Creates and initializes a new `TorrentSession` using a magnet link and options.
+    pub fn new_magnet_with_options(
+        magnet_link: &str,
+        download_path: impl AsRef<Path>,
+        config: SessionConfig,
+        selector: Arc<dyn PieceSelector>,
+    ) -> Result<Self, BitTorrentError> {
+        let magnet = MagnetLink::parse(magnet_link)?;
+        let download_path = download_path.as_ref().to_path_buf();
+        fs::create_dir_all(&download_path)?;
+
+        let context = Arc::new(Mutex::new(TorrentContext::new_magnet_bootstrap(
+            magnet.info_hash,
+            magnet.trackers,
+            selector,
+            &download_path,
+            config.clone(),
+        )?));
+
+        let (task_tx, task_rx) = std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
+        let context_stats = context.clone();
+
+        let executor_thread = thread::spawn(move || {
+            let mut pool = LocalPool::new();
+            let spawner = pool.spawner();
+
+            let spawner_clone = spawner.clone();
+            let context_stats_clone = context_stats.clone();
+            spawner.spawn_local(async move {
+                loop {
+                    if context_stats_clone.lock().unwrap().status == TorrentStatus::Ended {
+                        break;
+                    }
+                    match task_rx.try_recv() {
+                        Ok(future) => {
+                            let _ = spawner_clone.spawn_local(future);
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            crate::util::yield_now().await;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            break;
+                        }
+                    }
+                }
+            }).unwrap();
+
+            pool.run();
+        });
+
+        let session = TorrentSession {
+            context,
+            download_path,
+            peer_workers: Arc::new(Mutex::new(Vec::new())),
+            task_tx,
+            executor_thread: Some(executor_thread),
+            manager: None,
+            dht: None,
+        };
+
+        let context_stats = session.context.clone();
+        let task_tx_stats = session.task_tx.clone();
+        let _ = task_tx_stats.send(Box::pin(async move {
+            loop {
+                delay(Duration::from_secs(5)).await;
+
+                let status = {
+                    let ctx = context_stats.lock().unwrap();
+                    ctx.status
+                };
+                if status == TorrentStatus::Ended {
+                    break;
+                }
+
+                if let Ok(ctx) = context_stats.try_lock() {
+                    let peers = ctx.peer_swarm.read().map(|s| s.len()).unwrap_or(0);
+                    let unchoked = ctx.number_of_unchoked_peers();
+                    let done = ctx.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+                    let total = ctx.total_bytes_to_download;
+                    let bps = ctx.bytes_per_second();
+                    let reserved = ctx.assembler.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
+                    let progress = if total > 0 { (done * 10000) / total } else { 0 };
+                    
+                    if ctx.pieces_info_hash.is_empty() {
+                        let got_metadata_pieces = ctx.metadata_pieces.len();
+                        let total_metadata_size = ctx.metadata_size.unwrap_or(0);
+                        let total_metadata_pieces = if total_metadata_size > 0 {
+                            (total_metadata_size + 16383) / 16384
+                        } else {
+                            0
+                        };
+                        log_debug!(
+                            "[stats] magnet bootstrap peers={} metadata_pieces={}/{} size={}",
+                            peers,
+                            got_metadata_pieces,
+                            total_metadata_pieces,
+                            total_metadata_size
+                        );
+                    } else {
+                        log_debug!(
+                            "[stats] peers={}/{} downloaded={}/{} ({}.{:02}%) speed={}/s reserved_blocks={}",
+                            unchoked, peers,
+                            done, total,
+                            progress / 100, progress % 100,
+                            bps,
+                            reserved,
+                        );
+                    }
                 }
             }
         }));

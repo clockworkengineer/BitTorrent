@@ -79,7 +79,7 @@ impl PeerNetwork {
     }
 
     /// Reads and decodes a BitTorrent connection handshake from the network stream.
-    pub async fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>), BitTorrentError> {
+    pub async fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>, [u8; 8]), BitTorrentError> {
         let mut buffer = [0u8; crate::constants::INITIAL_HANDSHAKE_LENGTH];
         self.read_exact(&mut buffer).await?;
         PeerMessage::handshake_decode(&buffer)

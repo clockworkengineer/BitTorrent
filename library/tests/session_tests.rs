@@ -38,12 +38,13 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
             let (stream, _) = listener.accept().expect("Failed to accept connection");
             let socket = std::sync::Arc::new(bittorrent_rs::peer_network::TcpSocket::new(stream));
             let net = PeerNetwork::new(socket);
-            let (remote_info_hash, _) = net.read_handshake().await.expect("Failed to read handshake");
+            let (remote_info_hash, _, _) = net.read_handshake().await.expect("Failed to read handshake");
             assert_eq!(remote_info_hash, expected_info_hash_clone);
 
             let local_peer_id = *b"-RS0001-000000000000";
-            net.write_handshake(&expected_info_hash_clone, &local_peer_id).await
-                .expect("Failed to write handshake");
+            let mut handshake_bytes = bittorrent_rs::PeerMessage::handshake_encode(&expected_info_hash_clone, &local_peer_id).unwrap();
+            handshake_bytes[25] &= !0x10;
+            net.write(&handshake_bytes).await.expect("Failed to write handshake");
 
             let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
             let first = net.read_message(&mut read_buf).await.expect("Failed to read first message");
@@ -93,12 +94,13 @@ fn test_uploads_piece_when_peer_requests_block() {
             let (stream, _) = listener.accept().expect("Failed to accept connection");
             let socket = std::sync::Arc::new(bittorrent_rs::peer_network::TcpSocket::new(stream));
             let net = PeerNetwork::new(socket);
-            let (remote_info_hash, _) = net.read_handshake().await.expect("Failed to read handshake");
+            let (remote_info_hash, _, _) = net.read_handshake().await.expect("Failed to read handshake");
             assert_eq!(remote_info_hash, expected_info_hash_clone);
 
             let local_peer_id = *b"-RS0001-000000000000";
-            net.write_handshake(&expected_info_hash_clone, &local_peer_id).await
-                .expect("Failed to write handshake");
+            let mut handshake_bytes = bittorrent_rs::PeerMessage::handshake_encode(&expected_info_hash_clone, &local_peer_id).unwrap();
+            handshake_bytes[25] &= !0x10;
+            net.write(&handshake_bytes).await.expect("Failed to write handshake");
 
             let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
             let _ = net.read_message(&mut read_buf).await.expect("Failed to read bitfield");
@@ -235,12 +237,13 @@ fn test_download_piece_from_peer() {
             let (stream, _) = listener.accept().expect("Failed to accept connection");
             let socket = std::sync::Arc::new(bittorrent_rs::peer_network::TcpSocket::new(stream));
             let net = PeerNetwork::new(socket);
-            let (remote_info_hash, _) = net.read_handshake().await.expect("Failed to read handshake");
+            let (remote_info_hash, _, _) = net.read_handshake().await.expect("Failed to read handshake");
             assert_eq!(remote_info_hash, expected_info_hash_clone);
 
             let local_peer_id = *b"-RS0001-000000000000";
-            net.write_handshake(&expected_info_hash_clone, &local_peer_id).await
-                .expect("Failed to write handshake");
+            let mut handshake_bytes = bittorrent_rs::PeerMessage::handshake_encode(&expected_info_hash_clone, &local_peer_id).unwrap();
+            handshake_bytes[25] &= !0x10;
+            net.write(&handshake_bytes).await.expect("Failed to write handshake");
 
             let mut read_buf = vec![0u8; 1024 * 16 + 2 * 4 + 1];
             let _ = net.read_message(&mut read_buf).await.expect("Failed to read bitfield");

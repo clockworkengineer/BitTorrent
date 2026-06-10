@@ -97,6 +97,7 @@ pub mod host;
 pub mod manager;
 #[cfg(feature = "std")]
 pub mod manual_reset_event;
+pub mod magnet;
 pub mod metainfo;
 #[cfg(feature = "std")]
 pub mod peer;
@@ -131,6 +132,7 @@ pub use io_traits::{MockSocket, SocketFactory};
 pub use io_traits::{HttpClient, UreqHttpClient};
 #[cfg(feature = "std")]
 pub use manager::Manager;
+pub use magnet::MagnetLink;
 pub use metainfo::{FileDetails, MetaInfoFile};
 #[cfg(feature = "std")]
 pub use assembler::Assembler;

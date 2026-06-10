@@ -73,6 +73,12 @@ pub struct TorrentContext {
     piece_data: Vec<PieceInfo>,
     pub storage: Arc<dyn crate::io_traits::BlockStorage>,
     pub config: SessionConfig,
+    pub download_path: std::path::PathBuf,
+    // Metadata bootstrap fields
+    pub metadata_size: Option<usize>,
+    pub metadata_pieces: alloc::collections::BTreeMap<u32, Vec<u8>>,
+    pub requested_metadata_pieces: alloc::collections::BTreeMap<u32, std::time::Instant>,
+    pub info_dict_bytes: Option<Vec<u8>>,
 }
 
 impl TorrentContext {
@@ -142,12 +148,142 @@ impl TorrentContext {
             bad_peer_scores: Mutex::new(HashMap::new()),
             storage,
             config,
+            download_path: download_path.to_path_buf(),
+            metadata_size: None,
+            metadata_pieces: alloc::collections::BTreeMap::new(),
+            requested_metadata_pieces: alloc::collections::BTreeMap::new(),
+            info_dict_bytes: None,
         };
         Ok(context)
     }
 
+    /// Creates a placeholder `TorrentContext` for magnet links bootstrapping.
+    pub fn new_magnet_bootstrap(
+        info_hash: Vec<u8>,
+        tracker_urls: Vec<String>,
+        selector: Arc<dyn PieceSelector>,
+        download_path: &std::path::Path,
+        config: SessionConfig,
+    ) -> Result<Self, crate::error::BitTorrentError> {
+        let tracker_url = tracker_urls.get(0).cloned().unwrap_or_default();
+        let storage = Arc::new(crate::io_traits::MemStorage::new(0));
+
+        let context = TorrentContext {
+            info_hash,
+            tracker_url,
+            number_of_pieces: 0,
+            piece_length: 0,
+            pieces_info_hash: Vec::new(),
+            bitfield: Vec::new(),
+            files_to_download: Vec::new(),
+            total_bytes_downloaded: Arc::new(AtomicU64::new(0)),
+            initial_bytes_downloaded: 0,
+            total_bytes_to_download: 0,
+            total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
+            status: TorrentStatus::Initialised,
+            file_name: String::new(),
+            tracker_urls,
+            main_tracker: None,
+            callback_data: None,
+            call_back: None,
+            paused: ManualResetEvent::new(false),
+            download_finished: Arc::new(ManualResetEvent::new(false)),
+            selector,
+            peer_swarm: RwLock::new(HashMap::new()),
+            missing_pieces_count: 0,
+            maximum_swarm_size: crate::constants::MAXIMUM_SWARM_SIZE,
+            assembler: Assembler::new(),
+            pieces_missing: Vec::new(),
+            piece_data: Vec::new(),
+            bad_peer_scores: Mutex::new(HashMap::new()),
+            storage,
+            config,
+            download_path: download_path.to_path_buf(),
+            metadata_size: None,
+            metadata_pieces: alloc::collections::BTreeMap::new(),
+            requested_metadata_pieces: alloc::collections::BTreeMap::new(),
+            info_dict_bytes: None,
+        };
+        Ok(context)
+    }
+
+    /// Transitions a magnet bootstrap context to a standard torrent download session once metadata is fetched.
+    pub fn transition_from_metadata(
+        &mut self,
+        info_dict_bytes: &[u8],
+        download_path: &std::path::Path,
+    ) -> Result<(), crate::error::BitTorrentError> {
+        let info_node = crate::bencode::Bencode::decode(info_dict_bytes)?;
+        
+        let mut root_entries = Vec::new();
+        root_entries.push((b"announce".as_slice(), crate::bencode::BNode::String(self.tracker_url.as_bytes())));
+        root_entries.push((b"info".as_slice(), info_node));
+        
+        let root_node = crate::bencode::BNode::Dictionary(root_entries);
+        let torrent_bytes = crate::bencode::Bencode::encode(&root_node);
+        
+        let mut meta_info = MetaInfoFile::from_bytes(&torrent_bytes);
+        meta_info.parse()?;
+        meta_info.validate()?;
+        
+        let piece_length = meta_info.get_piece_length()?;
+        let pieces_info_hash = meta_info.get_pieces_info_hash()?;
+        let number_of_pieces = pieces_info_hash.len() / crate::constants::HASH_LENGTH;
+        let bitfield = vec![0u8; (number_of_pieces + 7) / 8];
+        let pieces_missing = vec![0u8; bitfield.len()];
+        let piece_data = vec![
+            PieceInfo {
+                peer_count: 0,
+                piece_length
+            };
+            number_of_pieces
+        ];
+        
+        let (total_download_length, all_files_to_download) =
+            meta_info.local_files_to_download_list(download_path)?;
+            
+        let disk_io = Arc::new(crate::disk_io::DiskIO::new(
+            download_path,
+            all_files_to_download.clone(),
+            piece_length,
+        ));
+        
+        disk_io.create_local_torrent_structure()?;
+        
+        self.number_of_pieces = number_of_pieces;
+        self.piece_length = piece_length;
+        self.pieces_info_hash = pieces_info_hash;
+        self.bitfield = bitfield;
+        self.pieces_missing = pieces_missing;
+        self.piece_data = piece_data;
+        self.files_to_download = all_files_to_download;
+        self.total_bytes_to_download = total_download_length;
+        self.storage = disk_io.clone();
+        
+        #[cfg(feature = "std")]
+        {
+            self.file_name = meta_info.torrent_file_name.to_string_lossy().to_string();
+        }
+        
+        disk_io.create_torrent_bitfield(self)?;
+        let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
+        self.initial_bytes_downloaded = downloaded;
+        
+        let torrent_filename = format!("{}.torrent", crate::util::info_hash_to_string(&self.info_hash));
+        let torrent_path = download_path.join(torrent_filename);
+        let _ = std::fs::write(torrent_path, &torrent_bytes);
+        
+        self.info_dict_bytes = Some(info_dict_bytes.to_vec());
+        
+        Ok(())
+    }
+
     /// Validates the structure and length constraints of context data fields.
     pub fn validate(&self) -> Result<(), crate::error::BitTorrentError> {
+        if self.pieces_info_hash.is_empty() {
+            // In magnet bootstrap mode
+            return Ok(());
+        }
         if self.number_of_pieces == 0 {
             return Err(crate::error::BitTorrentError::Parse(
                 "Torrent must contain at least one piece.".to_string(),
