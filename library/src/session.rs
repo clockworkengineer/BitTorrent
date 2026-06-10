@@ -260,6 +260,7 @@ impl TorrentSession {
         };
 
         session.context.lock().unwrap().validate()?;
+        spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
 
         let context_stats = session.context.clone();
         let task_tx_stats = session.task_tx.clone();
@@ -372,6 +373,7 @@ impl TorrentSession {
             dht: None,
         };
 
+        spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
         let context_stats = session.context.clone();
         let task_tx_stats = session.task_tx.clone();
         let _ = task_tx_stats.send(Box::pin(async move {
@@ -690,4 +692,139 @@ impl TorrentSession {
 
         thread::spawn(|| {})
     }
+}
+
+fn spawn_choking_loop(
+    context: Arc<Mutex<TorrentContext>>,
+    task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    manager: Option<Arc<Manager>>,
+) {
+    let _ = task_tx.send(Box::pin(async move {
+        let mut optimistic_timer = 0;
+        let mut current_optimistic_ip: Option<String> = None;
+        loop {
+            delay(Duration::from_secs(10)).await;
+            
+            let status = {
+                let ctx = context.lock().unwrap();
+                ctx.status
+            };
+            if status == TorrentStatus::Ended {
+                break;
+            }
+            
+            optimistic_timer += 10;
+            let trigger_optimistic = if optimistic_timer >= 30 {
+                optimistic_timer = 0;
+                true
+            } else {
+                false
+            };
+            
+            let mut peers_to_action = Vec::new();
+            {
+                let ctx = context.lock().unwrap();
+                let swarm = ctx.peer_swarm.read().unwrap();
+                
+                let mut interested_peers = Vec::new();
+                for peer_arc in swarm.values() {
+                    let mut p = peer_arc.lock().unwrap();
+                    
+                    let dl_rate = p.bytes_downloaded_in_interval as f64 / 10.0;
+                    p.rolling_download_rate = p.rolling_download_rate * 0.8 + dl_rate * 0.2;
+                    p.bytes_downloaded_in_interval = 0;
+                    
+                    let ul_rate = p.bytes_uploaded_in_interval as f64 / 10.0;
+                    p.rolling_upload_rate = p.rolling_upload_rate * 0.8 + ul_rate * 0.2;
+                    p.bytes_uploaded_in_interval = 0;
+                    
+                    if p.peer_interested {
+                        interested_peers.push(peer_arc.clone());
+                    }
+                }
+                
+                if !interested_peers.is_empty() {
+                    let is_seeding = ctx.status == TorrentStatus::Seeding;
+                    interested_peers.sort_by(|a, b| {
+                        let pa = a.lock().unwrap();
+                        let pb = b.lock().unwrap();
+                        if is_seeding {
+                            pb.rolling_upload_rate.partial_cmp(&pa.rolling_upload_rate).unwrap_or(std::cmp::Ordering::Equal)
+                        } else {
+                            pb.rolling_download_rate.partial_cmp(&pa.rolling_download_rate).unwrap_or(std::cmp::Ordering::Equal)
+                        }
+                    });
+                    
+                    let max_slots = 4;
+                    let top_count = (max_slots - 1).min(interested_peers.len());
+                    let mut chosen_peers = interested_peers[..top_count].to_vec();
+                    
+                    let remaining_peers = &interested_peers[top_count..];
+                    let mut optimistic_peer = None;
+                    if !remaining_peers.is_empty() {
+                        if trigger_optimistic || current_optimistic_ip.is_none() {
+                            use rand::Rng;
+                            let idx = rand::thread_rng().gen_range(0..remaining_peers.len());
+                            let picked = &remaining_peers[idx];
+                            let ip = picked.lock().unwrap().ip.clone();
+                            current_optimistic_ip = Some(ip);
+                            optimistic_peer = Some(picked.clone());
+                        } else {
+                            if let Some(ref ip) = current_optimistic_ip {
+                                if let Some(found) = remaining_peers.iter().find(|p| p.lock().unwrap().ip == *ip) {
+                                    optimistic_peer = Some(found.clone());
+                                } else {
+                                    use rand::Rng;
+                                    let idx = rand::thread_rng().gen_range(0..remaining_peers.len());
+                                    let picked = &remaining_peers[idx];
+                                    let ip = picked.lock().unwrap().ip.clone();
+                                    current_optimistic_ip = Some(ip);
+                                    optimistic_peer = Some(picked.clone());
+                                }
+                            }
+                        }
+                    } else {
+                        current_optimistic_ip = None;
+                    }
+                    
+                    if let Some(opt_p) = optimistic_peer {
+                        chosen_peers.push(opt_p);
+                    }
+                    
+                    for peer_arc in &interested_peers {
+                        let ip = peer_arc.lock().unwrap().ip.clone();
+                        let is_chosen = chosen_peers.iter().any(|p| p.lock().unwrap().ip == ip);
+                        let mut p = peer_arc.lock().unwrap();
+                        if is_chosen {
+                            if p.am_choking {
+                                p.am_choking = false;
+                                peers_to_action.push((peer_arc.clone(), crate::peer::PeerAction::SendUnchoke));
+                            }
+                        } else {
+                            if !p.am_choking {
+                                p.am_choking = true;
+                                peers_to_action.push((peer_arc.clone(), crate::peer::PeerAction::SendChoke));
+                            }
+                        }
+                    }
+                }
+                
+                for peer_arc in swarm.values() {
+                    let mut p = peer_arc.lock().unwrap();
+                    if !p.peer_interested && !p.am_choking {
+                        p.am_choking = true;
+                        peers_to_action.push((peer_arc.clone(), crate::peer::PeerAction::SendChoke));
+                    }
+                }
+            }
+            
+            for (peer_arc, action) in peers_to_action {
+                let net_opt = peer_arc.lock().unwrap().network.clone();
+                if let Some(net) = net_opt {
+                    let peer_ip = peer_arc.lock().unwrap().ip.clone();
+                    let _ = Peer::execute_actions(&peer_arc, vec![action], &net, &context, &peer_ip, &manager).await;
+                }
+            }
+        }
+    }));
 }

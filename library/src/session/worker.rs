@@ -138,14 +138,17 @@ pub async fn handle_peer_session(
         pg.connected = true;
         pg.remote_peer_id = Some(remote_peer_id);
         pg.supports_extensions = supports_extensions;
+        pg.last_message_sent = Instant::now();
+        pg.last_message_received = Instant::now();
     }
     
     if supports_extensions {
-        let payload = b"d1:md11:ut_metadatai1eee";
+        let payload = b"d1:md11:ut_metadatai1e6:ut_pexi2eee";
         if net.write_message(PeerMessage::Extended { ext_id: 0, payload }).await.is_err() {
             mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
+        peer.lock().unwrap().update_last_message_sent();
     }
     
     let bitfield = context.lock().unwrap().bitfield.clone();
@@ -154,6 +157,7 @@ pub async fn handle_peer_session(
             mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
+        peer.lock().unwrap().update_last_message_sent();
         println!(
             "Sent Bitfield to peer {}:{}",
             peer_details.ip, peer_details.port
@@ -163,6 +167,7 @@ pub async fn handle_peer_session(
         mark_peer_dead(&manager, &peer_details.ip);
         return;
     }
+    peer.lock().unwrap().update_last_message_sent();
     {
         peer.lock().unwrap().am_choking = false;
     }
@@ -174,6 +179,7 @@ pub async fn handle_peer_session(
         mark_peer_dead(&manager, &peer_details.ip);
         return;
     }
+    peer.lock().unwrap().update_last_message_sent();
     println!(
         "Sent Interested to peer {}:{}",
         peer_details.ip, peer_details.port
@@ -195,7 +201,9 @@ pub async fn handle_peer_session(
             _fallback_buf.as_mut().unwrap().as_mut_slice()
         }
     };
-    let mut last_progress = Instant::now();
+    let mut last_pex_sent = Instant::now();
+    let mut sent_peers: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
+
     loop {
         let status = {
             let ctx = context.lock().unwrap();
@@ -209,6 +217,76 @@ pub async fn handle_peer_session(
             continue;
         }
 
+        // Periodic PEX broadcast check
+        let supports_extensions = {
+            let pg = peer.lock().unwrap();
+            pg.supports_extensions
+        };
+        if supports_extensions && last_pex_sent.elapsed() > Duration::from_secs(60) {
+            let pex_ext_id = {
+                let pg = peer.lock().unwrap();
+                pg.extension_ids.get("ut_pex").cloned()
+            };
+            if let Some(ext_id) = pex_ext_id {
+                let mut current_swarm = Vec::new();
+                {
+                    let ctx = context.lock().unwrap();
+                    let swarm = ctx.peer_swarm.read().unwrap();
+                    for (ip, p_arc) in swarm.iter() {
+                        if ip != &peer_details.ip {
+                            if let Ok(p_guard) = p_arc.try_lock() {
+                                current_swarm.push(PeerDetails {
+                                    info_hash: info_hash.clone(),
+                                    peer_id: None,
+                                    ip: ip.clone(),
+                                    port: p_guard.port,
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                let mut added_bytes = Vec::new();
+                let mut newly_sent = std::collections::HashMap::new();
+                for detail in &current_swarm {
+                    newly_sent.insert(detail.ip.clone(), detail.port);
+                    if !sent_peers.contains_key(&detail.ip) {
+                        if let Ok(ip_addr) = detail.ip.parse::<std::net::Ipv4Addr>() {
+                            added_bytes.extend_from_slice(&ip_addr.octets());
+                            added_bytes.extend_from_slice(&detail.port.to_be_bytes());
+                        }
+                    }
+                }
+                
+                let mut dropped_bytes = Vec::new();
+                for (ip, &port) in &sent_peers {
+                    if !newly_sent.contains_key(ip) {
+                        if let Ok(ip_addr) = ip.parse::<std::net::Ipv4Addr>() {
+                            dropped_bytes.extend_from_slice(&ip_addr.octets());
+                            dropped_bytes.extend_from_slice(&port.to_be_bytes());
+                        }
+                    }
+                }
+                
+                sent_peers = newly_sent;
+                
+                if !added_bytes.is_empty() || !dropped_bytes.is_empty() {
+                    let added_node = crate::bencode::BNode::String(&added_bytes);
+                    let dropped_node = crate::bencode::BNode::String(&dropped_bytes);
+                    let pex_dict = crate::bencode::BNode::Dictionary(vec![
+                        (b"added", added_node),
+                        (b"dropped", dropped_node),
+                    ]);
+                    let pex_payload = crate::bencode::Bencode::encode(&pex_dict);
+                    
+                    if net.write_message(PeerMessage::Extended { ext_id, payload: &pex_payload }).await.is_ok() {
+                        peer.lock().unwrap().update_last_message_sent();
+                    }
+                }
+            }
+            last_pex_sent = Instant::now();
+        }
+
         let message = match net.read_message(&mut *read_buffer_backing).await {
             Ok(m) => m,
             Err(err) => {
@@ -217,11 +295,25 @@ pub async fn handle_peer_session(
                         || io_err.kind() == std::io::ErrorKind::TimedOut
                     {
                         check_request_timeouts(&peer, &context).await;
-                        if last_progress.elapsed() > Duration::from_secs(30) {
-                            log_debug!("[peer {}:{}] 30s idle timeout, dropping",
+                        
+                        let (last_sent, last_recv) = {
+                            let pg = peer.lock().unwrap();
+                            (pg.last_message_sent, pg.last_message_received)
+                        };
+                        
+                        if last_recv.elapsed() > Duration::from_secs(120) {
+                            log_debug!("[peer {}:{}] 120s idle timeout, dropping",
                                 peer_details.ip, peer_details.port);
                             mark_peer_dead(&manager, &peer_details.ip);
                             break;
+                        }
+                        
+                        if last_sent.elapsed() > Duration::from_secs(120) {
+                            log_debug!("[peer {}:{}] sending keep-alive",
+                                peer_details.ip, peer_details.port);
+                            if net.write_message(PeerMessage::KeepAlive).await.is_ok() {
+                                peer.lock().unwrap().update_last_message_sent();
+                            }
                         }
                         continue;
                     }
@@ -245,7 +337,7 @@ pub async fn handle_peer_session(
             }
         };
 
-        if Peer::execute_actions(actions, &net, &context, &peer_details.ip).await.is_err() {
+        if Peer::execute_actions(&peer, actions, &net, &context, &peer_details.ip, &manager).await.is_err() {
             mark_peer_dead(&manager, &peer_details.ip);
             break;
         }
@@ -305,7 +397,7 @@ pub async fn handle_peer_session(
                     mark_peer_dead(&manager, &peer_details.ip);
                     break;
                 }
-                last_progress = Instant::now();
+                peer.lock().unwrap().update_last_message_sent();
             }
 
             let transition_data = {
@@ -373,8 +465,8 @@ pub async fn handle_peer_session(
                             let bi = begin / crate::constants::BLOCK_SIZE as u32;
                             pg.reserved_blocks.push((pn, bi, Instant::now()));
                             pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_add(1);
+                            pg.update_last_message_sent();
                         }
-                        last_progress = Instant::now();
                     }
                     None => { none_count += 1; break; }
                 }

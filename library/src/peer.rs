@@ -36,6 +36,8 @@ use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::torrent_context::TorrentContext;
+use crate::tracker::PeerDetails;
+use crate::manager::Manager;
 use crate::util::get_bitfield_index_and_mask;
 use crate::log_debug;
 use std::net::TcpStream;
@@ -49,6 +51,7 @@ use alloc::string::ToString;
 #[derive(Debug)]
 pub enum PeerAction {
     SendUnchoke,
+    SendChoke,
     SendPiece {
         index: u32,
         begin: u32,
@@ -64,6 +67,7 @@ pub enum PeerAction {
         ext_id: u8,
         payload: Vec<u8>,
     },
+    DiscoverPeers(Vec<PeerDetails>),
 }
 
 /// Represents a remote peer connection, holding socket state, bitfield arrays, choking/interest flags, and latency stats.
@@ -87,6 +91,12 @@ pub struct Peer {
     pub supports_extensions: bool,
     pub extension_ids: BTreeMap<String, u8>,
     pub metadata_size: Option<usize>,
+    pub bytes_downloaded_in_interval: usize,
+    pub bytes_uploaded_in_interval: usize,
+    pub rolling_download_rate: f64,
+    pub rolling_upload_rate: f64,
+    pub last_message_sent: std::time::Instant,
+    pub last_message_received: std::time::Instant,
 }
 
 impl Peer {
@@ -112,6 +122,12 @@ impl Peer {
             supports_extensions: false,
             extension_ids: BTreeMap::new(),
             metadata_size: None,
+            bytes_downloaded_in_interval: 0,
+            bytes_uploaded_in_interval: 0,
+            rolling_download_rate: 0.0,
+            rolling_upload_rate: 0.0,
+            last_message_sent: std::time::Instant::now(),
+            last_message_received: std::time::Instant::now(),
         }
     }
 
@@ -119,6 +135,11 @@ impl Peer {
     pub fn new(ip: String, port: u16, stream: TcpStream) -> Self {
         let socket = Arc::new(crate::peer_network::TcpSocket::new(stream));
         Self::new_with_socket(ip, port, socket)
+    }
+
+    /// Updates the timestamp when we send a message to this peer.
+    pub fn update_last_message_sent(&mut self) {
+        self.last_message_sent = std::time::Instant::now();
     }
 
     /// Links the peer to a specific `TorrentContext`, initializing the peer's remote bitfield capacity.
@@ -301,6 +322,7 @@ impl Peer {
         message: PeerMessage<'_>,
         tc: &mut TorrentContext,
     ) -> Result<Vec<PeerAction>, BitTorrentError> {
+        self.last_message_received = std::time::Instant::now();
         let mut actions = Vec::new();
         match message {
             PeerMessage::KeepAlive => {}
@@ -320,10 +342,6 @@ impl Peer {
             }
             PeerMessage::Interested => {
                 self.peer_interested = true;
-                if self.am_choking {
-                    actions.push(PeerAction::SendUnchoke);
-                    self.am_choking = false;
-                }
             }
             PeerMessage::NotInterested => {
                 self.peer_interested = false;
@@ -344,6 +362,7 @@ impl Peer {
                 begin,
                 block,
             } => {
+                self.bytes_downloaded_in_interval += block.len();
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
                 self.reserved_blocks
@@ -400,6 +419,7 @@ impl Peer {
                                 block,
                             });
                             tc.total_bytes_uploaded.fetch_add(length as u64, std::sync::atomic::Ordering::Relaxed);
+                            self.bytes_uploaded_in_interval += length as usize;
                         }
                         Err(e) => {
                             log_debug!(
@@ -492,31 +512,59 @@ impl Peer {
                             _ => {}
                         }
                     }
+                } else if ext_id == 2 {
+                    if let Ok(bnode) = crate::bencode::Bencode::decode(payload) {
+                        if let Some(added_node) = bnode.dict_get(b"added") {
+                            if let Some(added_bytes) = added_node.as_string() {
+                                let mut added_peers = Vec::new();
+                                for chunk in added_bytes.chunks_exact(6) {
+                                    let ip = format!("{}.{}.{}.{}", chunk[0], chunk[1], chunk[2], chunk[3]);
+                                    let port = u16::from_be_bytes([chunk[4], chunk[5]]);
+                                    added_peers.push(PeerDetails {
+                                        info_hash: tc.info_hash.clone(),
+                                        peer_id: None,
+                                        ip,
+                                        port,
+                                    });
+                                }
+                                actions.push(PeerAction::DiscoverPeers(added_peers));
+                            }
+                        }
+                    }
                 }
             }
         }
         Ok(actions)
     }
 
-    /// Executes peer action commands (Unchoke, SendPiece, BroadcastCancel).
+    /// Executes peer action commands (Unchoke, Choke, SendPiece, BroadcastCancel, DiscoverPeers).
     pub async fn execute_actions(
+        peer: &Mutex<Peer>,
         actions: Vec<PeerAction>,
         net: &PeerNetwork,
         context: &Mutex<TorrentContext>,
         peer_details_ip: &str,
+        manager: &Option<Arc<Manager>>,
     ) -> Result<(), BitTorrentError> {
         for action in actions {
             match action {
                 PeerAction::SendUnchoke => {
                     net.write_message(PeerMessage::Unchoke).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendChoke => {
+                    net.write_message(PeerMessage::Choke).await?;
+                    peer.lock().unwrap().update_last_message_sent();
                 }
                 PeerAction::SendPiece { index, begin, block } => {
                     let msg = PeerMessage::Piece { index, begin, block: &block };
                     net.write_message(msg).await?;
+                    peer.lock().unwrap().update_last_message_sent();
                 }
                 PeerAction::SendExtended { ext_id, payload } => {
                     let msg = PeerMessage::Extended { ext_id, payload: &payload };
                     net.write_message(msg).await?;
+                    peer.lock().unwrap().update_last_message_sent();
                 }
                 PeerAction::BroadcastCancel { index, begin, length, block_index } => {
                     let peers: Vec<PeerNetwork> = {
@@ -543,6 +591,33 @@ impl Peer {
                     };
                     for peer_net in peers {
                         let _ = peer_net.write_message(PeerMessage::Cancel { index, begin, length }).await;
+                    }
+                }
+                PeerAction::DiscoverPeers(peers) => {
+                    for details in peers {
+                        let should_connect = {
+                            let ctx = context.lock().unwrap();
+                            !ctx.is_peer_in_swarm(&details.ip) && !ctx.is_peer_blacklisted(&details.ip)
+                        };
+                        if should_connect {
+                            if let Some(mgr) = manager {
+                                if mgr.is_peer_dead(&details.ip) {
+                                    continue;
+                                }
+                            }
+                            let tc_arc = {
+                                let p = peer.lock().unwrap();
+                                p.tc.clone()
+                            };
+                            if let Some(ctx2) = tc_arc {
+                                let mgr2 = manager.clone();
+                                std::thread::spawn(move || {
+                                    futures::executor::block_on(crate::session::worker::handle_peer_session(
+                                        details, ctx2, mgr2,
+                                    ));
+                                });
+                            }
+                        }
                     }
                 }
             }
