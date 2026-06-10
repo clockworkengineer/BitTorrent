@@ -102,7 +102,17 @@ impl MetaInfoFile {
         Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "piece length")?;
         Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "pieces")?;
         Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "private")?;
-        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "url-list")?;
+        if let Some(entry) = Bencode::get_dictionary_entry(&root, b"url-list") {
+            match entry {
+                BNode::String(_) => {
+                    Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "url-list")?;
+                }
+                BNode::List(_) => {
+                    Self::get_list_of_strings(&mut self.meta_info_dict, &root, "url-list")?;
+                }
+                _ => {}
+            }
+        }
 
         if Bencode::get_dictionary_entry(&root, b"files").is_none() {
             Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "length")?;
@@ -157,6 +167,21 @@ impl MetaInfoFile {
         }
 
         Ok(urls)
+    }
+
+    /// Retrieves the list of WebSeed URLs from the "url-list" field.
+    pub fn get_web_seeds(&self) -> Vec<String> {
+        let mut urls = Vec::new();
+        if let Some(url_list_bytes) = self.meta_info_dict.get("url-list") {
+            let list_str = String::from_utf8_lossy(url_list_bytes);
+            for entry in list_str.split(',') {
+                let url = entry.trim();
+                if !url.is_empty() {
+                    urls.push(url.to_string());
+                }
+            }
+        }
+        urls
     }
 
     /// Returns the SHA-1 info hash of the `info` dictionary of the torrent.

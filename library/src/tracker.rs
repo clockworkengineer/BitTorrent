@@ -81,6 +81,14 @@ impl Default for AnnounceResponse {
     }
 }
 
+/// Structured response received from a tracker scrape request.
+#[derive(Debug, Clone, Default)]
+pub struct ScrapeResponse {
+    pub complete: usize,
+    pub downloaded: usize,
+    pub incomplete: usize,
+}
+
 /// Request context containing all variables needed to perform a tracker announce.
 pub struct TrackerAnnounceContext {
     pub info_hash: Vec<u8>,
@@ -512,5 +520,41 @@ impl Tracker {
                 "Cannot change interval as torrent is not seeding.".into(),
             ))
         }
+    }
+
+    /// Queries the tracker for statistics using the scrape protocol (HTTP/UDP).
+    pub fn scrape(&mut self) -> Result<ScrapeResponse, BitTorrentError> {
+        let mut last_error = None;
+        let original_tracker_url = self.tracker_url.clone();
+        for tracker_url in &self.tracker_urls.clone() {
+            self.tracker_url = tracker_url.clone();
+            if tracker_url != &original_tracker_url {
+                match AnnouncerFactory::create(tracker_url) {
+                    Ok(a) => self.announcer = a,
+                    Err(_) => continue,
+                }
+            }
+            for attempt in 0..3 {
+                let announce_context = self.build_announce_context();
+                match self.announcer.scrape(&announce_context) {
+                    Ok(res) => {
+                        self.tracker_url = original_tracker_url;
+                        return Ok(res);
+                    }
+                    Err(err) => {
+                        last_error = Some(err);
+                        if attempt < 2 {
+                            let sleep_ms = 200 * (1 << attempt);
+                            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        self.tracker_url = original_tracker_url;
+        Err(last_error.unwrap_or_else(|| {
+            BitTorrentError::Parse("No tracker URLs could be scraped.".to_string())
+        }))
     }
 }

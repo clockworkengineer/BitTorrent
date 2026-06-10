@@ -4,7 +4,7 @@
 //! and UDP (`UdpAnnouncer`) protocols to announce client status to trackers and receive peer lists.
 
 use crate::error::BitTorrentError;
-use crate::tracker::{AnnounceResponse, Tracker, TrackerAnnounceContext};
+use crate::tracker::{AnnounceResponse, ScrapeResponse, Tracker, TrackerAnnounceContext};
 #[cfg(feature = "http-tracker")]
 use crate::tracker::{PeerDetails, TrackerEvent};
 use crate::util::{pack_u32, pack_u64, unpack_u32, unpack_u64};
@@ -24,6 +24,14 @@ pub mod announcer_trait {
             &mut self,
             tracker: &TrackerAnnounceContext,
         ) -> Result<AnnounceResponse, BitTorrentError>;
+
+        /// Performs a scrape request to the tracker using the given context and returns the response.
+        fn scrape(
+            &mut self,
+            _tracker: &TrackerAnnounceContext,
+        ) -> Result<ScrapeResponse, BitTorrentError> {
+            Err(BitTorrentError::Parse("Scrape not supported by this announcer".into()))
+        }
     }
 }
 pub use announcer_trait::Announcer;
@@ -168,6 +176,23 @@ impl HttpAnnouncer {
 }
 
 #[cfg(feature = "http-tracker")]
+fn derive_scrape_url(announce_url: &str) -> Result<String, BitTorrentError> {
+    let mut parsed = url::Url::parse(announce_url)
+        .map_err(|e| BitTorrentError::Parse(e.to_string()))?;
+    
+    let path = parsed.path().to_string();
+    if let Some(idx) = path.rfind("announce") {
+        let mut new_path = path[..idx].to_string();
+        new_path.push_str("scrape");
+        new_path.push_str(&path[idx + "announce".len()..]);
+        parsed.set_path(&new_path);
+        Ok(parsed.into())
+    } else {
+        Err(BitTorrentError::Parse("Announce URL does not contain 'announce'".into()))
+    }
+}
+
+#[cfg(feature = "http-tracker")]
 impl Announcer for HttpAnnouncer {
     /// Executes the HTTP GET request to the tracker and decodes the response.
     fn announce(
@@ -178,6 +203,44 @@ impl Announcer for HttpAnnouncer {
         let url = self.build_announce_url(tracker);
         let body = tracker.http_client.get(&url)?;
         Self::decode_announce_response(tracker, &body)
+    }
+
+    fn scrape(
+        &mut self,
+        tracker: &TrackerAnnounceContext,
+    ) -> Result<ScrapeResponse, BitTorrentError> {
+        let base_url = derive_scrape_url(&tracker.tracker_url)?;
+        let info_hash = encode_binary(&tracker.info_hash);
+        let url = if base_url.contains('?') {
+            format!("{}&info_hash={}", base_url, info_hash)
+        } else {
+            format!("{}?info_hash={}", base_url, info_hash)
+        };
+        let body = tracker.http_client.get(&url)?;
+        let decoded = crate::bencode::Bencode::decode(&body)?;
+        let files = decoded.dict_get(b"files")
+            .ok_or_else(|| BitTorrentError::Parse("Scrape response missing 'files'".into()))?;
+        let torrent_data = files.dict_get(&tracker.info_hash)
+            .ok_or_else(|| BitTorrentError::Parse("Scrape response missing this info_hash".into()))?;
+        
+        let complete = torrent_data.dict_get(b"complete")
+            .and_then(|n| n.as_number_bytes())
+            .and_then(|b| String::from_utf8_lossy(b).parse::<usize>().ok())
+            .unwrap_or(0);
+        let downloaded = torrent_data.dict_get(b"downloaded")
+            .and_then(|n| n.as_number_bytes())
+            .and_then(|b| String::from_utf8_lossy(b).parse::<usize>().ok())
+            .unwrap_or(0);
+        let incomplete = torrent_data.dict_get(b"incomplete")
+            .and_then(|n| n.as_number_bytes())
+            .and_then(|b| String::from_utf8_lossy(b).parse::<usize>().ok())
+            .unwrap_or(0);
+            
+        Ok(ScrapeResponse {
+            complete,
+            downloaded,
+            incomplete,
+        })
     }
 }
 
@@ -293,6 +356,20 @@ impl UdpAnnouncer {
         packet
     }
 
+    /// Builds the 36-byte UDP scrape packet.
+    fn build_scrape_packet(
+        &self,
+        info_hash: &[u8],
+        transaction_id: u32,
+    ) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&pack_u64(self.connection_id));
+        packet.extend_from_slice(&pack_u32(2)); // action 2 = scrape
+        packet.extend_from_slice(&pack_u32(transaction_id));
+        packet.extend_from_slice(info_hash);
+        packet
+    }
+
     /// Performs the initial UDP connection handshake with the tracker to acquire a connection ID.
     fn connect(&mut self) -> Result<(), BitTorrentError> {
         let transaction_id: u32 = rand::random();
@@ -374,6 +451,63 @@ impl Announcer for UdpAnnouncer {
         }
         Ok(response)
     }
+
+    /// Executes the UDP scrape process by ensuring connection, transmitting scrape command, and parsing the response.
+    fn scrape(
+        &mut self,
+        tracker: &TrackerAnnounceContext,
+    ) -> Result<ScrapeResponse, BitTorrentError> {
+        if self.connected {
+            if let Some(at) = self.connected_at {
+                if at.elapsed() > Duration::from_secs(60) {
+                    self.connected = false;
+                    self.connection_id = 0;
+                }
+            }
+        }
+        self.ensure_socket()?;
+        if !self.connected {
+            if let Err(e) = self.connect() {
+                self.socket = None;
+                return Err(e);
+            }
+        }
+        let transaction_id: u32 = rand::random();
+        let reply = match self.send_command(&self.build_scrape_packet(&tracker.info_hash, transaction_id)) {
+            Ok(r) => r,
+            Err(e) => {
+                self.socket = None;
+                self.connected = false;
+                return Err(e);
+            }
+        };
+        if transaction_id != unpack_u32(&reply, 4) {
+            return Err(BitTorrentError::Parse(
+                "UDP scrape transaction ID mismatch".into(),
+            ));
+        }
+        let action = unpack_u32(&reply, 0);
+        if action == 2 {
+            if reply.len() < 20 {
+                return Err(BitTorrentError::Parse("UDP scrape response too short".into()));
+            }
+            let complete = unpack_u32(&reply, 8) as usize;
+            let downloaded = unpack_u32(&reply, 12) as usize;
+            let incomplete = unpack_u32(&reply, 16) as usize;
+            Ok(ScrapeResponse {
+                complete,
+                downloaded,
+                incomplete,
+            })
+        } else if action == 3 {
+            let status_message = String::from_utf8_lossy(&reply[8..]).into_owned();
+            Err(BitTorrentError::Parse(status_message))
+        } else {
+            Err(BitTorrentError::Parse(
+                "Invalid UDP scrape response action".into(),
+            ))
+        }
+    }
 }
 
 /// An enum dispatcher for different announcer implementations to avoid dynamic dispatch.
@@ -394,6 +528,18 @@ impl AnnouncerEnum {
             AnnouncerEnum::Http(a) => a.announce(tracker),
             AnnouncerEnum::Udp(a) => a.announce(tracker),
             AnnouncerEnum::Custom(a) => a.announce(tracker),
+        }
+    }
+
+    pub fn scrape(
+        &mut self,
+        tracker: &TrackerAnnounceContext,
+    ) -> Result<ScrapeResponse, BitTorrentError> {
+        match self {
+            #[cfg(feature = "http-tracker")]
+            AnnouncerEnum::Http(a) => a.scrape(tracker),
+            AnnouncerEnum::Udp(a) => a.scrape(tracker),
+            AnnouncerEnum::Custom(a) => a.scrape(tracker),
         }
     }
 }

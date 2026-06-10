@@ -74,6 +74,7 @@ pub struct TorrentContext {
     pub storage: Arc<dyn crate::io_traits::BlockStorage>,
     pub config: SessionConfig,
     pub download_path: std::path::PathBuf,
+    pub web_seeds: Vec<String>,
     // Metadata bootstrap fields
     pub metadata_size: Option<usize>,
     pub metadata_pieces: alloc::collections::BTreeMap<u32, Vec<u8>>,
@@ -93,6 +94,7 @@ impl TorrentContext {
     ) -> Result<Self, crate::error::BitTorrentError> {
         let info_hash = torrent_meta_info.get_info_hash()?;
         let tracker_urls = torrent_meta_info.get_tracker_urls()?;
+        let web_seeds = torrent_meta_info.get_web_seeds();
         let tracker_url = tracker_urls.get(0).cloned().ok_or_else(|| {
             crate::error::BitTorrentError::Parse("Torrent contains no tracker URLs.".into())
         })?;
@@ -149,6 +151,7 @@ impl TorrentContext {
             storage,
             config,
             download_path: download_path.to_path_buf(),
+            web_seeds,
             metadata_size: None,
             metadata_pieces: alloc::collections::BTreeMap::new(),
             requested_metadata_pieces: alloc::collections::BTreeMap::new(),
@@ -171,6 +174,7 @@ impl TorrentContext {
         let context = TorrentContext {
             info_hash,
             tracker_url,
+            web_seeds: Vec::new(),
             number_of_pieces: 0,
             piece_length: 0,
             pieces_info_hash: Vec::new(),
@@ -250,6 +254,7 @@ impl TorrentContext {
         
         disk_io.create_local_torrent_structure()?;
         
+        self.web_seeds = meta_info.get_web_seeds();
         self.number_of_pieces = number_of_pieces;
         self.piece_length = piece_length;
         self.pieces_info_hash = pieces_info_hash;

@@ -247,6 +247,7 @@ pub async fn handle_peer_session(
                 }
                 
                 let mut added_bytes = Vec::new();
+                let mut added6_bytes = Vec::new();
                 let mut newly_sent = std::collections::HashMap::new();
                 for detail in &current_swarm {
                     newly_sent.insert(detail.ip.clone(), detail.port);
@@ -254,29 +255,40 @@ pub async fn handle_peer_session(
                         if let Ok(ip_addr) = detail.ip.parse::<std::net::Ipv4Addr>() {
                             added_bytes.extend_from_slice(&ip_addr.octets());
                             added_bytes.extend_from_slice(&detail.port.to_be_bytes());
+                        } else if let Ok(ip6_addr) = detail.ip.parse::<std::net::Ipv6Addr>() {
+                            added6_bytes.extend_from_slice(&ip6_addr.octets());
+                            added6_bytes.extend_from_slice(&detail.port.to_be_bytes());
                         }
                     }
                 }
                 
                 let mut dropped_bytes = Vec::new();
+                let mut dropped6_bytes = Vec::new();
                 for (ip, &port) in &sent_peers {
                     if !newly_sent.contains_key(ip) {
                         if let Ok(ip_addr) = ip.parse::<std::net::Ipv4Addr>() {
                             dropped_bytes.extend_from_slice(&ip_addr.octets());
                             dropped_bytes.extend_from_slice(&port.to_be_bytes());
+                        } else if let Ok(ip6_addr) = ip.parse::<std::net::Ipv6Addr>() {
+                            dropped6_bytes.extend_from_slice(&ip6_addr.octets());
+                            dropped6_bytes.extend_from_slice(&port.to_be_bytes());
                         }
                     }
                 }
                 
                 sent_peers = newly_sent;
                 
-                if !added_bytes.is_empty() || !dropped_bytes.is_empty() {
-                    let added_node = crate::bencode::BNode::String(&added_bytes);
-                    let dropped_node = crate::bencode::BNode::String(&dropped_bytes);
-                    let pex_dict = crate::bencode::BNode::Dictionary(vec![
-                        (b"added", added_node),
-                        (b"dropped", dropped_node),
-                    ]);
+                if !added_bytes.is_empty() || !dropped_bytes.is_empty() || !added6_bytes.is_empty() || !dropped6_bytes.is_empty() {
+                    let mut pex_items = Vec::new();
+                    pex_items.push((b"added".as_slice(), crate::bencode::BNode::String(&added_bytes)));
+                    pex_items.push((b"dropped".as_slice(), crate::bencode::BNode::String(&dropped_bytes)));
+                    if !added6_bytes.is_empty() {
+                        pex_items.push((b"added6".as_slice(), crate::bencode::BNode::String(&added6_bytes)));
+                    }
+                    if !dropped6_bytes.is_empty() {
+                        pex_items.push((b"dropped6".as_slice(), crate::bencode::BNode::String(&dropped6_bytes)));
+                    }
+                    let pex_dict = crate::bencode::BNode::Dictionary(pex_items);
                     let pex_payload = crate::bencode::Bencode::encode(&pex_dict);
                     
                     if net.write_message(PeerMessage::Extended { ext_id, payload: &pex_payload }).await.is_ok() {

@@ -97,6 +97,9 @@ pub struct Peer {
     pub rolling_upload_rate: f64,
     pub last_message_sent: std::time::Instant,
     pub last_message_received: std::time::Instant,
+    pub supports_fast_extension: bool,
+    pub allowed_fast_pieces: Vec<u32>,
+    pub suggested_pieces: Vec<u32>,
 }
 
 impl Peer {
@@ -128,6 +131,9 @@ impl Peer {
             rolling_upload_rate: 0.0,
             last_message_sent: std::time::Instant::now(),
             last_message_received: std::time::Instant::now(),
+            supports_fast_extension: false,
+            allowed_fast_pieces: Vec::new(),
+            suggested_pieces: Vec::new(),
         }
     }
 
@@ -196,6 +202,7 @@ impl Peer {
         self.connected = true;
         self.remote_peer_id = Some(remote_peer_id.clone());
         self.supports_extensions = (reserved[5] & 0x10) != 0;
+        self.supports_fast_extension = (reserved[7] & 0x04) != 0;
         net.start_reads();
         Ok(remote_peer_id)
     }
@@ -530,8 +537,55 @@ impl Peer {
                                 actions.push(PeerAction::DiscoverPeers(added_peers));
                             }
                         }
+                        if let Some(added6_node) = bnode.dict_get(b"added6") {
+                            if let Some(added6_bytes) = added6_node.as_string() {
+                                let mut added_ipv6 = Vec::new();
+                                for chunk in added6_bytes.chunks_exact(18) {
+                                    let ip_addr = std::net::Ipv6Addr::new(
+                                        u16::from_be_bytes([chunk[0], chunk[1]]),
+                                        u16::from_be_bytes([chunk[2], chunk[3]]),
+                                        u16::from_be_bytes([chunk[4], chunk[5]]),
+                                        u16::from_be_bytes([chunk[6], chunk[7]]),
+                                        u16::from_be_bytes([chunk[8], chunk[9]]),
+                                        u16::from_be_bytes([chunk[10], chunk[11]]),
+                                        u16::from_be_bytes([chunk[12], chunk[13]]),
+                                        u16::from_be_bytes([chunk[14], chunk[15]]),
+                                    );
+                                    let ip = ip_addr.to_string();
+                                    let port = u16::from_be_bytes([chunk[16], chunk[17]]);
+                                    added_ipv6.push(PeerDetails {
+                                        info_hash: tc.info_hash.clone(),
+                                        peer_id: None,
+                                        ip,
+                                        port,
+                                    });
+                                }
+                                actions.push(PeerAction::DiscoverPeers(added_ipv6));
+                            }
+                        }
                     }
                 }
+            }
+            PeerMessage::Suggest(index) => {
+                self.suggested_pieces.push(index);
+            }
+            PeerMessage::HaveAll => {
+                self.remote_piece_bitfield.fill(0xFF);
+                self.number_of_missing_pieces = 0;
+                tc.merge_piece_bitfield(self);
+            }
+            PeerMessage::HaveNone => {
+                self.remote_piece_bitfield.fill(0x00);
+                self.number_of_missing_pieces = tc.number_of_pieces;
+            }
+            PeerMessage::Reject { index, begin, length } => {
+                let block_index = begin / crate::constants::BLOCK_SIZE as u32;
+                self.reserved_blocks.retain(|&(p, b, _)| !(p == index && b == block_index));
+                self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
+                tc.release_block_request(index, block_index);
+            }
+            PeerMessage::AllowedFast(index) => {
+                self.allowed_fast_pieces.push(index);
             }
         }
         Ok(actions)

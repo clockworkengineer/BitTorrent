@@ -38,6 +38,15 @@ pub enum PeerMessage<'a> {
         ext_id: u8,
         payload: &'a [u8],
     },
+    Suggest(u32),
+    HaveAll,
+    HaveNone,
+    Reject {
+        index: u32,
+        begin: u32,
+        length: u32,
+    },
+    AllowedFast(u32),
 }
 
 impl<'a> PeerMessage<'a> {
@@ -99,6 +108,27 @@ impl<'a> PeerMessage<'a> {
                 buffer.push(20);
                 buffer.push(*ext_id);
                 buffer.extend_from_slice(payload);
+                buffer
+            }
+            PeerMessage::Suggest(index) => {
+                let mut buffer = Vec::with_capacity(9);
+                buffer.extend_from_slice(&5u32.to_be_bytes());
+                buffer.push(13);
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer
+            }
+            PeerMessage::HaveAll => vec![0, 0, 0, 1, 14],
+            PeerMessage::HaveNone => vec![0, 0, 0, 1, 15],
+            PeerMessage::Reject {
+                index,
+                begin,
+                length,
+            } => Self::encode_triple_u32(16, *index, *begin, *length),
+            PeerMessage::AllowedFast(index) => {
+                let mut buffer = Vec::with_capacity(9);
+                buffer.extend_from_slice(&5u32.to_be_bytes());
+                buffer.push(17);
+                buffer.extend_from_slice(&index.to_be_bytes());
                 buffer
             }
         }
@@ -173,6 +203,30 @@ impl<'a> PeerMessage<'a> {
                     payload: ext_payload,
                 })
             }
+            13 => {
+                if payload.len() != SIZE_OF_U32 {
+                    return Err(BitTorrentError::Parse("Invalid SUGGEST payload length".into()));
+                }
+                let index = u32::from_be_bytes(payload.try_into().unwrap());
+                Ok(PeerMessage::Suggest(index))
+            }
+            14 => Ok(PeerMessage::HaveAll),
+            15 => Ok(PeerMessage::HaveNone),
+            16 => {
+                let (index, begin, length) = Self::decode_triple_u32(payload)?;
+                Ok(PeerMessage::Reject {
+                    index,
+                    begin,
+                    length,
+                })
+            }
+            17 => {
+                if payload.len() != SIZE_OF_U32 {
+                    return Err(BitTorrentError::Parse("Invalid ALLOWED FAST payload length".into()));
+                }
+                let index = u32::from_be_bytes(payload.try_into().unwrap());
+                Ok(PeerMessage::AllowedFast(index))
+            }
             _ => Err(BitTorrentError::Parse("Unknown peer message ID".into())),
         }
     }
@@ -191,6 +245,7 @@ impl<'a> PeerMessage<'a> {
         buffer.extend_from_slice(b"BitTorrent protocol");
         let mut reserved = [0u8; 8];
         reserved[5] |= 0x10; // Support Extension Protocol (BEP 10)
+        reserved[7] |= 0x04; // Support Fast Extension (BEP 6)
         buffer.extend_from_slice(&reserved);
         buffer.extend_from_slice(info_hash);
         buffer.extend_from_slice(peer_id);

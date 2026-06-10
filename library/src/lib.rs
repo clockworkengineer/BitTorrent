@@ -115,11 +115,15 @@ pub mod selector;
 #[cfg(feature = "std")]
 pub mod dht;
 #[cfg(feature = "std")]
+pub mod lsd;
+#[cfg(feature = "std")]
 pub mod session;
 #[cfg(feature = "std")]
 pub mod torrent_context;
 #[cfg(feature = "std")]
 pub mod tracker;
+#[cfg(feature = "std")]
+pub mod webseed;
 pub mod util;
 
 pub use average::Average;
@@ -150,4 +154,4 @@ pub use session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
 pub use torrent_context::{TorrentContext, TorrentStatus};
 #[cfg(feature = "std")]
-pub use tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus};
+pub use tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus, ScrapeResponse};

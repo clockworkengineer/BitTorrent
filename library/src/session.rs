@@ -447,6 +447,35 @@ impl TorrentSession {
         let info_hash = context.info_hash.clone();
         drop(context);
 
+        let (peer_tx, peer_rx): (std::sync::mpsc::Sender<crate::tracker::PeerDetails>, std::sync::mpsc::Receiver<crate::tracker::PeerDetails>) = std::sync::mpsc::channel();
+        let context_clone = self.context.clone();
+        let manager_clone = self.manager.clone();
+        let peer_workers = self.peer_workers.clone();
+
+        thread::spawn(move || {
+            while let Ok(peer_details) = peer_rx.recv() {
+                let pg = context_clone.lock().unwrap();
+                if pg.status == TorrentStatus::Downloading || pg.status == TorrentStatus::Seeding {
+                    if !pg.peer_swarm.read().unwrap().contains_key(&peer_details.ip) {
+                        let ctx2 = context_clone.clone();
+                        let mgr2 = manager_clone.clone();
+                        let workers = peer_workers.clone();
+                        let handle = thread::spawn(move || {
+                            futures::executor::block_on(self::worker::handle_peer_session(peer_details, ctx2, mgr2));
+                        });
+                        workers.lock().unwrap().push(handle);
+                    }
+                }
+            }
+        });
+
+        // Start LSD (Local Service Discovery) listener and announcer
+        let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
+        let _lsd_listener_handle = lsd_listener.start();
+
+        let lsd_announcer = crate::lsd::LsdAnnouncer::new(info_hash.clone(), 6881);
+        let _lsd_announcer_handle = lsd_announcer.start(self.context.clone());
+
         if config.dht_enabled && self.dht.is_none() {
             if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
                 let _ = d.start();
@@ -460,30 +489,15 @@ impl TorrentSession {
                     ih.copy_from_slice(&info_hash);
                 }
 
-                let context_clone = self.context.clone();
-                let manager_clone = self.manager.clone();
-                let peer_workers = self.peer_workers.clone();
-                let (peer_tx, peer_rx) = std::sync::mpsc::channel();
-
                 d_arc.lookup_peers(ih, peer_tx);
-
-                thread::spawn(move || {
-                    while let Ok(peer_details) = peer_rx.recv() {
-                        let pg = context_clone.lock().unwrap();
-                        if pg.status == TorrentStatus::Downloading || pg.status == TorrentStatus::Seeding {
-                            if !pg.peer_swarm.read().unwrap().contains_key(&peer_details.ip) {
-                                let ctx2 = context_clone.clone();
-                                let mgr2 = manager_clone.clone();
-                                let workers = peer_workers.clone();
-                                let handle = thread::spawn(move || {
-                                    futures::executor::block_on(self::worker::handle_peer_session(peer_details, ctx2, mgr2));
-                                });
-                                workers.lock().unwrap().push(handle);
-                            }
-                        }
-                    }
-                });
             }
+        }
+
+        // Start WebSeeding loop if available
+        let web_seeds = self.context.lock().unwrap().web_seeds.clone();
+        if !web_seeds.is_empty() {
+            let webseed_handle = crate::webseed::start_webseed_loop(self.context.clone(), web_seeds);
+            self.peer_workers.lock().unwrap().push(webseed_handle);
         }
 
         let mut context = self.context.lock().unwrap();
