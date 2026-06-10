@@ -124,6 +124,12 @@ pub mod torrent_context;
 pub mod tracker;
 #[cfg(feature = "std")]
 pub mod webseed;
+#[cfg(feature = "std")]
+pub mod mse;
+#[cfg(feature = "std")]
+pub mod utp;
+#[cfg(feature = "std")]
+pub mod nat;
 pub mod util;
 
 pub use average::Average;
@@ -149,6 +155,8 @@ pub use peer_message::PeerMessage;
 pub use selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
 #[cfg(feature = "std")]
 pub use dht::Dht;
+#[cfg(feature = "std")]
+pub use utp::UtpSocketAdapter;
 #[cfg(feature = "std")]
 pub use session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]

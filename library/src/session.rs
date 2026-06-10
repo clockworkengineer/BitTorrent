@@ -40,6 +40,8 @@ pub struct SessionConfig {
     pub http_client: Arc<dyn crate::io_traits::HttpClient>,
     pub dht_enabled: bool,
     pub dht_port: u16,
+    /// Enable Message Stream Encryption (MSE/PE) handshake obfuscation.
+    pub mse_enabled: bool,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -76,6 +78,7 @@ impl Default for SessionConfig {
             http_client: Arc::new(crate::io_traits::UreqHttpClient),
             dht_enabled: true,
             dht_port: 6881,
+            mse_enabled: false,
         }
     }
 }
@@ -89,6 +92,7 @@ pub struct TorrentSession {
     executor_thread: Option<thread::JoinHandle<()>>,
     manager: Option<Arc<Manager>>,
     pub dht: Option<Arc<crate::dht::Dht>>,
+    pub nat_pmp: Option<Arc<crate::nat::NatPmpClient>>,
 }
 
 /// A builder for constructing `TorrentSession` configurations.
@@ -257,6 +261,7 @@ impl TorrentSession {
             executor_thread: Some(executor_thread),
             manager: None,
             dht: None,
+            nat_pmp: None,
         };
 
         session.context.lock().unwrap().validate()?;
@@ -371,6 +376,7 @@ impl TorrentSession {
             executor_thread: Some(executor_thread),
             manager: None,
             dht: None,
+            nat_pmp: None,
         };
 
         spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
@@ -470,13 +476,16 @@ impl TorrentSession {
         });
 
         // Start LSD (Local Service Discovery) listener and announcer
-        let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
-        let _lsd_listener_handle = lsd_listener.start();
+        let is_private = self.context.lock().unwrap().is_private;
+        if !is_private {
+            let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
+            let _lsd_listener_handle = lsd_listener.start();
 
-        let lsd_announcer = crate::lsd::LsdAnnouncer::new(info_hash.clone(), 6881);
-        let _lsd_announcer_handle = lsd_announcer.start(self.context.clone());
+            let lsd_announcer = crate::lsd::LsdAnnouncer::new(info_hash.clone(), 6881);
+            let _lsd_announcer_handle = lsd_announcer.start(self.context.clone());
+        }
 
-        if config.dht_enabled && self.dht.is_none() {
+        if config.dht_enabled && self.dht.is_none() && !is_private {
             if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
                 let _ = d.start();
                 d.bootstrap();
@@ -500,6 +509,14 @@ impl TorrentSession {
             self.peer_workers.lock().unwrap().push(webseed_handle);
         }
 
+        let gateway = crate::nat::get_default_gateway();
+        let nat_client = Arc::new(crate::nat::NatPmpClient::new(gateway));
+        self.nat_pmp = Some(nat_client.clone());
+        thread::spawn(move || {
+            let _ = nat_client.request_mapping(true, 6881, 6881, 3600);
+            let _ = nat_client.request_mapping(false, 6881, 6881, 3600);
+        });
+
         let mut context = self.context.lock().unwrap();
         context.start_downloading()
     }
@@ -518,6 +535,13 @@ impl TorrentSession {
     pub fn stop(&mut self) -> Result<(), BitTorrentError> {
         if let Some(ref d) = self.dht {
             d.stop();
+        }
+        if let Some(ref nat) = self.nat_pmp {
+            let nat_clone = nat.clone();
+            thread::spawn(move || {
+                let _ = nat_clone.release_mapping(true, 6881);
+                let _ = nat_clone.release_mapping(false, 6881);
+            });
         }
         let context = self.context.lock().unwrap();
         context.disconnect_all_peers();

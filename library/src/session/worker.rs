@@ -101,7 +101,7 @@ pub async fn handle_peer_session(
         socket,
     )));
 
-    let net = {
+    let mut net = {
         let mut pg = peer.lock().unwrap();
         pg.set_torrent_context(context.clone());
         match &pg.network {
@@ -112,6 +112,40 @@ pub async fn handle_peer_session(
             }
         }
     };
+
+    // MSE Diffie-Hellman handshake negotiation (only when enabled in config)
+    if config.mse_enabled {
+        let dh = crate::mse::DiffieHellman::new();
+        let local_pub_bytes = dh.public_key.to_be_bytes();
+        if net.write(&local_pub_bytes).await.is_err() {
+            mark_peer_dead(&manager, &peer_details.ip);
+            return;
+        }
+        let mut remote_pub_bytes = [0u8; 8];
+        if net.read_exact(&mut remote_pub_bytes).await.is_err() {
+            mark_peer_dead(&manager, &peer_details.ip);
+            return;
+        }
+        let remote_pub_key = u64::from_be_bytes(remote_pub_bytes);
+        let secret = dh.compute_shared_secret(remote_pub_key);
+
+        // Derive RC4 cipher keys from the shared secret
+        use sha1::Digest;
+        let mut enc_hasher = sha1::Sha1::new();
+        enc_hasher.update(&secret);
+        enc_hasher.update(b"initiator");
+        let enc_key = enc_hasher.finalize();
+
+        let mut dec_hasher = sha1::Sha1::new();
+        dec_hasher.update(&secret);
+        dec_hasher.update(b"receiver");
+        let dec_key = dec_hasher.finalize();
+
+        let rc4_enc = crate::mse::Rc4::new(&enc_key);
+        let rc4_dec = crate::mse::Rc4::new(&dec_key);
+        net.set_mse_ciphers(rc4_enc, rc4_dec);
+        peer.lock().unwrap().network = Some(net.clone());
+    }
 
     if net.write_handshake(&info_hash, local_peer_id.as_bytes()).await.is_err() {
         mark_peer_dead(&manager, &peer_details.ip);
@@ -218,11 +252,12 @@ pub async fn handle_peer_session(
         }
 
         // Periodic PEX broadcast check
-        let supports_extensions = {
+        let (supports_extensions, is_private) = {
             let pg = peer.lock().unwrap();
-            pg.supports_extensions
+            let ctx = context.lock().unwrap();
+            (pg.supports_extensions, ctx.is_private)
         };
-        if supports_extensions && last_pex_sent.elapsed() > Duration::from_secs(60) {
+        if supports_extensions && !is_private && last_pex_sent.elapsed() > Duration::from_secs(60) {
             let pex_ext_id = {
                 let pg = peer.lock().unwrap();
                 pg.extension_ids.get("ut_pex").cloned()

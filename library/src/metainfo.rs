@@ -100,8 +100,21 @@ impl MetaInfoFile {
         Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "creation date")?;
         Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "name")?;
         Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "piece length")?;
-        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "pieces")?;
+        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "meta version")?;
         Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "private")?;
+
+        let is_v2 = if let Some(ver) = self.meta_info_dict.get("meta version") {
+            String::from_utf8_lossy(ver).trim() == "2"
+        } else {
+            false
+        };
+
+        if is_v2 {
+            Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "pieces")?;
+        } else {
+            Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "pieces")?;
+        }
+
         if let Some(entry) = Bencode::get_dictionary_entry(&root, b"url-list") {
             match entry {
                 BNode::String(_) => {
@@ -114,11 +127,24 @@ impl MetaInfoFile {
             }
         }
 
-        if Bencode::get_dictionary_entry(&root, b"files").is_none() {
-            Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "length")?;
-            Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "md5sum")?;
+        if is_v2 {
+            if let Some(file_tree) = Bencode::get_dictionary_entry(&root, b"file tree") {
+                let mut current_path = Vec::new();
+                let mut files = Vec::new();
+                traverse_file_tree(file_tree, &mut current_path, &mut files);
+                for (i, (path, length, pieces_root)) in files.into_iter().enumerate() {
+                    let file_entry = format!("{}{}\0{}", MAIN_SEPARATOR, path.replace("/", &MAIN_SEPARATOR.to_string()), length);
+                    self.meta_info_dict.insert(format!("pieces_root_{}", i), pieces_root);
+                    self.meta_info_dict.insert(i.to_string(), file_entry.into_bytes());
+                }
+            }
         } else {
-            Self::get_list_of_dictionarys(&mut self.meta_info_dict, &root, "files")?;
+            if Bencode::get_dictionary_entry(&root, b"files").is_none() {
+                Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "length")?;
+                Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "md5sum")?;
+            } else {
+                Self::get_list_of_dictionarys(&mut self.meta_info_dict, &root, "files")?;
+            }
         }
 
         Self::calculate_info_hash(&mut self.meta_info_dict, &root)?;
@@ -184,6 +210,25 @@ impl MetaInfoFile {
         urls
     }
 
+    /// Returns whether the torrent is marked as private (BEP 27).
+    pub fn is_private(&self) -> bool {
+        if let Some(private_bytes) = self.meta_info_dict.get("private") {
+            let val = String::from_utf8_lossy(private_bytes);
+            val.trim() == "1"
+        } else {
+            false
+        }
+    }
+
+    /// Returns whether the torrent is a BitTorrent V2 torrent (BEP 52).
+    pub fn is_v2(&self) -> bool {
+        if let Some(ver) = self.meta_info_dict.get("meta version") {
+            String::from_utf8_lossy(ver).trim() == "2"
+        } else {
+            false
+        }
+    }
+
     /// Returns the SHA-1 info hash of the `info` dictionary of the torrent.
     pub fn get_info_hash(&self) -> Result<Vec<u8>, BitTorrentError> {
         if !self.parsed {
@@ -240,11 +285,13 @@ impl MetaInfoFile {
             ));
         }
 
-        let pieces = self.get_pieces_info_hash()?;
-        if pieces.is_empty() || pieces.len() % crate::constants::HASH_LENGTH != 0 {
-            return Err(BitTorrentError::Parse(
-                "Invalid torrent pieces hash length.".into(),
-            ));
+        if !self.is_v2() {
+            let pieces = self.get_pieces_info_hash()?;
+            if pieces.is_empty() || pieces.len() % crate::constants::HASH_LENGTH != 0 {
+                return Err(BitTorrentError::Parse(
+                    "Invalid torrent pieces hash length.".into(),
+                ));
+            }
         }
 
         #[cfg(feature = "std")]
@@ -457,10 +504,25 @@ impl MetaInfoFile {
         let info = Bencode::get_dictionary_entry(root, b"info")
             .ok_or_else(|| BitTorrentError::MissingField("info".into()))?;
         let encoded = Bencode::encode(info);
-        let mut hasher = Sha1::new();
-        hasher.update(&encoded);
-        let digest = hasher.finalize();
-        meta_info_dict.insert("info hash".to_string(), digest.to_vec());
+        
+        let is_v2 = if let Some(ver) = meta_info_dict.get("meta version") {
+            String::from_utf8_lossy(ver).trim() == "2"
+        } else {
+            false
+        };
+        
+        if is_v2 {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&encoded);
+            let digest = hasher.finalize();
+            meta_info_dict.insert("info hash".to_string(), digest.to_vec());
+        } else {
+            let mut hasher = Sha1::new();
+            hasher.update(&encoded);
+            let digest = hasher.finalize();
+            meta_info_dict.insert("info hash".to_string(), digest.to_vec());
+        }
         Ok(())
     }
 
@@ -490,5 +552,35 @@ impl MetaInfoFile {
             }
         }
         Ok(())
+    }
+}
+
+fn traverse_file_tree(
+    node: &BNode<'_>,
+    current_path: &mut Vec<String>,
+    files: &mut Vec<(String, u64, Vec<u8>)>,
+) {
+    if let BNode::Dictionary(entries) = node {
+        if let Some(leaf_props) = entries.iter().find(|(k, _)| k.is_empty()).map(|(_, v)| v) {
+            let length = leaf_props.dict_get(b"length")
+                .and_then(|n| n.as_number_bytes())
+                .and_then(|b| core::str::from_utf8(b).ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let pieces_root = leaf_props.dict_get(b"pieces root")
+                .and_then(|s| s.as_string())
+                .unwrap_or(&[])
+                .to_vec();
+            let file_path = current_path.join("/");
+            files.push((file_path, length, pieces_root));
+        } else {
+            for (key, val) in entries {
+                if let Ok(segment) = core::str::from_utf8(key) {
+                    current_path.push(segment.to_string());
+                    traverse_file_tree(val, current_path, files);
+                    current_path.pop();
+                }
+            }
+        }
     }
 }
