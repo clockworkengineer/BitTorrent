@@ -69,20 +69,25 @@ impl SessionState {
             last_uploaded: 0,
         };
         if let Ok(ctx_guard) = state.session.context().lock() {
-            state.last_file_name = std::path::Path::new(&ctx_guard.file_name)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| ctx_guard.file_name.clone());
-            state.last_progress = ctx_guard.progress_percent() / 100.0;
-            state.last_status = format!("{:?}", ctx_guard.status);
-            state.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
-            state.last_peers_active = ctx_guard.number_of_unchoked_peers();
-            state.last_bps = ctx_guard.bytes_per_second() as u64;
-            state.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
-            state.last_total = ctx_guard.total_bytes_to_download;
-            state.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
+            state.update_fields(&ctx_guard);
         }
         state
+    }
+
+    /// Synchronizes the local session state fields with the underlying TorrentContext.
+    fn update_fields(&mut self, ctx_guard: &bittorrent_rs::TorrentContext) {
+        self.last_file_name = std::path::Path::new(&ctx_guard.file_name)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| ctx_guard.file_name.clone());
+        self.last_progress = ctx_guard.progress_percent() / 100.0;
+        self.last_status = format!("{:?}", ctx_guard.status);
+        self.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
+        self.last_peers_active = ctx_guard.number_of_unchoked_peers();
+        self.last_bps = ctx_guard.bytes_per_second() as u64;
+        self.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+        self.last_total = ctx_guard.total_bytes_to_download;
+        self.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -184,19 +189,7 @@ impl eframe::App for TorrentClientApp {
                 .show(ui, |ui| {
                     for session_state in &mut self.sessions {
                         if let Ok(ctx_guard) = session_state.session.context().try_lock() {
-                            session_state.last_file_name = std::path::Path::new(&ctx_guard.file_name)
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| ctx_guard.file_name.clone());
-
-                            session_state.last_progress = ctx_guard.progress_percent() / 100.0;
-                            session_state.last_status = format!("{:?}", ctx_guard.status);
-                            session_state.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
-                            session_state.last_peers_active = ctx_guard.number_of_unchoked_peers();
-                            session_state.last_bps = ctx_guard.bytes_per_second() as u64;
-                            session_state.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
-                            session_state.last_total = ctx_guard.total_bytes_to_download;
-                            session_state.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
+                            session_state.update_fields(&ctx_guard);
                         }
 
                         let file_name = &session_state.last_file_name;
@@ -341,13 +334,18 @@ impl TorrentClientApp {
             let _ = msg_tx.send(format!("[{}] Connecting to tracker…", session_id));
             println!("[{}] Connecting to tracker…", session_id);
 
+            // Helper to log errors and send them to the GUI messages panel
+            let log_err = |msg: String| {
+                let err_msg = format!("[{}] {}", session_id, msg);
+                let _ = msg_tx.send(err_msg.clone());
+                eprintln!("{}", err_msg);
+            };
+
             let mut session = if torrent_path.starts_with("magnet:?") {
                 match TorrentSession::new_magnet(&torrent_path, &download_dir_buf) {
                     Ok(s) => s,
                     Err(e) => {
-                        let err_msg = format!("Failed to create magnet session: {}", e);
-                        let _ = msg_tx.send(err_msg.clone());
-                        eprintln!("{}", err_msg);
+                        log_err(format!("Failed to create magnet session: {}", e));
                         return;
                     }
                 }
@@ -355,27 +353,21 @@ impl TorrentClientApp {
                 match TorrentSession::new(&torrent_path_buf, &download_dir_buf, false) {
                     Ok(s) => s,
                     Err(e) => {
-                        let err_msg = format!("Failed to create session: {}", e);
-                        let _ = msg_tx.send(err_msg.clone());
-                        eprintln!("{}", err_msg);
+                        log_err(format!("Failed to create session: {}", e));
                         return;
                     }
                 }
             };
 
             if let Err(e) = session.start_download() {
-                let err_msg = format!("[{}] Failed to start download: {}", session_id, e);
-                let _ = msg_tx.send(err_msg.clone());
-                eprintln!("{}", err_msg);
+                log_err(format!("Failed to start download: {}", e));
                 return;
             }
 
             let mut tracker = match Tracker::new(session.context()) {
                 Ok(t) => t,
                 Err(e) => {
-                    let err_msg = format!("[{}] Tracker setup failed: {}", session_id, e);
-                    let _ = msg_tx.send(err_msg.clone());
-                    eprintln!("{}", err_msg);
+                    log_err(format!("Tracker setup failed: {}", e));
                     let _ = session_tx.send(session);
                     return;
                 }
