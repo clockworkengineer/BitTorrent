@@ -3,5 +3,7 @@ resolver = "3"
 members = [
     "library",
     "examples/torrent_session_example",
+    "examples/torrent_info_example",
+    "examples/magnet_dht_example",
     "clients/torrent_client",
 ]
