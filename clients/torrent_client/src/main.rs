@@ -1,3 +1,9 @@
+//! Graphical BitTorrent Client Application
+//!
+//! A desktop application built using `eframe`/`egui` that utilizes the
+//! `bittorrent-rs` library. It supports managing multiple torrent sessions,
+//! viewing real-time download and upload progress, and displaying log output.
+
 use bittorrent_rs::{TorrentSession, Tracker};
 use eframe::egui;
 use std::env;
