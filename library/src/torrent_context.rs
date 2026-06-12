@@ -817,7 +817,20 @@ impl TorrentContext {
 
             let piece_length = self.get_piece_length(piece_number);
             let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
+
+            let piece_buffers = self.assembler.piece_buffers.lock().unwrap();
+            let present_blocks = piece_buffers.get(&piece_number)
+                .map(|pb| pb.lock().unwrap().blocks_present().to_vec())
+                .unwrap_or_else(|| vec![false; block_count as usize]);
+            drop(piece_buffers);
+
             for block_index in 0..block_count {
+                if present_blocks[block_index as usize] {
+                    continue;
+                }
+                if peer.reserved_blocks.iter().any(|&(p, b, _)| p == piece_number && b == block_index) {
+                    continue;
+                }
                 let begin = block_index * BLOCK_SIZE as u32;
                 let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));
                 self.reserve_block_request(piece_number, block_index);

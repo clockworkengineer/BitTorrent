@@ -44,21 +44,32 @@ async fn check_request_timeouts(
     };
 
     if !timed_out_requests.is_empty() {
-        let ctx = context.lock().unwrap();
-        for (pn, bi) in timed_out_requests {
-            ctx.release_block_request(pn, bi);
-            let begin = bi * crate::constants::BLOCK_SIZE as u32;
-            let length = std::cmp::min(
-                crate::constants::BLOCK_SIZE as u32,
-                ctx.get_piece_length(pn).saturating_sub(begin),
-            );
+        let net_opt = {
             let mut pg = peer.lock().unwrap();
-            pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_sub(1);
-            let _ = pg.send_message(PeerMessage::Cancel {
-                index: pn,
-                begin,
-                length,
-            }).await;
+            let ctx = context.lock().unwrap();
+            for &(pn, bi) in &timed_out_requests {
+                ctx.release_block_request(pn, bi);
+                pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_sub(1);
+            }
+            pg.network.clone()
+        };
+
+        if let Some(net) = net_opt {
+            for (pn, bi) in timed_out_requests {
+                let begin = bi * crate::constants::BLOCK_SIZE as u32;
+                let length = {
+                    let ctx = context.lock().unwrap();
+                    std::cmp::min(
+                        crate::constants::BLOCK_SIZE as u32,
+                        ctx.get_piece_length(pn).saturating_sub(begin),
+                    )
+                };
+                let _ = net.write_message(PeerMessage::Cancel {
+                    index: pn,
+                    begin,
+                    length,
+                }).await;
+            }
         }
     }
 }
@@ -253,8 +264,8 @@ pub async fn handle_peer_session(
 
         // Periodic PEX broadcast check
         let (supports_extensions, is_private) = {
-            let pg = peer.lock().unwrap();
             let ctx = context.lock().unwrap();
+            let pg = peer.lock().unwrap();
             (pg.supports_extensions, ctx.is_private)
         };
         if supports_extensions && !is_private && last_pex_sent.elapsed() > Duration::from_secs(60) {
@@ -372,8 +383,8 @@ pub async fn handle_peer_session(
         };
         
         let actions_res = {
-            let mut pg = peer.lock().unwrap();
             let mut ctx = context.lock().unwrap();
+            let mut pg = peer.lock().unwrap();
             pg.handle_peer_message(message, &mut ctx)
         };
         let actions = match actions_res {
@@ -407,8 +418,8 @@ pub async fn handle_peer_session(
 
         if is_magnet_bootstrap && is_downloading {
             let request_piece = {
-                let pg = peer.lock().unwrap();
                 let mut ctx = context.lock().unwrap();
+                let pg = peer.lock().unwrap();
                 if pg.supports_extensions {
                     if let Some(&peer_ext_id) = pg.extension_ids.get("ut_metadata") {
                         if let Some(size) = ctx.metadata_size {
@@ -496,8 +507,8 @@ pub async fn handle_peer_session(
             let mut none_count = 0;
             for _ in 0..to_send {
                 let next_req = {
-                    let pg = peer.lock().unwrap();
                     let mut ctx = context.lock().unwrap();
+                    let pg = peer.lock().unwrap();
                     ctx.next_block_request_for_peer(&pg)
                 };
                 match next_req {
@@ -537,7 +548,8 @@ pub async fn handle_peer_session(
     log_debug!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port);
     {
         let mut ctx = context.lock().unwrap();
-        if let Ok(pg) = peer.try_lock() {
+        {
+            let pg = peer.lock().unwrap();
             for &(pn, bi, _) in &pg.reserved_blocks {
                 ctx.release_block_request(pn, bi);
             }
