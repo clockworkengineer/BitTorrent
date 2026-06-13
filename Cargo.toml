@@ -6,4 +6,5 @@ members = [
     "examples/torrent_info_example",
     "examples/magnet_dht_example",
     "clients/torrent_client",
+    "clients/torrent_client_shared",
 ]

@@ -3370,6 +3370,14 @@ version = "0.1.0"
 dependencies = [
  "bittorrent-rs",
  "eframe",
+ "torrent_client_shared",
+]
+
+[[package]]
+name = "torrent_client_shared"
+version = "0.1.0"
+dependencies = [
+ "bittorrent-rs",
 ]
 
 [[package]]

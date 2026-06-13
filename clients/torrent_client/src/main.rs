@@ -10,6 +10,7 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
+use torrent_client_shared::{SessionState, PendingSession, fmt_bytes};
 
 fn main() {
     let mut args = env::args_os().skip(1);
@@ -45,62 +46,7 @@ fn main() {
     .unwrap();
 }
 
-struct SessionState {
-    session: TorrentSession,
-    torrent_path: String,
-    last_file_name: String,
-    last_progress: f32,
-    last_status: String,
-    last_peers_connected: usize,
-    last_peers_active: usize,
-    last_bps: u64,
-    last_downloaded: u64,
-    last_total: u64,
-    last_uploaded: u64,
-}
 
-impl SessionState {
-    fn new(session: TorrentSession, torrent_path: String) -> Self {
-        let mut state = Self {
-            session,
-            torrent_path,
-            last_file_name: String::new(),
-            last_progress: 0.0,
-            last_status: String::new(),
-            last_peers_connected: 0,
-            last_peers_active: 0,
-            last_bps: 0,
-            last_downloaded: 0,
-            last_total: 0,
-            last_uploaded: 0,
-        };
-        if let Ok(ctx_guard) = state.session.context().lock() {
-            state.update_fields(&ctx_guard);
-        }
-        state
-    }
-
-    /// Synchronizes the local session state fields with the underlying TorrentContext.
-    fn update_fields(&mut self, ctx_guard: &bittorrent_rs::TorrentContext) {
-        self.last_file_name = std::path::Path::new(&ctx_guard.file_name)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| ctx_guard.file_name.clone());
-        self.last_progress = ctx_guard.progress_percent() / 100.0;
-        self.last_status = format!("{:?}", ctx_guard.status);
-        self.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
-        self.last_peers_active = ctx_guard.number_of_unchoked_peers();
-        self.last_bps = ctx_guard.bytes_per_second() as u64;
-        self.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
-        self.last_total = ctx_guard.total_bytes_to_download;
-        self.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-struct PendingSession {
-    torrent_path: String,
-    rx: mpsc::Receiver<TorrentSession>,
-}
 
 struct TorrentClientApp {
     torrent_path: String,
@@ -243,17 +189,6 @@ impl eframe::App for TorrentClientApp {
     }
 }
 
-fn fmt_bytes(bytes: u64) -> String {
-    if bytes >= 1_073_741_824 {
-        format!("{:.2} GB", bytes as f64 / 1_073_741_824.0)
-    } else if bytes >= 1_048_576 {
-        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
-    } else if bytes >= 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{} B", bytes)
-    }
-}
 
 impl TorrentClientApp {
     fn save_state(&self) {
