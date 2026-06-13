@@ -144,18 +144,10 @@ impl eframe::App for TorrentClientApp {
                             session_state.update_fields(&ctx_guard);
                         }
 
-                        let file_name = &session_state.last_file_name;
                         let progress = session_state.last_progress;
-                        let status = &session_state.last_status;
-                        let peers_connected = session_state.last_peers_connected;
-                        let peers_active = session_state.last_peers_active;
-                        let bps = session_state.last_bps;
-                        let downloaded = session_state.last_downloaded;
-                        let total = session_state.last_total;
-                        let uploaded = session_state.last_uploaded;
 
                         ui.group(|ui| {
-                            ui.label(egui::RichText::new(file_name).strong());
+                            ui.label(egui::RichText::new(&session_state.last_file_name).strong());
 
                             let bar = egui::ProgressBar::new(progress)
                                 .text(format!("{:.1}%", progress * 100.0))
@@ -163,22 +155,22 @@ impl eframe::App for TorrentClientApp {
                             ui.add(bar);
 
                             ui.horizontal(|ui| {
-                                ui.label(format!("Status: {}", status));
+                                ui.label(format!("Status: {}", session_state.last_status));
                                 ui.separator();
                                 ui.label(format!(
                                     "Downloaded: {} / {}",
-                                    fmt_bytes(downloaded),
-                                    fmt_bytes(total)
+                                    fmt_bytes(session_state.last_downloaded),
+                                    fmt_bytes(session_state.last_total)
                                 ));
                                 ui.separator();
-                                ui.label(format!("Uploaded: {}", fmt_bytes(uploaded)));
+                                ui.label(format!("Uploaded: {}", fmt_bytes(session_state.last_uploaded)));
                                 ui.separator();
-                                ui.label(format!("Speed: {}/s", fmt_bytes(bps)));
+                                ui.label(format!("Speed: {}/s", fmt_bytes(session_state.last_bps)));
                             });
                             ui.horizontal(|ui| {
-                                ui.label(format!("Peers: {} connected", peers_connected));
+                                ui.label(format!("Peers: {} connected", session_state.last_peers_connected));
                                 ui.separator();
-                                ui.label(format!("{} unchoked (active)", peers_active));
+                                ui.label(format!("{} unchoked (active)", session_state.last_peers_active));
                             });
                         });
 
@@ -282,21 +274,17 @@ impl TorrentClientApp {
                 eprintln!("{}", err_msg);
             };
 
-            let mut session = if torrent_path.starts_with("magnet:?") {
-                match TorrentSession::new_magnet(&torrent_path, &download_dir_buf) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        log_err(format!("Failed to create magnet session: {}", e));
-                        return;
-                    }
-                }
+            let session_res = if torrent_path.starts_with("magnet:?") {
+                TorrentSession::new_magnet(&torrent_path, &download_dir_buf)
             } else {
-                match TorrentSession::new(&torrent_path_buf, &download_dir_buf, false) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        log_err(format!("Failed to create session: {}", e));
-                        return;
-                    }
+                TorrentSession::new(&torrent_path_buf, &download_dir_buf, false)
+            };
+
+            let mut session = match session_res {
+                Ok(s) => s,
+                Err(e) => {
+                    log_err(format!("Failed to create session: {}", e));
+                    return;
                 }
             };
 
@@ -349,9 +337,7 @@ impl TorrentClientApp {
                     let _ = session_tx.send(session);
                 }
                 Err(e) => {
-                    let err_msg = format!("[{}] Tracker announce failed: {}", session_id, e);
-                    let _ = msg_tx.send(err_msg.clone());
-                    eprintln!("{}", err_msg);
+                    log_err(format!("Tracker announce failed: {}", e));
                     let _ = session_tx.send(session);
                 }
             }
