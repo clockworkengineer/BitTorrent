@@ -139,7 +139,8 @@ impl eframe::App for TorrentClientApp {
             egui::ScrollArea::vertical()
                 .id_source("sessions_scroll")
                 .show(ui, |ui| {
-                    for session_state in &mut self.sessions {
+                    let mut delete_indices = vec![];
+                    for (i, session_state) in self.sessions.iter_mut().enumerate() {
                         if let Ok(ctx_guard) = session_state.session.context().try_lock() {
                             session_state.update_fields(&ctx_guard);
                         }
@@ -147,7 +148,23 @@ impl eframe::App for TorrentClientApp {
                         let progress = session_state.last_progress;
 
                         ui.group(|ui| {
-                            ui.label(egui::RichText::new(&session_state.last_file_name).strong());
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(&session_state.last_file_name).strong());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("🗑 Delete").clicked() {
+                                        delete_indices.push(i);
+                                    }
+                                    if session_state.last_status == "Paused" {
+                                        if ui.button("▶ Resume").clicked() {
+                                            let _ = session_state.session.resume();
+                                        }
+                                    } else if session_state.last_status != "Ended" {
+                                        if ui.button("⏸ Pause").clicked() {
+                                            let _ = session_state.session.pause();
+                                        }
+                                    }
+                                });
+                            });
 
                             let bar = egui::ProgressBar::new(progress)
                                 .text(format!("{:.1}%", progress * 100.0))
@@ -175,6 +192,14 @@ impl eframe::App for TorrentClientApp {
                         });
 
                         ui.add_space(4.0);
+                    }
+
+                    if !delete_indices.is_empty() {
+                        for idx in delete_indices.into_iter().rev() {
+                            let mut state = self.sessions.remove(idx);
+                            let _ = state.session.stop();
+                        }
+                        self.save_state();
                     }
                 });
         });
