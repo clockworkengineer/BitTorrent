@@ -80,86 +80,102 @@
 
 extern crate alloc;
 
-#[cfg(feature = "std")]
-pub mod announcer;
-#[cfg(feature = "std")]
-pub mod assembler;
-pub mod average;
-pub mod bencode;
-pub mod constants;
-#[cfg(feature = "std")]
-pub mod disk_io;
-pub mod error;
-pub mod io_traits;
-#[cfg(feature = "std")]
-pub mod host;
-#[cfg(feature = "std")]
-pub mod manager;
-#[cfg(feature = "std")]
-pub mod manual_reset_event;
-pub mod magnet;
-pub mod metainfo;
-#[cfg(feature = "std")]
-pub mod peer;
-#[cfg(feature = "std")]
-pub mod peer_id;
-pub mod peer_message;
-#[cfg(feature = "std")]
-pub mod peer_network;
-#[cfg(feature = "std")]
-pub mod piece_buffer;
-#[cfg(feature = "std")]
-pub mod piece_request;
-#[cfg(feature = "std")]
-pub mod selector;
-#[cfg(feature = "std")]
-pub mod dht;
-#[cfg(feature = "std")]
-pub mod lsd;
-#[cfg(feature = "std")]
-pub mod session;
-#[cfg(feature = "std")]
-pub mod torrent_context;
-#[cfg(feature = "std")]
-pub mod tracker;
-#[cfg(feature = "std")]
-pub mod webseed;
-#[cfg(feature = "std")]
-pub mod mse;
-#[cfg(feature = "std")]
-pub mod utp;
-#[cfg(feature = "std")]
-pub mod nat;
-pub mod util;
+#[path = "core/mod.rs"]
+mod core_mods;
+#[path = "network/mod.rs"]
+mod network_mods;
+#[path = "session/mod.rs"]
+mod session_mods;
+#[path = "storage/mod.rs"]
+mod storage_mods;
+#[path = "utils/mod.rs"]
+mod utils_mods;
 
-pub use average::Average;
-pub use bencode::{BNode, Bencode};
-pub use error::BitTorrentError;
-pub use io_traits::{AsyncSocket, BlockStorage, MemStorage};
+// Re-export original modules under their original names for backward compatibility
+pub use core_mods::constants;
+pub use core_mods::magnet;
+pub use core_mods::metainfo;
 #[cfg(feature = "std")]
-pub use io_traits::{MockSocket, SocketFactory};
+pub use core_mods::selector;
+#[cfg(feature = "std")]
+pub use core_mods::torrent_context;
+
+#[cfg(feature = "std")]
+pub use network_mods::announcer;
+#[cfg(feature = "std")]
+pub use network_mods::dht;
+#[cfg(feature = "std")]
+pub use network_mods::host;
+#[cfg(feature = "std")]
+pub use network_mods::lsd;
+#[cfg(feature = "std")]
+pub use network_mods::mse;
+#[cfg(feature = "std")]
+pub use network_mods::nat;
+#[cfg(feature = "std")]
+pub use network_mods::peer;
+#[cfg(feature = "std")]
+pub use network_mods::peer_id;
+pub use network_mods::peer_message;
+#[cfg(feature = "std")]
+pub use network_mods::peer_network;
+#[cfg(feature = "std")]
+pub use network_mods::tracker;
+#[cfg(feature = "std")]
+pub use network_mods::utp;
+
+#[cfg(feature = "std")]
+pub use storage_mods::assembler;
+#[cfg(feature = "std")]
+pub use storage_mods::disk_io;
+#[cfg(feature = "std")]
+pub use storage_mods::piece_buffer;
+#[cfg(feature = "std")]
+pub use storage_mods::piece_request;
+
+#[cfg(feature = "std")]
+pub use session_mods::manager;
+#[cfg(feature = "std")]
+pub use session_mods::session;
+#[cfg(feature = "std")]
+pub use session_mods::webseed;
+
+pub use utils_mods::average;
+pub use utils_mods::bencode;
+pub use utils_mods::error;
+pub use utils_mods::io_traits;
+#[cfg(feature = "std")]
+pub use utils_mods::manual_reset_event;
+pub use utils_mods::util;
+
+pub use utils_mods::average::Average;
+pub use utils_mods::bencode::{BNode, Bencode};
+pub use utils_mods::error::BitTorrentError;
+pub use utils_mods::io_traits::{AsyncSocket, BlockStorage, MemStorage};
+#[cfg(feature = "std")]
+pub use utils_mods::io_traits::{MockSocket, SocketFactory};
 #[cfg(all(feature = "std", feature = "http-tracker"))]
-pub use io_traits::{HttpClient, UreqHttpClient};
+pub use utils_mods::io_traits::{HttpClient, UreqHttpClient};
 #[cfg(feature = "std")]
-pub use manager::Manager;
-pub use magnet::MagnetLink;
-pub use metainfo::{FileDetails, MetaInfoFile};
+pub use session_mods::manager::Manager;
+pub use core_mods::magnet::MagnetLink;
+pub use core_mods::metainfo::{FileDetails, MetaInfoFile};
 #[cfg(feature = "std")]
-pub use assembler::Assembler;
+pub use storage_mods::assembler::Assembler;
 #[cfg(feature = "std")]
-pub use peer::Peer;
+pub use network_mods::peer::Peer;
 #[cfg(feature = "std")]
-pub use peer_id::get as get_peer_id;
-pub use peer_message::PeerMessage;
+pub use network_mods::peer_id::get as get_peer_id;
+pub use network_mods::peer_message::PeerMessage;
 #[cfg(feature = "std")]
-pub use selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
+pub use core_mods::selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
 #[cfg(feature = "std")]
-pub use dht::Dht;
+pub use network_mods::dht::Dht;
 #[cfg(feature = "std")]
-pub use utp::UtpSocketAdapter;
+pub use network_mods::utp::UtpSocketAdapter;
 #[cfg(feature = "std")]
-pub use session::{TorrentSession, TorrentSessionBuilder};
+pub use session_mods::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
-pub use torrent_context::{TorrentContext, TorrentStatus};
+pub use core_mods::torrent_context::{TorrentContext, TorrentStatus};
 #[cfg(feature = "std")]
-pub use tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus, ScrapeResponse};
+pub use network_mods::tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus, ScrapeResponse};
