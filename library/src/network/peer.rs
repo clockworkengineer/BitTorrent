@@ -621,29 +621,32 @@ impl Peer {
                     peer.lock().unwrap().update_last_message_sent();
                 }
                 PeerAction::BroadcastCancel { index, begin, length, block_index } => {
-                    let peers: Vec<PeerNetwork> = {
+                    let peers: Vec<(String, Arc<Mutex<Peer>>)> = {
                         let ctx_guard = context.lock().unwrap();
                         let swarm = ctx_guard.peer_swarm.read().unwrap();
                         swarm
                             .iter()
-                            .filter_map(|(ip, peer_arc)| {
-                                if ip == peer_details_ip {
-                                    return None;
-                                }
-                                let other_peer = peer_arc.lock().unwrap();
-                                let should_send = match block_index {
-                                    Some(bi) => other_peer.reserved_blocks.iter().any(|&(p, b, _)| p == index && b == bi),
-                                    None => true,
-                                };
-                                if should_send {
-                                    other_peer.network.clone()
-                                } else {
-                                    None
-                                }
-                            })
+                            .filter(|&(ip, _)| ip != peer_details_ip)
+                            .map(|(ip, peer_arc)| (ip.clone(), peer_arc.clone()))
                             .collect()
                     };
-                    for peer_net in peers {
+                    
+                    let mut nets_to_cancel = Vec::new();
+                    for (_ip, peer_arc) in peers {
+                        if let Ok(other_peer) = peer_arc.lock() {
+                            let should_send = match block_index {
+                                Some(bi) => other_peer.reserved_blocks.iter().any(|&(p, b, _)| p == index && b == bi),
+                                None => true,
+                            };
+                            if should_send {
+                                if let Some(ref net) = other_peer.network {
+                                    nets_to_cancel.push(net.clone());
+                                }
+                            }
+                        }
+                    }
+                    
+                    for peer_net in nets_to_cancel {
                         let _ = peer_net.write_message(PeerMessage::Cancel { index, begin, length }).await;
                     }
                 }

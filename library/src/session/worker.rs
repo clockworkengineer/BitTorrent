@@ -45,8 +45,8 @@ async fn check_request_timeouts(
 
     if !timed_out_requests.is_empty() {
         let net_opt = {
-            let mut pg = peer.lock().unwrap();
             let ctx = context.lock().unwrap();
+            let mut pg = peer.lock().unwrap();
             for &(pn, bi) in &timed_out_requests {
                 ctx.release_block_request(pn, bi);
                 pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_sub(1);

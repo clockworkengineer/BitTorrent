@@ -21,7 +21,6 @@ fn main() {
     bittorrent_rs::util::set_log_sender(log_tx.clone());
 
     let options = eframe::NativeOptions {
-        renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([700.0, 500.0])
             .with_position(egui::pos2(100.0, 100.0)),
