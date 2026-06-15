@@ -42,6 +42,10 @@ pub struct SessionConfig {
     pub dht_port: u16,
     /// Enable Message Stream Encryption (MSE/PE) handshake obfuscation.
     pub mse_enabled: bool,
+    /// Maximum number of concurrent peer connections per torrent (default: 50).
+    pub max_connections: usize,
+    /// Maximum number of candidate peers queued for discovery (default: 1000).
+    pub max_peer_candidates: usize,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -79,6 +83,8 @@ impl Default for SessionConfig {
             dht_enabled: true,
             dht_port: 6881,
             mse_enabled: false,
+            max_connections: 50,
+            max_peer_candidates: 1000,
         }
     }
 }
@@ -458,11 +464,20 @@ impl TorrentSession {
         let manager_clone = self.manager.clone();
         let peer_workers = self.peer_workers.clone();
 
+        let max_connections = config.max_connections;
         thread::spawn(move || {
             while let Ok(peer_details) = peer_rx.recv() {
                 let pg = context_clone.lock().unwrap();
                 if pg.status == TorrentStatus::Downloading || pg.status == TorrentStatus::Seeding {
                     if !pg.peer_swarm.read().unwrap().contains_key(&peer_details.ip) {
+                        // Prune finished worker handles and enforce connection limit
+                        {
+                            let mut workers_guard = peer_workers.lock().unwrap();
+                            workers_guard.retain(|h| !h.is_finished());
+                            if workers_guard.len() >= max_connections {
+                                continue; // At capacity; drop this candidate
+                            }
+                        }
                         let ctx2 = context_clone.clone();
                         let mgr2 = manager_clone.clone();
                         let workers = peer_workers.clone();

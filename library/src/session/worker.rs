@@ -127,18 +127,17 @@ pub async fn handle_peer_session(
     // MSE Diffie-Hellman handshake negotiation (only when enabled in config)
     if config.mse_enabled {
         let dh = crate::mse::DiffieHellman::new();
-        let local_pub_bytes = dh.public_key.to_be_bytes();
+        let local_pub_bytes = dh.public_key;
         if net.write(&local_pub_bytes).await.is_err() {
             mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
-        let mut remote_pub_bytes = [0u8; 8];
+        let mut remote_pub_bytes = [0u8; 96];
         if net.read_exact(&mut remote_pub_bytes).await.is_err() {
             mark_peer_dead(&manager, &peer_details.ip);
             return;
         }
-        let remote_pub_key = u64::from_be_bytes(remote_pub_bytes);
-        let secret = dh.compute_shared_secret(remote_pub_key);
+        let secret = dh.compute_shared_secret(remote_pub_bytes);
 
         // Derive RC4 cipher keys from the shared secret
         use sha1::Digest;

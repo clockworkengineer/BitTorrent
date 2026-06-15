@@ -17,6 +17,10 @@ pub struct Manager {
     torrents: RwLock<HashMap<String, Arc<Mutex<TorrentContext>>>>,
     dead_peers: RwLock<HashMap<String, Instant>>,
     peer_discovery_queue: RwLock<Option<Sender<PeerDetails>>>,
+    /// Maximum number of queued candidate peers (default: 1000).
+    max_candidates: std::sync::atomic::AtomicUsize,
+    /// Current count of candidates sent on the discovery channel.
+    candidate_count: std::sync::atomic::AtomicUsize,
 }
 
 impl Manager {
@@ -26,7 +30,15 @@ impl Manager {
             torrents: RwLock::new(HashMap::new()),
             dead_peers: RwLock::new(HashMap::new()),
             peer_discovery_queue: RwLock::new(None),
+            max_candidates: std::sync::atomic::AtomicUsize::new(1000),
+            candidate_count: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// Sets the maximum number of peers that may be queued for discovery (default: 1000).
+    pub fn set_max_candidates(&self, max: usize) {
+        self.max_candidates.store(max, std::sync::atomic::Ordering::Relaxed);
+        self.candidate_count.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Retrieves an active torrent context matching the provided info hash, if present.
@@ -95,13 +107,25 @@ impl Manager {
         *self.peer_discovery_queue.write().unwrap() = None;
     }
 
-    /// Pushes a newly discovered peer details block into the discovery queue, ignoring it if marked dead.
+    /// Pushes a newly discovered peer details block into the discovery queue, ignoring it if marked dead or the queue is full.
     pub fn queue_peer_for_discovery(&self, peer_details: PeerDetails) {
         if self.is_peer_dead(&peer_details.ip) {
             return;
         }
-        if let Some(sender) = &*self.peer_discovery_queue.read().unwrap() {
-            let _ = sender.send(peer_details);
+        if self.candidate_count.load(std::sync::atomic::Ordering::Relaxed)
+            >= self.max_candidates.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
         }
+        if let Some(sender) = &*self.peer_discovery_queue.read().unwrap() {
+            if sender.send(peer_details).is_ok() {
+                self.candidate_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Resets the candidate count (e.g., after the queue consumer drains it).
+    pub fn reset_candidate_count(&self) {
+        self.candidate_count.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 }

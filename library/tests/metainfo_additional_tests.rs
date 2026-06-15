@@ -33,3 +33,24 @@ fn test_local_files_to_download_list_single_file() {
     assert!(files[0].length > 0);
     assert_eq!(files[0].offset, 0);
 }
+
+#[test]
+fn test_validate_relative_path_harden() {
+    let path = std::env::temp_dir().join("bittorrent_bad_path_test.torrent");
+    
+    // Test reserved Windows device name CON
+    let contents = b"d8:announce18:http://tracker.com4:infod4:name7:CON.txt12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee";
+    fs::write(&path, contents).unwrap();
+    let mut torrent = MetaInfoFile::new(&path).unwrap();
+    torrent.parse().unwrap();
+    assert!(torrent.local_files_to_download_list(Path::new(".")).is_err());
+    fs::remove_file(&path).unwrap();
+
+    // Test colon in path
+    let contents2 = b"d8:announce18:http://tracker.com4:infod4:name12:bad:file.txt12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee";
+    fs::write(&path, contents2).unwrap();
+    let mut torrent2 = MetaInfoFile::new(&path).unwrap();
+    torrent2.parse().unwrap();
+    assert!(torrent2.local_files_to_download_list(Path::new(".")).is_err());
+    fs::remove_file(&path).unwrap();
+}

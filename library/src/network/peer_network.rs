@@ -138,7 +138,71 @@ impl PeerNetwork {
                 read_buffer.len()
             )));
         }
-        self.read_exact(&mut read_buffer[..length]).await?;
+        let mut id_buf = [0u8; 1];
+        self.read_exact(&mut id_buf).await?;
+        let id = id_buf[0];
+
+        // Enforce strict length limits by message ID
+        match id {
+            0..=3 | 14 | 15 => {
+                if length != 1 {
+                    return Err(BitTorrentError::Parse(alloc::format!(
+                        "Invalid length {} for control message ID {}",
+                        length,
+                        id
+                    )));
+                }
+            }
+            4 | 13 | 17 => {
+                if length != 5 {
+                    return Err(BitTorrentError::Parse(alloc::format!(
+                        "Invalid length {} for ID {}",
+                        length,
+                        id
+                    )));
+                }
+            }
+            6 | 8 | 16 => {
+                if length != 13 {
+                    return Err(BitTorrentError::Parse(alloc::format!(
+                        "Invalid length {} for ID {}",
+                        length,
+                        id
+                    )));
+                }
+            }
+            9 => {
+                if length != 3 {
+                    return Err(BitTorrentError::Parse(alloc::format!(
+                        "Invalid length {} for Port ID",
+                        length
+                    )));
+                }
+            }
+            7 => {
+                // Piece message: 9 bytes header + up to 16 KiB block payload
+                if length < 9 || length > 16384 + 9 {
+                    return Err(BitTorrentError::Parse(alloc::format!(
+                        "Invalid length {} for Piece ID",
+                        length
+                    )));
+                }
+            }
+            _ => {
+                // Other IDs (Bitfield, Extended, etc.) can be up to buffer size
+                if length > read_buffer.len() {
+                    return Err(BitTorrentError::Parse(alloc::format!(
+                        "Message length {} exceeds buffer size",
+                        length
+                    )));
+                }
+            }
+        }
+
+        read_buffer[0] = id;
+        if length > 1 {
+            self.read_exact(&mut read_buffer[1..length]).await?;
+        }
         PeerMessage::decode(&read_buffer[..length])
     }
 

@@ -323,6 +323,11 @@ impl MetaInfoFile {
         }
 
         let download_path = download_path.as_ref();
+        let canonical_download = if download_path.exists() {
+            download_path.canonicalize().map_err(|e| BitTorrentError::Parse(e.to_string()))?
+        } else {
+            download_path.to_path_buf()
+        };
         let mut files_to_download = Vec::new();
         let mut total_bytes = 0u64;
 
@@ -338,7 +343,12 @@ impl MetaInfoFile {
             let name = String::from_utf8_lossy(name_bytes);
             Self::validate_relative_path(&name)?;
             let length = String::from_utf8_lossy(length_bytes).parse::<u64>()?;
-            let file_path = download_path.join(name.as_ref());
+            let file_path = canonical_download.join(name.as_ref());
+            if !file_path.starts_with(&canonical_download) {
+                return Err(BitTorrentError::Parse(
+                    "Path traversal detected: file path is outside the download directory.".into(),
+                ));
+            }
             files_to_download.push(FileDetails {
                 name: file_path.to_string_lossy().into_owned(),
                 length,
@@ -356,7 +366,12 @@ impl MetaInfoFile {
                 .ok_or_else(|| BitTorrentError::MissingField("name".into()))?;
             let root_name = String::from_utf8_lossy(name_bytes);
             Self::validate_relative_path(&root_name)?;
-            let directory = download_path.join(root_name.as_ref());
+            let directory = canonical_download.join(root_name.as_ref());
+            if !directory.starts_with(&canonical_download) {
+                return Err(BitTorrentError::Parse(
+                    "Path traversal detected: root directory is outside the download directory.".into(),
+                ));
+            }
             let mut file_no = 0;
             loop {
                 let key = file_no.to_string();
@@ -372,6 +387,11 @@ impl MetaInfoFile {
                 let trimmed_path = path_value.trim_start_matches(['/', '\\'].as_ref());
                 Self::validate_relative_path(trimmed_path)?;
                 let file_path = directory.join(trimmed_path);
+                if !file_path.starts_with(&directory) {
+                    return Err(BitTorrentError::Parse(
+                        "Path traversal detected: file path is outside the torrent root directory.".into(),
+                    ));
+                }
                 let length = length_value.parse::<u64>()?;
                 files_to_download.push(FileDetails {
                     name: file_path.to_string_lossy().into_owned(),
@@ -539,6 +559,11 @@ impl MetaInfoFile {
                 "Torrent file paths must be relative.".into(),
             ));
         }
+        if path.contains(':') {
+            return Err(BitTorrentError::Parse(
+                "Torrent file path contains invalid colon characters.".into(),
+            ));
+        }
         for segment in path.split(|c| c == '/' || c == '\\') {
             if segment.is_empty() {
                 return Err(BitTorrentError::Parse(
@@ -549,6 +574,31 @@ impl MetaInfoFile {
                 return Err(BitTorrentError::Parse(
                     "Torrent file path contains invalid relative segments.".into(),
                 ));
+            }
+            
+            // Check Windows reserved names case-insensitively
+            let mut stem = segment.to_uppercase();
+            if let Some(pos) = stem.find('.') {
+                stem.truncate(pos);
+            }
+            match stem.as_str() {
+                "CON" | "PRN" | "AUX" | "NUL" => {
+                    return Err(BitTorrentError::Parse(format!(
+                        "Path contains reserved Windows device name: {}",
+                        segment
+                    )));
+                }
+                _ => {}
+            }
+            if (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 {
+                if let Some(digit) = stem.chars().nth(3) {
+                    if digit.is_ascii_digit() && digit != '0' {
+                        return Err(BitTorrentError::Parse(format!(
+                            "Path contains reserved Windows device name: {}",
+                            segment
+                        )));
+                    }
+                }
             }
         }
         Ok(())

@@ -73,91 +73,77 @@ impl Rc4 {
     }
 }
 
-/// Multiplies `a * b mod m` without 128-bit overflow using binary doubling
-/// (the "Russian Peasant" / "Egyptian multiplication" algorithm).
-///
-/// Standard `(a * b) % m` overflows when `a` and `b` are near the 128-bit
-/// limit. This function avoids overflow by repeatedly doubling `a` modulo `m`
-/// instead of computing the full product at once.
-pub fn mulmod(mut a: u128, mut b: u128, m: u128) -> u128 {
-    let mut result: u128 = 0;
-    a %= m;
-    while b > 0 {
-        if b & 1 == 1 {
-            result = result.wrapping_add(a) % m;
-        }
-        a = a.wrapping_add(a) % m;
-        b >>= 1;
-    }
-    result
+use num_bigint::BigUint;
+use std::sync::OnceLock;
+use rand::{RngCore, SeedableRng};
+use rand::rngs::StdRng;
+
+fn get_prime() -> &'static BigUint {
+    static PRIME: OnceLock<BigUint> = OnceLock::new();
+    PRIME.get_or_init(|| {
+        BigUint::parse_bytes(
+            b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74\
+              020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F1437\
+              4FE1356D6D51C245E485B576625E7EC6F44C42E9A63A3620FFFFFFFFFFFFFFFF",
+            16,
+        )
+        .unwrap()
+    })
 }
 
-/// Computes `(base ^ exp) % modulus` using binary (square-and-multiply) exponentiation.
+/// A Diffie-Hellman key negotiator using the 768-bit Oakley Group 1 prime.
 ///
-/// Uses [`mulmod`] for each multiplication step to avoid 128-bit integer overflow
-/// with large bases and moduli (e.g. the 128-bit DH prime used by MSE).
-pub fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
-    if modulus == 1 {
-        return 0;
-    }
-    let mut result = 1u128;
-    base %= modulus;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = mulmod(result, base, modulus);
-        }
-        exp >>= 1;
-        base = mulmod(base, base, modulus);
-    }
-    result
-}
-
-/// A lightweight Diffie-Hellman key negotiator using a 128-bit safe prime.
-///
-/// Each side generates a random 64-bit private key and computes a public key as
+/// Each side generates a random private key and computes a public key as
 /// `G^private mod P`. The shared secret is then `remote_pub^private mod P`,
 /// which equals `G^(a*b) mod P` for both parties — the core DH property.
 ///
 /// ## Prime & Generator
 /// ```text
-/// P = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FF43  (128-bit safe prime)
+/// P = 768-bit Oakley Group 1 prime
 /// G = 2
 /// ```
-///
-/// > **Note**: The MSE specification traditionally uses a 768-bit or 1024-bit prime.
-/// > The 128-bit prime used here provides traffic obfuscation but is not
-/// > cryptographically strong against a well-resourced adversary.
 pub struct DiffieHellman {
-    /// The 64-bit private key — never transmitted on the wire.
-    private_key: u64,
-    /// The 64-bit public key derived as `G^private_key mod P`.
+    /// The private key — never transmitted on the wire.
+    private_key: BigUint,
+    /// The 96-byte public key derived as `G^private_key mod P`.
     /// Share this with the remote peer.
-    pub public_key: u64,
+    pub public_key: [u8; 96],
 }
 
 impl DiffieHellman {
-    /// 128-bit safe prime: `2^128 - 189`.
-    const PRIME: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FF43;
-    /// DH generator (standard choice: 2).
-    const GENERATOR: u128 = 2;
-
     /// Generates a new random private/public key pair.
     ///
-    /// Uses `rand::random()` to generate a cryptographically random 64-bit private key,
+    /// Uses `StdRng` to generate a cryptographically random private key,
     /// then computes `public_key = G^private_key mod P`.
     #[must_use]
     pub fn new() -> Self {
-        let private_key: u64 = rand::random();
-        let public_key = mod_pow(Self::GENERATOR, private_key as u128, Self::PRIME) as u64;
+        let mut rng = StdRng::from_entropy();
+        let mut private_bytes = [0u8; 96];
+        rng.fill_bytes(&mut private_bytes);
+        let private_key = BigUint::from_bytes_be(&private_bytes) % get_prime();
+        
+        let g = BigUint::from(2u8);
+        let public_key_big = g.modpow(&private_key, get_prime());
+        
+        let mut public_key = [0u8; 96];
+        let pub_bytes = public_key_big.to_bytes_be();
+        let offset = 96 - pub_bytes.len();
+        public_key[offset..].copy_from_slice(&pub_bytes);
+        
         DiffieHellman { private_key, public_key }
     }
 
-    /// Computes the 8-byte shared secret from the remote peer's public key.
+    /// Computes the 96-byte shared secret from the remote peer's public key.
     ///
     /// Computes `secret = remote_pub^private mod P` and returns it as a big-endian
     /// byte array. Both sides produce the same secret: `G^(a*b) mod P = G^(b*a) mod P`.
-    pub fn compute_shared_secret(&self, remote_public_key: u64) -> [u8; 8] {
-        let secret = mod_pow(remote_public_key as u128, self.private_key as u128, Self::PRIME) as u64;
-        secret.to_be_bytes()
+    pub fn compute_shared_secret(&self, remote_public_key: [u8; 96]) -> [u8; 96] {
+        let remote_pub_big = BigUint::from_bytes_be(&remote_public_key);
+        let secret_big = remote_pub_big.modpow(&self.private_key, get_prime());
+        let mut secret = [0u8; 96];
+        let secret_bytes = secret_big.to_bytes_be();
+        let offset = 96 - secret_bytes.len();
+        secret[offset..].copy_from_slice(&secret_bytes);
+        secret
     }
 }
