@@ -7,3 +7,8 @@ edition = "2024"
 eframe = { version = "0.28", features = ["glow"] }
 bittorrent_rs = { path = "../../library", package = "bittorrent-rs" }
 torrent_client_shared = { path = "../torrent_client_shared" }
+rfd = "0.14"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "5.0"
+
