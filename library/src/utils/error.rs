@@ -7,12 +7,46 @@
 #[cfg(feature = "std")]
 use std::io;
 
+/// Detailed Bencode parsing error reasons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BencodeError {
+    UnexpectedEnd,
+    InvalidDigit,
+    UnterminatedInteger,
+    InvalidIntegerFormat,
+    InvalidStringLength,
+    StringTooLong,
+    IntegerTooLong,
+    TrailingBytes,
+    NestingDepthExceeded,
+    InvalidByte(u8),
+    Custom(alloc::string::String),
+}
+
+impl core::fmt::Display for BencodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            BencodeError::UnexpectedEnd => write!(f, "Unexpected end of input"),
+            BencodeError::InvalidDigit => write!(f, "Invalid integer digit"),
+            BencodeError::UnterminatedInteger => write!(f, "Unterminated integer"),
+            BencodeError::InvalidIntegerFormat => write!(f, "Invalid integer format"),
+            BencodeError::InvalidStringLength => write!(f, "Invalid string length"),
+            BencodeError::StringTooLong => write!(f, "String length exceeds safe limit"),
+            BencodeError::IntegerTooLong => write!(f, "Integer representation is too long"),
+            BencodeError::TrailingBytes => write!(f, "Trailing bytes after parsing"),
+            BencodeError::NestingDepthExceeded => write!(f, "Nesting depth limit exceeded"),
+            BencodeError::InvalidByte(b) => write!(f, "Unexpected byte: {b}"),
+            BencodeError::Custom(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
 /// Custom error type representing various errors in the BitTorrent library.
 #[derive(Debug)]
 pub enum BitTorrentError {
     #[cfg(feature = "std")]
     Io(io::Error),
-    InvalidBencode(alloc::string::String),
+    Bencode(BencodeError),
     MissingField(alloc::string::String),
     Parse(alloc::string::String),
     NotParsed(alloc::string::String),
@@ -24,7 +58,7 @@ impl core::fmt::Display for BitTorrentError {
         match self {
             #[cfg(feature = "std")]
             BitTorrentError::Io(err) => write!(f, "I/O error: {err}"),
-            BitTorrentError::InvalidBencode(msg) => write!(f, "Invalid Bencode: {msg}"),
+            BitTorrentError::Bencode(err) => write!(f, "Invalid Bencode: {err}"),
             BitTorrentError::MissingField(field) => write!(f, "Missing field: {field}"),
             BitTorrentError::Parse(msg) => write!(f, "Parse error: {msg}"),
             BitTorrentError::NotParsed(msg) => write!(f, "BitTorrent Error: {msg}"),

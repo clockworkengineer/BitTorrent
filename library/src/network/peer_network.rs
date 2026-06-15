@@ -125,7 +125,9 @@ impl PeerNetwork {
     pub async fn read_message<'a>(&self, read_buffer: &'a mut [u8]) -> Result<PeerMessage<'a>, BitTorrentError> {
         let mut length_buf = [0u8; 4];
         self.read_exact(&mut length_buf).await?;
-        let length = u32::from_be_bytes(length_buf) as usize;
+        let length: usize = u32::from_be_bytes(length_buf)
+            .try_into()
+            .map_err(|_| BitTorrentError::Parse("Message length exceeds memory pointer representation".into()))?;
         if length == 0 {
             return Ok(PeerMessage::KeepAlive);
         }

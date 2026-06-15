@@ -88,8 +88,8 @@ impl MetaInfoFile {
     pub fn parse(&mut self) -> Result<(), BitTorrentError> {
         let root = Bencode::decode(&self.meta_info_data)?;
         if !matches!(root, BNode::Dictionary(_)) {
-            return Err(BitTorrentError::InvalidBencode(
-                "Torrent file root is not a dictionary".into(),
+            return Err(BitTorrentError::Bencode(
+                crate::error::BencodeError::Custom("Torrent file root is not a dictionary".into()),
             ));
         }
 

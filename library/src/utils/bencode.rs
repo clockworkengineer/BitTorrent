@@ -3,7 +3,7 @@
 //! Provides structures and functions for decoding and encoding data in the
 //! Bencode format, which is the standard serialization format used by BitTorrent.
 
-use crate::error::BitTorrentError;
+use crate::error::{BitTorrentError, BencodeError};
 use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -58,12 +58,11 @@ impl Bencode {
         let mut parser = Parser {
             buffer,
             position: 0,
+            depth: 0,
         };
         let node = parser.decode_bnode()?;
         if parser.position != parser.buffer.len() {
-            return Err(BitTorrentError::InvalidBencode(
-                "Trailing bytes after parsing".to_string(),
-            ));
+            return Err(BitTorrentError::Bencode(BencodeError::TrailingBytes));
         }
         Ok(node)
     }
@@ -74,6 +73,7 @@ impl Bencode {
         let mut parser = Parser {
             buffer,
             position: 0,
+            depth: 0,
         };
         let node = parser.decode_bnode()?;
         Ok((node, parser.position))
@@ -122,28 +122,35 @@ impl Bencode {
     }
 }
 
+const MAX_DEPTH: usize = 50;
+const MAX_STRING_LEN: usize = 16_777_216; // 16 MB limit
+
 /// A Bencode parser state tracker.
 struct Parser<'a> {
     buffer: &'a [u8],
     position: usize,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
     /// Decodes the next `BNode` from the stream based on the leading byte indicator.
     fn decode_bnode(&mut self) -> Result<BNode<'a>, BitTorrentError> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(BitTorrentError::Bencode(BencodeError::NestingDepthExceeded));
+        }
         let byte = self
             .current_byte()
-            .ok_or_else(|| BitTorrentError::InvalidBencode("Unexpected end of input".into()))?;
-        match byte {
+            .ok_or_else(|| BitTorrentError::Bencode(BencodeError::UnexpectedEnd))?;
+        let node = match byte {
             b'd' => self.decode_dictionary(),
             b'l' => self.decode_list(),
             b'i' => self.decode_integer(),
             b'0'..=b'9' => self.decode_string().map(BNode::String),
-            _ => Err(BitTorrentError::InvalidBencode(format!(
-                "Unexpected byte: {}",
-                byte
-            ))),
-        }
+            _ => Err(BitTorrentError::Bencode(BencodeError::InvalidByte(*byte))),
+        };
+        self.depth -= 1;
+        node
     }
 
     /// Decodes a Bencode dictionary (starts with 'd', ends with 'e').
@@ -179,28 +186,25 @@ impl<'a> Parser<'a> {
                 break;
             }
             if !(b'0'..=b'9').contains(&b) && b != b'-' {
-                return Err(BitTorrentError::InvalidBencode(
-                    "Invalid integer digit".to_string(),
-                ));
+                return Err(BitTorrentError::Bencode(BencodeError::InvalidDigit));
             }
             self.position += 1;
         }
         let end = self.position;
         if self.current_byte() != Some(&b'e') {
-            return Err(BitTorrentError::InvalidBencode(
-                "Unterminated integer".into(),
-            ));
+            return Err(BitTorrentError::Bencode(BencodeError::UnterminatedInteger));
         }
         let number_bytes = &self.buffer[start..end];
+        if number_bytes.len() > 20 {
+            return Err(BitTorrentError::Bencode(BencodeError::IntegerTooLong));
+        }
         let number_str = core::str::from_utf8(number_bytes)
-            .map_err(|e| BitTorrentError::InvalidBencode(e.to_string()))?;
+            .map_err(|e| BitTorrentError::Bencode(BencodeError::Custom(e.to_string())))?;
         if number_str.is_empty()
             || (number_str.starts_with('0') && number_str.len() > 1)
             || number_str == "-0"
         {
-            return Err(BitTorrentError::InvalidBencode(
-                "Invalid integer format".into(),
-            ));
+            return Err(BitTorrentError::Bencode(BencodeError::InvalidIntegerFormat));
         }
         self.position += 1;
         Ok(BNode::Number(number_bytes))
@@ -214,28 +218,28 @@ impl<'a> Parser<'a> {
                 break;
             }
             if !b.is_ascii_digit() {
-                return Err(BitTorrentError::InvalidBencode(
-                    "Invalid string length".into(),
-                ));
+                return Err(BitTorrentError::Bencode(BencodeError::InvalidStringLength));
             }
             self.position += 1;
         }
         let length_bytes = core::str::from_utf8(&self.buffer[start..self.position])
-            .map_err(|e| BitTorrentError::InvalidBencode(e.to_string()))?;
+            .map_err(|e| BitTorrentError::Bencode(BencodeError::Custom(e.to_string())))?;
         if length_bytes.is_empty() || (length_bytes.starts_with('0') && length_bytes != "0") {
-            return Err(BitTorrentError::InvalidBencode(
-                "Invalid string length".into(),
-            ));
+            return Err(BitTorrentError::Bencode(BencodeError::InvalidStringLength));
+        }
+        if length_bytes.len() > 10 {
+            return Err(BitTorrentError::Bencode(BencodeError::StringTooLong));
         }
         let length = length_bytes
             .parse::<usize>()
             .map_err(BitTorrentError::from)?;
+        if length > MAX_STRING_LEN {
+            return Err(BitTorrentError::Bencode(BencodeError::StringTooLong));
+        }
         self.position += 1;
         let end = self.position + length;
         if end > self.buffer.len() {
-            return Err(BitTorrentError::InvalidBencode(
-                "String extends past end of buffer".into(),
-            ));
+            return Err(BitTorrentError::Bencode(BencodeError::UnexpectedEnd));
         }
         let string_bytes = &self.buffer[self.position..end];
         self.position = end;

@@ -32,3 +32,38 @@ fn test_get_dictionary_entry_string_nested() {
         Some("test".to_string())
     );
 }
+
+#[test]
+fn test_decode_nesting_depth_limit() {
+    // 49 nested lists is allowed (leaf is at depth 50)
+    let mut ok_input = vec![b'l'; 49];
+    ok_input.push(b'i');
+    ok_input.push(b'1');
+    ok_input.push(b'e');
+    ok_input.extend(std::iter::repeat(b'e').take(49));
+    assert!(Bencode::decode(&ok_input).is_ok());
+
+    // 50 nested lists is rejected (leaf is at depth 51)
+    let mut bad_input = vec![b'l'; 50];
+    bad_input.push(b'i');
+    bad_input.push(b'1');
+    bad_input.push(b'e');
+    bad_input.extend(std::iter::repeat(b'e').take(50));
+    let err = Bencode::decode(&bad_input);
+    assert!(err.is_err());
+    assert!(format!("{}", err.unwrap_err()).contains("Nesting depth limit exceeded"));
+}
+
+#[test]
+fn test_decode_large_string_limit() {
+    // Length value too large (more than 10 digits)
+    assert!(Bencode::decode(b"10000000000:abc").is_err());
+    // Safe limit check (16MB+)
+    assert!(Bencode::decode(b"20000000:abc").is_err());
+}
+
+#[test]
+fn test_decode_large_integer_limit() {
+    // Too many digits (more than 20)
+    assert!(Bencode::decode(b"i123456789012345678901e").is_err());
+}

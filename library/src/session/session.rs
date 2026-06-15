@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use crate::log_debug;
 
-pub use crate::session_mods::worker;
-use crate::session_mods::worker::delay;
+pub use crate::session::worker;
+use crate::session::worker::delay;
 
 use core::pin::Pin;
 use core::future::Future;

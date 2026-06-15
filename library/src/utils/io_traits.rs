@@ -30,65 +30,161 @@ pub trait BlockStorage: Send + Sync {
     fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError>;
 }
 
-/// A mock socket implementation for testing without real network I/O.
-#[cfg(feature = "std")]
+/// A lightweight spinlock implementation for no_std environments.
 #[derive(Debug)]
-pub struct MockSocket {
-    pub rx: std::sync::Mutex<std::sync::mpsc::Receiver<alloc::vec::Vec<u8>>>,
-    pub tx: std::sync::Mutex<std::sync::mpsc::Sender<alloc::vec::Vec<u8>>>,
-    pub read_buf: std::sync::Mutex<alloc::vec::Vec<u8>>,
-    pub closed: std::sync::atomic::AtomicBool,
+pub struct SpinLock<T> {
+    lock: core::sync::atomic::AtomicBool,
+    data: core::cell::UnsafeCell<T>,
 }
 
-#[cfg(feature = "std")]
-impl MockSocket {
-    /// Creates a mock socket and returns it along with channels to write to its input
-    /// and read from its output externally.
-    pub fn new() -> (
-        Self,
-        std::sync::mpsc::Sender<alloc::vec::Vec<u8>>,
-        std::sync::mpsc::Receiver<alloc::vec::Vec<u8>>,
-    ) {
-        let (in_tx, in_rx) = std::sync::mpsc::channel();
-        let (out_tx, out_rx) = std::sync::mpsc::channel();
-        (
-            MockSocket {
-                rx: std::sync::Mutex::new(in_rx),
-                tx: std::sync::Mutex::new(out_tx),
-                read_buf: std::sync::Mutex::new(alloc::vec::Vec::new()),
-                closed: std::sync::atomic::AtomicBool::new(false),
-            },
-            in_tx,
-            out_rx,
-        )
+unsafe impl<T: Send> Send for SpinLock<T> {}
+unsafe impl<T: Send> Sync for SpinLock<T> {}
+
+impl<T> SpinLock<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            lock: core::sync::atomic::AtomicBool::new(false),
+            data: core::cell::UnsafeCell::new(data),
+        }
+    }
+
+    pub fn lock(&self) -> SpinLockGuard<'_, T> {
+        while self.lock.compare_exchange_weak(
+            false,
+            true,
+            core::sync::atomic::Ordering::Acquire,
+            core::sync::atomic::Ordering::Relaxed,
+        ).is_err() {
+            core::hint::spin_loop();
+        }
+        SpinLockGuard { parent: self }
     }
 }
 
-#[cfg(feature = "std")]
+pub struct SpinLockGuard<'a, T> {
+    parent: &'a SpinLock<T>,
+}
+
+impl<'a, T> core::ops::Deref for SpinLockGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.parent.data.get() }
+    }
+}
+
+impl<'a, T> core::ops::DerefMut for SpinLockGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.parent.data.get() }
+    }
+}
+
+impl<'a, T> Drop for SpinLockGuard<'a, T> {
+    fn drop(&mut self) {
+        self.parent.lock.store(false, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// A channel sender for the mock socket.
+#[derive(Clone, Debug)]
+pub struct MockSender {
+    queue: alloc::sync::Arc<SpinLock<alloc::collections::VecDeque<alloc::vec::Vec<u8>>>>,
+    closed: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
+}
+
+impl MockSender {
+    /// Sends a packet to the mock socket.
+    pub fn send(&self, data: alloc::vec::Vec<u8>) -> Result<(), BitTorrentError> {
+        if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
+            return Err(BitTorrentError::Parse("Mock socket closed".into()));
+        }
+        self.queue.lock().push_back(data);
+        Ok(())
+    }
+}
+
+/// A channel receiver for the mock socket.
+#[derive(Debug)]
+pub struct MockReceiver {
+    queue: alloc::sync::Arc<SpinLock<alloc::collections::VecDeque<alloc::vec::Vec<u8>>>>,
+    closed: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
+}
+
+impl MockReceiver {
+    /// Receives a packet from the mock socket, spinning until data is available or the socket closes.
+    pub fn recv(&self) -> Result<alloc::vec::Vec<u8>, BitTorrentError> {
+        loop {
+            if let Some(data) = self.queue.lock().pop_front() {
+                return Ok(data);
+            }
+            if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
+                return Err(BitTorrentError::Parse("Mock socket closed".into()));
+            }
+            core::hint::spin_loop();
+        }
+    }
+}
+
+/// A mock socket implementation for testing without real network I/O.
+#[derive(Debug)]
+pub struct MockSocket {
+    pub rx: alloc::sync::Arc<SpinLock<alloc::collections::VecDeque<alloc::vec::Vec<u8>>>>,
+    pub tx: alloc::sync::Arc<SpinLock<alloc::collections::VecDeque<alloc::vec::Vec<u8>>>>,
+    pub read_buf: SpinLock<alloc::vec::Vec<u8>>,
+    pub closed: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
+}
+
+impl MockSocket {
+    /// Creates a mock socket and returns it along with channels to write to its input
+    /// and read from its output externally.
+    pub fn new() -> (Self, MockSender, MockReceiver) {
+        let rx_queue = alloc::sync::Arc::new(SpinLock::new(alloc::collections::VecDeque::new()));
+        let tx_queue = alloc::sync::Arc::new(SpinLock::new(alloc::collections::VecDeque::new()));
+        let closed = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+
+        let socket = MockSocket {
+            rx: rx_queue.clone(),
+            tx: tx_queue.clone(),
+            read_buf: SpinLock::new(alloc::vec::Vec::new()),
+            closed: closed.clone(),
+        };
+
+        let sender = MockSender {
+            queue: rx_queue,
+            closed: closed.clone(),
+        };
+
+        let receiver = MockReceiver {
+            queue: tx_queue,
+            closed,
+        };
+
+        (socket, sender, receiver)
+    }
+}
+
 impl AsyncSocket for MockSocket {
     fn read<'a>(
         &'a self,
         buf: &'a mut [u8],
     ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
         Box::pin(async move {
-            if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
+            if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
                 return Ok(0);
             }
-            let mut read_guard = self.read_buf.lock().unwrap();
+            let mut read_guard = self.read_buf.lock();
             if read_guard.is_empty() {
-                let rx_guard = self.rx.lock().unwrap();
-                match rx_guard.recv() {
-                    Ok(data) => {
-                        read_guard.extend_from_slice(&data);
-                    }
-                    Err(_) => {
-                        return Ok(0); // Sender dropped / EOF
-                    }
+                let mut rx_guard = self.rx.lock();
+                if let Some(data) = rx_guard.pop_front() {
+                    read_guard.extend_from_slice(&data);
+                } else if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
+                    return Ok(0);
                 }
             }
             let to_read = buf.len().min(read_guard.len());
-            buf[..to_read].copy_from_slice(&read_guard[..to_read]);
-            read_guard.drain(..to_read);
+            if to_read > 0 {
+                buf[..to_read].copy_from_slice(&read_guard[..to_read]);
+                read_guard.drain(..to_read);
+            }
             Ok(to_read)
         })
     }
@@ -98,50 +194,30 @@ impl AsyncSocket for MockSocket {
         buf: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
         Box::pin(async move {
-            if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(BitTorrentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionAborted,
-                    "Socket closed",
-                )));
+            if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
+                return Err(BitTorrentError::Parse("Socket closed".into()));
             }
-            let tx_guard = self.tx.lock().unwrap();
-            match tx_guard.send(buf.to_vec()) {
-                Ok(_) => Ok(buf.len()),
-                Err(_) => Err(BitTorrentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "Receiver dropped",
-                ))),
-            }
+            self.tx.lock().push_back(buf.to_vec());
+            Ok(buf.len())
         })
     }
 
     fn close(&self) {
-        self.closed.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.closed.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
 /// An in-memory block storage implementation.
 #[derive(Debug)]
 pub struct MemStorage {
-    #[cfg(feature = "std")]
-    data: std::sync::RwLock<alloc::vec::Vec<u8>>,
-    #[cfg(not(feature = "std"))]
-    data: core::cell::UnsafeCell<alloc::vec::Vec<u8>>,
+    data: SpinLock<alloc::vec::Vec<u8>>,
 }
-
-#[cfg(not(feature = "std"))]
-unsafe impl Send for MemStorage {}
-#[cfg(not(feature = "std"))]
-unsafe impl Sync for MemStorage {}
 
 impl MemStorage {
     /// Creates a new in-memory storage of the given size.
     pub fn new(size: usize) -> Self {
         MemStorage {
-            #[cfg(feature = "std")]
-            data: std::sync::RwLock::new(alloc::vec![0u8; size]),
-            #[cfg(not(feature = "std"))]
-            data: core::cell::UnsafeCell::new(alloc::vec![0u8; size]),
+            data: SpinLock::new(alloc::vec![0u8; size]),
         }
     }
 }
@@ -150,63 +226,23 @@ impl BlockStorage for MemStorage {
     fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
         let start = offset as usize;
         let end = start + data.len();
-        #[cfg(feature = "std")]
-        {
-            let mut guard = self.data.write().unwrap();
-            if end > guard.len() {
-                return Err(BitTorrentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "MemStorage write out of bounds",
-                )));
-            }
-            guard[start..end].copy_from_slice(data);
-            Ok(())
+        let mut guard = self.data.lock();
+        if end > guard.len() {
+            return Err(BitTorrentError::Parse("MemStorage write out of bounds".into()));
         }
-        #[cfg(not(feature = "std"))]
-        {
-            // SAFETY: In no_std, we assume single-threaded context.
-            unsafe {
-                let ptr = self.data.get();
-                let vec_ref = &mut *ptr;
-                let len = vec_ref.len();
-                if end > len {
-                    return Err(BitTorrentError::Parse("MemStorage write out of bounds".into()));
-                }
-                vec_ref[start..end].copy_from_slice(data);
-            }
-            Ok(())
-        }
+        guard[start..end].copy_from_slice(data);
+        Ok(())
     }
 
     fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError> {
         let start = offset as usize;
         let end = start + buffer.len();
-        #[cfg(feature = "std")]
-        {
-            let guard = self.data.read().unwrap();
-            if end > guard.len() {
-                return Err(BitTorrentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "MemStorage read out of bounds",
-                )));
-            }
-            buffer.copy_from_slice(&guard[start..end]);
-            Ok(buffer.len())
+        let guard = self.data.lock();
+        if end > guard.len() {
+            return Err(BitTorrentError::Parse("MemStorage read out of bounds".into()));
         }
-        #[cfg(not(feature = "std"))]
-        {
-            // SAFETY: In no_std, we assume single-threaded context.
-            unsafe {
-                let ptr = self.data.get();
-                let vec_ref = &*ptr;
-                let len = vec_ref.len();
-                if end > len {
-                    return Err(BitTorrentError::Parse("MemStorage read out of bounds".into()));
-                }
-                buffer.copy_from_slice(&vec_ref[start..end]);
-            }
-            Ok(buffer.len())
-        }
+        buffer.copy_from_slice(&guard[start..end]);
+        Ok(buffer.len())
     }
 }
 
@@ -233,10 +269,7 @@ pub struct UreqHttpClient;
 impl HttpClient for UreqHttpClient {
     fn get(&self, url: &str) -> Result<alloc::vec::Vec<u8>, BitTorrentError> {
         let response = ureq::get(url).call().map_err(|err| {
-            BitTorrentError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                err.to_string(),
-            ))
+            BitTorrentError::Parse(err.to_string())
         })?;
         let mut body = alloc::vec::Vec::new();
         use std::io::Read;
@@ -244,10 +277,7 @@ impl HttpClient for UreqHttpClient {
             .into_reader()
             .read_to_end(&mut body)
             .map_err(|err| {
-                BitTorrentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err.to_string(),
-                ))
+                BitTorrentError::Parse(err.to_string())
             })?;
         Ok(body)
     }

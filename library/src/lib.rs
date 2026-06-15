@@ -80,102 +80,95 @@
 
 extern crate alloc;
 
-#[path = "core/mod.rs"]
-mod core_mods;
-#[path = "network/mod.rs"]
-mod network_mods;
-#[path = "session/mod.rs"]
-mod session_mods;
-#[path = "storage/mod.rs"]
-mod storage_mods;
-#[path = "utils/mod.rs"]
-mod utils_mods;
+pub mod core;
+pub mod network;
+pub mod session;
+pub mod storage;
+pub mod utils;
 
 // Re-export original modules under their original names for backward compatibility
-pub use core_mods::constants;
-pub use core_mods::magnet;
-pub use core_mods::metainfo;
+pub use core::constants;
+pub use core::magnet;
+pub use core::metainfo;
 #[cfg(feature = "std")]
-pub use core_mods::selector;
+pub use core::selector;
 #[cfg(feature = "std")]
-pub use core_mods::torrent_context;
+pub use core::torrent_context;
 
 #[cfg(feature = "std")]
-pub use network_mods::announcer;
+pub use network::announcer;
 #[cfg(feature = "std")]
-pub use network_mods::dht;
+pub use network::dht;
 #[cfg(feature = "std")]
-pub use network_mods::host;
+pub use network::host;
 #[cfg(feature = "std")]
-pub use network_mods::lsd;
+pub use network::lsd;
 #[cfg(feature = "std")]
-pub use network_mods::mse;
+pub use network::mse;
 #[cfg(feature = "std")]
-pub use network_mods::nat;
+pub use network::nat;
 #[cfg(feature = "std")]
-pub use network_mods::peer;
+pub use network::peer;
 #[cfg(feature = "std")]
-pub use network_mods::peer_id;
-pub use network_mods::peer_message;
+pub use network::peer_id;
+pub use network::peer_message;
 #[cfg(feature = "std")]
-pub use network_mods::peer_network;
+pub use network::peer_network;
 #[cfg(feature = "std")]
-pub use network_mods::tracker;
+pub use network::tracker;
 #[cfg(feature = "std")]
-pub use network_mods::utp;
+pub use network::utp;
 
 #[cfg(feature = "std")]
-pub use storage_mods::assembler;
+pub use storage::assembler;
 #[cfg(feature = "std")]
-pub use storage_mods::disk_io;
+pub use storage::disk_io;
 #[cfg(feature = "std")]
-pub use storage_mods::piece_buffer;
+pub use storage::piece_buffer;
 #[cfg(feature = "std")]
-pub use storage_mods::piece_request;
+pub use storage::piece_request;
 
 #[cfg(feature = "std")]
-pub use session_mods::manager;
+pub use session::manager;
 #[cfg(feature = "std")]
-pub use session_mods::session;
-#[cfg(feature = "std")]
-pub use session_mods::webseed;
+pub use session::webseed;
 
-pub use utils_mods::average;
-pub use utils_mods::bencode;
-pub use utils_mods::error;
-pub use utils_mods::io_traits;
+pub use utils::average;
+pub use utils::bencode;
+pub use utils::error;
+pub use utils::io_traits;
 #[cfg(feature = "std")]
-pub use utils_mods::manual_reset_event;
-pub use utils_mods::util;
+pub use utils::manual_reset_event;
+pub use utils::util;
 
-pub use utils_mods::average::Average;
-pub use utils_mods::bencode::{BNode, Bencode};
-pub use utils_mods::error::BitTorrentError;
-pub use utils_mods::io_traits::{AsyncSocket, BlockStorage, MemStorage};
+pub use utils::average::Average;
+pub use utils::bencode::{BNode, Bencode};
+pub use utils::error::{BitTorrentError, BencodeError};
+pub use utils::io_traits::{AsyncSocket, BlockStorage, MemStorage, MockSocket, MockSender, MockReceiver};
 #[cfg(feature = "std")]
-pub use utils_mods::io_traits::{MockSocket, SocketFactory};
+pub use utils::io_traits::SocketFactory;
 #[cfg(all(feature = "std", feature = "http-tracker"))]
-pub use utils_mods::io_traits::{HttpClient, UreqHttpClient};
+pub use utils::io_traits::{HttpClient, UreqHttpClient};
 #[cfg(feature = "std")]
-pub use session_mods::manager::Manager;
-pub use core_mods::magnet::MagnetLink;
-pub use core_mods::metainfo::{FileDetails, MetaInfoFile};
+pub use session::manager::Manager;
+pub use core::magnet::MagnetLink;
+pub use core::metainfo::{FileDetails, MetaInfoFile};
 #[cfg(feature = "std")]
-pub use storage_mods::assembler::Assembler;
+pub use storage::assembler::Assembler;
 #[cfg(feature = "std")]
-pub use network_mods::peer::Peer;
+pub use network::peer::Peer;
 #[cfg(feature = "std")]
-pub use network_mods::peer_id::get as get_peer_id;
-pub use network_mods::peer_message::PeerMessage;
+pub use network::peer_id::get as get_peer_id;
+pub use network::peer_message::PeerMessage;
 #[cfg(feature = "std")]
-pub use core_mods::selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
+pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
 #[cfg(feature = "std")]
-pub use network_mods::dht::Dht;
+pub use network::dht::Dht;
 #[cfg(feature = "std")]
-pub use network_mods::utp::UtpSocketAdapter;
+pub use network::utp::UtpSocketAdapter;
 #[cfg(feature = "std")]
-pub use session_mods::session::{TorrentSession, TorrentSessionBuilder};
+pub use session::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
-pub use core_mods::torrent_context::{TorrentContext, TorrentStatus};
+pub use core::torrent_context::{TorrentContext, TorrentStatus};
 #[cfg(feature = "std")]
-pub use network_mods::tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus, ScrapeResponse};
+pub use network::tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus, ScrapeResponse};
