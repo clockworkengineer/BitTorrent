@@ -108,13 +108,27 @@ fn download_block_from_webseed(
         if current_offset >= file_start && current_offset < file_end {
             let file_segment_len = std::cmp::min(remaining as u64, file_end - current_offset) as u32;
             let file_offset = current_offset - file_start;
-            let rel_path = std::path::Path::new(&file.name)
+
+            // Compute the path relative to the download directory.
+            // file.name is an absolute path; strip the download_path prefix to
+            // get a relative path like "Sintel/Sintel.de.srt".
+            let abs_path = std::path::Path::new(&file.name);
+            let rel_path = abs_path
                 .strip_prefix(&download_path)
-                .unwrap_or(std::path::Path::new(&file.name));
+                .unwrap_or(abs_path);
+
+            // For multi-file torrents the BEP 19 spec says append the path
+            // components joined by '/' after the base URL.  The first component
+            // is the torrent root dir which is already part of the URL on some
+            // servers but NOT on others (e.g. webtorrent.io).  We keep it as-is
+            // because the web-seed URL itself already points at the correct root.
+            let rel_str = rel_path
+                .to_string_lossy()
+                .replace('\\', "/");
 
             let segment_data = download_segment(
                 web_seed_url,
-                rel_path,
+                &rel_str,
                 is_multi_file,
                 file_offset,
                 file_segment_len,
@@ -138,23 +152,25 @@ fn download_block_from_webseed(
 
 fn download_segment(
     web_seed_url: &str,
-    rel_path: &std::path::Path,
+    rel_path: &str,
     is_multi_file: bool,
     file_offset: u64,
     length: u32,
 ) -> Result<Vec<u8>, BitTorrentError> {
-    let mut target_url = web_seed_url.to_string();
-    if is_multi_file {
-        if !target_url.ends_with('/') {
-            target_url.push('/');
-        }
-        target_url.push_str(&rel_path.to_string_lossy().replace('\\', "/"));
-    }
+    let target_url = if is_multi_file {
+        // BEP 19: base URL + '/' + relative path (no leading slash)
+        let base = web_seed_url.trim_end_matches('/');
+        let path = rel_path.trim_start_matches('/');
+        format!("{}/{}", base, path)
+    } else {
+        // Single-file: use the web-seed URL directly (it IS the file URL)
+        web_seed_url.to_string()
+    };
 
     let response = ureq::get(&target_url)
         .set("Range", &format!("bytes={}-{}", file_offset, file_offset + length as u64 - 1))
         .call()
-        .map_err(|e| BitTorrentError::Parse(format!("WebSeed HTTP error: {}", e)))?;
+        .map_err(|e| BitTorrentError::Parse(format!("WebSeed HTTP error: {}: {}", target_url, e)))?;
 
     let mut data = Vec::new();
     response.into_reader().read_to_end(&mut data)?;
