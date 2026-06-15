@@ -88,12 +88,12 @@ fn download_block_from_webseed(
     global_offset: u64,
     length: u32,
 ) -> Result<Vec<u8>, BitTorrentError> {
-    let (files, download_path) = {
+    let (files, is_multi_file) = {
         let ctx = context.lock().unwrap();
-        (ctx.files_to_download.clone(), ctx.download_path.clone())
+        let multi = ctx.files_to_download.len() > 1;
+        (ctx.files_to_download.clone(), multi)
     };
 
-    let is_multi_file = files.len() > 1;
     let mut block_data = Vec::with_capacity(length as usize);
     let mut current_offset = global_offset;
     let mut remaining = length;
@@ -109,26 +109,11 @@ fn download_block_from_webseed(
             let file_segment_len = std::cmp::min(remaining as u64, file_end - current_offset) as u32;
             let file_offset = current_offset - file_start;
 
-            // Compute the path relative to the download directory.
-            // file.name is an absolute path; strip the download_path prefix to
-            // get a relative path like "Sintel/Sintel.de.srt".
-            let abs_path = std::path::Path::new(&file.name);
-            let rel_path = abs_path
-                .strip_prefix(&download_path)
-                .unwrap_or(abs_path);
-
-            // For multi-file torrents the BEP 19 spec says append the path
-            // components joined by '/' after the base URL.  The first component
-            // is the torrent root dir which is already part of the URL on some
-            // servers but NOT on others (e.g. webtorrent.io).  We keep it as-is
-            // because the web-seed URL itself already points at the correct root.
-            let rel_str = rel_path
-                .to_string_lossy()
-                .replace('\\', "/");
-
+            // Use the pre-computed torrent-relative path (e.g. "Sintel/Sintel.mp4").
+            // This avoids any absolute-path or UNC-prefix issues on Windows.
             let segment_data = download_segment(
                 web_seed_url,
-                &rel_str,
+                &file.torrent_path,
                 is_multi_file,
                 file_offset,
                 file_segment_len,

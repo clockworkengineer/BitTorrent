@@ -73,6 +73,13 @@ impl TorrentClientApp {
 }
 
 impl eframe::App for TorrentClientApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Stop all active sessions so background threads don't outlive the process.
+        for state in &mut self.sessions {
+            let _ = state.session.stop();
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Repaint every 500 ms so progress updates live
         ctx.request_repaint_after(Duration::from_millis(500));

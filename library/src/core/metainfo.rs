@@ -32,7 +32,11 @@ type MetaInfoDict = BTreeMap<String, Vec<u8>>;
 /// Detailed information about a single file in a multi-file torrent or the single file itself.
 #[derive(Debug, Clone)]
 pub struct FileDetails {
+    /// Absolute path on the local filesystem (may be a UNC path on Windows).
     pub name: String,
+    /// Path relative to the torrent root, using forward slashes (e.g. "Sintel/Sintel.mp4").
+    /// This is the correct string to append to a BEP 19 web-seed URL.
+    pub torrent_path: String,
     pub length: u64,
     pub md5sum: Option<String>,
     pub offset: u64,
@@ -351,6 +355,8 @@ impl MetaInfoFile {
             }
             files_to_download.push(FileDetails {
                 name: file_path.to_string_lossy().into_owned(),
+                // Single-file torrent: torrent_path is just the file name.
+                torrent_path: name.as_ref().replace('\\', "/"),
                 length,
                 md5sum: self
                     .meta_info_dict
@@ -393,8 +399,15 @@ impl MetaInfoFile {
                     ));
                 }
                 let length = length_value.parse::<u64>()?;
+                // torrent_path = "<root_name>/<file_sub_path>" with forward slashes.
+                let torrent_path = format!(
+                    "{}/{}",
+                    root_name.as_ref().replace('\\', "/"),
+                    trimmed_path.replace('\\', "/")
+                );
                 files_to_download.push(FileDetails {
                     name: file_path.to_string_lossy().into_owned(),
+                    torrent_path,
                     length,
                     md5sum: if md5sum_value.is_empty() {
                         None
