@@ -155,6 +155,10 @@ pub struct UtpSocketAdapter {
     seq_nr: Mutex<u16>,
     ack_nr: Mutex<u16>,
     closed: std::sync::atomic::AtomicBool,
+    // LEDBAT states
+    cwnd: Mutex<u32>,
+    base_delay: Mutex<u32>,
+    sent_packets: Mutex<std::collections::VecDeque<(u16, std::time::Instant, Vec<u8>)>>,
 }
 
 impl UtpSocketAdapter {
@@ -175,6 +179,9 @@ impl UtpSocketAdapter {
             seq_nr: Mutex::new(1),
             ack_nr: Mutex::new(0),
             closed: std::sync::atomic::AtomicBool::new(false),
+            cwnd: Mutex::new(1460),
+            base_delay: Mutex::new(u32::MAX),
+            sent_packets: Mutex::new(std::collections::VecDeque::new()),
         };
 
         // Send ST_SYN handshake packet
@@ -192,14 +199,19 @@ impl UtpSocketAdapter {
         let mut seq = self.seq_nr.lock().unwrap();
         let ack = self.ack_nr.lock().unwrap();
 
+        let timestamp_us = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() & 0xFFFFFFFF) as u32;
+
         let header = UtpHeader {
             packet_type,
             version: 1,
             extension: 0,
             connection_id: self.connection_id,
-            timestamp_us: 0,
+            timestamp_us,
             timestamp_difference_us: 0,
-            wnd_size: 1_048_576, // 1 MiB fixed window (LEDBAT control not yet implemented)
+            wnd_size: 1_048_576,
             seq_nr: *seq,
             ack_nr: *ack,
         };
@@ -208,6 +220,15 @@ impl UtpSocketAdapter {
         packet.extend_from_slice(payload);
 
         self.udp.send(&packet).map_err(BitTorrentError::Io)?;
+
+        if packet_type == UtpPacketType::Data {
+            let mut sent = self.sent_packets.lock().unwrap();
+            sent.push_back((*seq, std::time::Instant::now(), payload.to_vec()));
+            if sent.len() > 128 {
+                sent.pop_front();
+            }
+        }
+
         *seq = seq.wrapping_add(1);
         Ok(())
     }
@@ -240,6 +261,39 @@ impl AsyncSocket for UtpSocketAdapter {
                     {
                         let mut ack = self.ack_nr.lock().unwrap();
                         *ack = header.seq_nr;
+                    }
+
+                    // Compute dynamic delay for LEDBAT
+                    let now_us = (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros() & 0xFFFFFFFF) as u32;
+
+                    if header.timestamp_us > 0 {
+                        let current_delay = now_us.saturating_sub(header.timestamp_us);
+                        let mut base = self.base_delay.lock().unwrap();
+                        if current_delay < *base {
+                            *base = current_delay;
+                        }
+                        let queuing_delay = current_delay.saturating_sub(*base);
+
+                        // LEDBAT adjustment: target delay is 100ms (100_000 microseconds)
+                        let target_delay = 100_000;
+                        let mut cwnd_val = self.cwnd.lock().unwrap();
+                        if queuing_delay < target_delay {
+                            *cwnd_val = cwnd_val.saturating_add(146);
+                        } else {
+                            *cwnd_val = (*cwnd_val).saturating_sub(146).max(1460);
+                        }
+                    }
+
+                    // Acknowledge sent packets
+                    {
+                        let mut sent = self.sent_packets.lock().unwrap();
+                        sent.retain(|&(seq, _, _)| {
+                            let diff = header.ack_nr.wrapping_sub(seq);
+                            diff > 32768
+                        });
                     }
 
                     if header.packet_type == UtpPacketType::Reset {

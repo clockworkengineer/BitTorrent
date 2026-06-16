@@ -19,6 +19,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::log_debug;
+use crate::nat::PortMapper;
 
 pub use crate::session::worker;
 use crate::session::worker::delay;
@@ -100,7 +101,7 @@ pub struct TorrentSession {
     #[cfg(feature = "dht")]
     pub dht: Option<Arc<crate::dht::Dht>>,
     #[cfg(feature = "nat-pmp")]
-    pub nat_pmp: Option<Arc<crate::nat::NatPmpClient>>,
+    pub nat_pmp: Option<Arc<dyn crate::nat::PortMapper>>,
 }
 
 /// A builder for constructing `TorrentSession` configurations.
@@ -543,11 +544,25 @@ impl TorrentSession {
         #[cfg(feature = "nat-pmp")]
         {
             let gateway = crate::nat::get_default_gateway();
-            let nat_client = Arc::new(crate::nat::NatPmpClient::new(gateway));
+            let nat_client = Arc::new(crate::nat::FallbackPortMapper::new(gateway));
             self.nat_pmp = Some(nat_client.clone());
+            let context_clone = self.context.clone();
             thread::spawn(move || {
-                let _ = nat_client.request_mapping(true, 6881, 6881, 3600);
-                let _ = nat_client.request_mapping(false, 6881, 6881, 3600);
+                loop {
+                    let status = {
+                        if let Ok(ctx) = context_clone.try_lock() {
+                            ctx.status
+                        } else {
+                            TorrentStatus::Downloading
+                        }
+                    };
+                    if status == TorrentStatus::Ended {
+                        break;
+                    }
+                    let _ = nat_client.request_mapping(true, 6881, 6881, 3600);
+                    let _ = nat_client.request_mapping(false, 6881, 6881, 3600);
+                    std::thread::sleep(Duration::from_secs(1800));
+                }
             });
         }
 
