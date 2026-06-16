@@ -35,10 +35,10 @@ cargo run -p torrent_session_example --release -- <torrent-file> <download-dir>
 Run the desktop client UI:
 
 ```bash
-cargo run -p torrent_client --release -- <torrent-file> <download-dir>
+cargo run -p torrent_client --release -- [torrent-file] [download-dir]
 ```
 
-Replace `<torrent-file>` with the path to a `.torrent` file and `<download-dir>` with the local directory where files should be created.
+Replace `[torrent-file]` with the path to a `.torrent` file and `[download-dir]` with the local directory where files should be created (both parameters are optional for the desktop client).
 
 ## Project Structure
 
@@ -56,3 +56,7 @@ Replace `<torrent-file>` with the path to a `.torrent` file and `<download-dir>`
 - [`docs/encryption.md`](docs/encryption.md) — MSE/RC4 encryption protocol
 - [`docs/utp.md`](docs/utp.md) — uTP transport protocol
 - [`docs/nat-pmp.md`](docs/nat-pmp.md) — NAT-PMP port forwarding
+- [`docs/portability.md`](docs/portability.md) — `#![no_std]` bare-metal support and mock environments
+- [`docs/performance.md`](docs/performance.md) — zero-copy slice parsing and fast-resume caching
+- [`docs/ui-layout.md`](docs/ui-layout.md) — desktop client GUI layout notes
+
