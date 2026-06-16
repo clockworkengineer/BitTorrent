@@ -1,14 +1,14 @@
 #[cfg(feature = "std")]
 pub mod announcer;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "dht"))]
 pub mod dht;
 #[cfg(feature = "std")]
 pub mod host;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "lsd"))]
 pub mod lsd;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "mse"))]
 pub mod mse;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
 pub mod nat;
 #[cfg(feature = "std")]
 pub mod peer;
@@ -19,5 +19,5 @@ pub mod peer_message;
 pub mod peer_network;
 #[cfg(feature = "std")]
 pub mod tracker;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "utp"))]
 pub mod utp;

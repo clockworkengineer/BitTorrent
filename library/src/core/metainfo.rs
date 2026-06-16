@@ -545,11 +545,18 @@ impl MetaInfoFile {
         };
         
         if is_v2 {
-            use sha2::Digest;
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(&encoded);
-            let digest = hasher.finalize();
-            meta_info_dict.insert("info hash".to_string(), digest.to_vec());
+            #[cfg(feature = "v2")]
+            {
+                use sha2::Digest;
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(&encoded);
+                let digest = hasher.finalize();
+                meta_info_dict.insert("info hash".to_string(), digest.to_vec());
+            }
+            #[cfg(not(feature = "v2"))]
+            {
+                return Err(BitTorrentError::Parse("BitTorrent v2 is not compiled in this build".into()));
+            }
         } else {
             let mut hasher = Sha1::new();
             hasher.update(&encoded);

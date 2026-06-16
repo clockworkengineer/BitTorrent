@@ -97,15 +97,15 @@ pub use core::torrent_context;
 
 #[cfg(feature = "std")]
 pub use network::announcer;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "dht"))]
 pub use network::dht;
 #[cfg(feature = "std")]
 pub use network::host;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "lsd"))]
 pub use network::lsd;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "mse"))]
 pub use network::mse;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
 pub use network::nat;
 #[cfg(feature = "std")]
 pub use network::peer;
@@ -116,7 +116,7 @@ pub use network::peer_message;
 pub use network::peer_network;
 #[cfg(feature = "std")]
 pub use network::tracker;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "utp"))]
 pub use network::utp;
 
 #[cfg(feature = "std")]
@@ -130,7 +130,7 @@ pub use storage::piece_request;
 
 #[cfg(feature = "std")]
 pub use session::manager;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "webseed"))]
 pub use session::webseed;
 
 pub use utils::average;
@@ -162,9 +162,9 @@ pub use network::peer_id::get as get_peer_id;
 pub use network::peer_message::PeerMessage;
 #[cfg(feature = "std")]
 pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "dht"))]
 pub use network::dht::Dht;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "utp"))]
 pub use network::utp::UtpSocketAdapter;
 #[cfg(feature = "std")]
 pub use session::session::{TorrentSession, TorrentSessionBuilder};

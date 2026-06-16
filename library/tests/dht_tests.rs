@@ -1,3 +1,5 @@
+#![cfg(all(feature = "std", feature = "dht"))]
+
 use bittorrent_rs::dht::{count_leading_zeros, xor_distance, RoutingTable, DhtNode, Dht};
 use std::sync::mpsc::channel;
 

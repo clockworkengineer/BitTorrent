@@ -97,7 +97,9 @@ pub struct TorrentSession {
     task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     executor_thread: Option<thread::JoinHandle<()>>,
     manager: Option<Arc<Manager>>,
+    #[cfg(feature = "dht")]
     pub dht: Option<Arc<crate::dht::Dht>>,
+    #[cfg(feature = "nat-pmp")]
     pub nat_pmp: Option<Arc<crate::nat::NatPmpClient>>,
 }
 
@@ -266,7 +268,9 @@ impl TorrentSession {
             task_tx,
             executor_thread: Some(executor_thread),
             manager: None,
+            #[cfg(feature = "dht")]
             dht: None,
+            #[cfg(feature = "nat-pmp")]
             nat_pmp: None,
         };
 
@@ -381,7 +385,9 @@ impl TorrentSession {
             task_tx,
             executor_thread: Some(executor_thread),
             manager: None,
+            #[cfg(feature = "dht")]
             dht: None,
+            #[cfg(feature = "nat-pmp")]
             nat_pmp: None,
         };
 
@@ -491,46 +497,59 @@ impl TorrentSession {
         });
 
         // Start LSD (Local Service Discovery) listener and announcer
-        let is_private = self.context.lock().unwrap().is_private;
-        if !is_private {
-            let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
-            let _lsd_listener_handle = lsd_listener.start();
+        #[cfg(feature = "lsd")]
+        {
+            let is_private = self.context.lock().unwrap().is_private;
+            if !is_private {
+                let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
+                let _lsd_listener_handle = lsd_listener.start();
 
-            let lsd_announcer = crate::lsd::LsdAnnouncer::new(info_hash.clone(), 6881);
-            let _lsd_announcer_handle = lsd_announcer.start(self.context.clone());
+                let lsd_announcer = crate::lsd::LsdAnnouncer::new(info_hash.clone(), 6881);
+                let _lsd_announcer_handle = lsd_announcer.start(self.context.clone());
+            }
         }
 
-        if config.dht_enabled && self.dht.is_none() && !is_private {
-            if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
-                let _ = d.start();
-                d.bootstrap();
+        #[cfg(feature = "dht")]
+        {
+            let is_private = self.context.lock().unwrap().is_private;
+            if config.dht_enabled && self.dht.is_none() && !is_private {
+                if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
+                    let _ = d.start();
+                    d.bootstrap();
 
-                let d_arc = Arc::new(d);
-                self.dht = Some(d_arc.clone());
+                    let d_arc = Arc::new(d);
+                    self.dht = Some(d_arc.clone());
 
-                let mut ih = [0u8; 20];
-                if info_hash.len() == 20 {
-                    ih.copy_from_slice(&info_hash);
+                    let mut ih = [0u8; 20];
+                    if info_hash.len() == 20 {
+                        ih.copy_from_slice(&info_hash);
+                    }
+
+                    d_arc.lookup_peers(ih, peer_tx);
                 }
-
-                d_arc.lookup_peers(ih, peer_tx);
             }
         }
 
         // Start WebSeeding loop if available
-        let web_seeds = self.context.lock().unwrap().web_seeds.clone();
-        if !web_seeds.is_empty() {
-            let webseed_handle = crate::webseed::start_webseed_loop(self.context.clone(), web_seeds);
-            self.peer_workers.lock().unwrap().push(webseed_handle);
+        #[cfg(feature = "webseed")]
+        {
+            let web_seeds = self.context.lock().unwrap().web_seeds.clone();
+            if !web_seeds.is_empty() {
+                let webseed_handle = crate::webseed::start_webseed_loop(self.context.clone(), web_seeds);
+                self.peer_workers.lock().unwrap().push(webseed_handle);
+            }
         }
 
-        let gateway = crate::nat::get_default_gateway();
-        let nat_client = Arc::new(crate::nat::NatPmpClient::new(gateway));
-        self.nat_pmp = Some(nat_client.clone());
-        thread::spawn(move || {
-            let _ = nat_client.request_mapping(true, 6881, 6881, 3600);
-            let _ = nat_client.request_mapping(false, 6881, 6881, 3600);
-        });
+        #[cfg(feature = "nat-pmp")]
+        {
+            let gateway = crate::nat::get_default_gateway();
+            let nat_client = Arc::new(crate::nat::NatPmpClient::new(gateway));
+            self.nat_pmp = Some(nat_client.clone());
+            thread::spawn(move || {
+                let _ = nat_client.request_mapping(true, 6881, 6881, 3600);
+                let _ = nat_client.request_mapping(false, 6881, 6881, 3600);
+            });
+        }
 
         let mut context = self.context.lock().unwrap();
         context.start_downloading()
@@ -548,9 +567,11 @@ impl TorrentSession {
 
     /// Stops the session, disconnecting all connected peers and releasing resources.
     pub fn stop(&mut self) -> Result<(), BitTorrentError> {
+        #[cfg(feature = "dht")]
         if let Some(ref d) = self.dht {
             d.stop();
         }
+        #[cfg(feature = "nat-pmp")]
         if let Some(ref nat) = self.nat_pmp {
             let nat_clone = nat.clone();
             thread::spawn(move || {

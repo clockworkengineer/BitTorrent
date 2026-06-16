@@ -2,7 +2,7 @@
 pub mod manager;
 #[cfg(feature = "std")]
 pub mod session;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "webseed"))]
 pub mod webseed;
 #[cfg(feature = "std")]
 pub mod worker;

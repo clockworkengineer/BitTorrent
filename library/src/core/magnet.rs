@@ -1,6 +1,7 @@
 use crate::error::BitTorrentError;
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::format;
 
 pub struct MagnetLink {
     pub info_hash: Vec<u8>,

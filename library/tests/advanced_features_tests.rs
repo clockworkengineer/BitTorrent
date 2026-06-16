@@ -219,17 +219,20 @@ fn test_lsd_announcement_format() {
     assert!(packet.contains("Infohash: 0102030405060708090a0b0c0d0e0f1011121314"));
 }
 
+#[cfg(all(feature = "std", feature = "http-tracker"))]
 #[derive(Debug)]
 struct MockScrapeHttpClient {
     response_body: Vec<u8>,
 }
 
+#[cfg(all(feature = "std", feature = "http-tracker"))]
 impl bittorrent_rs::io_traits::HttpClient for MockScrapeHttpClient {
     fn get(&self, _url: &str) -> Result<Vec<u8>, bittorrent_rs::BitTorrentError> {
         Ok(self.response_body.clone())
     }
 }
 
+#[cfg(all(feature = "std", feature = "http-tracker"))]
 #[test]
 fn test_http_scrape_parsing() {
     let info_hash = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -293,6 +296,7 @@ fn test_private_torrent_guards() {
 }
 
 /// Verifies RC4 stream cipher: encrypt then decrypt returns original plaintext.
+#[cfg(all(feature = "std", feature = "mse"))]
 #[test]
 fn test_mse_rc4_stream_encrypt_decrypt() {
     let key = b"test-secret-key";
@@ -312,6 +316,7 @@ fn test_mse_rc4_stream_encrypt_decrypt() {
 }
 
 /// Verifies that two DH parties derive an identical shared secret.
+#[cfg(all(feature = "std", feature = "mse"))]
 #[test]
 fn test_mse_diffie_hellman_shared_secret() {
     let alice = bittorrent_rs::mse::DiffieHellman::new();
@@ -325,6 +330,7 @@ fn test_mse_diffie_hellman_shared_secret() {
 }
 
 /// Verifies uTP header encode/decode round-trip correctness.
+#[cfg(all(feature = "std", feature = "utp"))]
 #[test]
 fn test_utp_header_encode_decode() {
     use bittorrent_rs::utp::{UtpHeader, UtpPacketType};
@@ -356,6 +362,7 @@ fn test_utp_header_encode_decode() {
 }
 
 /// Verifies NAT-PMP port mapping request packet serialization.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
 #[test]
 fn test_nat_pmp_mapping_request_serialization() {
     use bittorrent_rs::nat::NatPmpClient;
@@ -379,6 +386,7 @@ fn test_nat_pmp_mapping_request_serialization() {
 }
 
 /// Verifies NAT-PMP response parsing extracts ports and lifetime correctly.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
 #[test]
 fn test_nat_pmp_response_parsing() {
     use bittorrent_rs::nat::NatPmpClient;
@@ -398,6 +406,7 @@ fn test_nat_pmp_response_parsing() {
 }
 
 /// Verifies that v2 torrents produce a 32-byte SHA-256 info-hash.
+#[cfg(feature = "v2")]
 #[test]
 fn test_metainfo_v2_sha256_infohash_is_32_bytes() {
     use bittorrent_rs::{Bencode, BNode};

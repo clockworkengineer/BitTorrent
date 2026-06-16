@@ -125,6 +125,7 @@ pub async fn handle_peer_session(
     };
 
     // MSE Diffie-Hellman handshake negotiation (only when enabled in config)
+    #[cfg(feature = "mse")]
     if config.mse_enabled {
         let dh = crate::mse::DiffieHellman::new();
         let local_pub_bytes = dh.public_key;
@@ -155,6 +156,13 @@ pub async fn handle_peer_session(
         let rc4_dec = crate::mse::Rc4::new(&dec_key);
         net.set_mse_ciphers(rc4_enc, rc4_dec);
         peer.lock().unwrap().network = Some(net.clone());
+    }
+
+    #[cfg(not(feature = "mse"))]
+    if config.mse_enabled {
+        log_debug!("MSE is not compiled in this build!");
+        mark_peer_dead(&manager, &peer_details.ip);
+        return;
     }
 
     if net.write_handshake(&info_hash, local_peer_id.as_bytes()).await.is_err() {
