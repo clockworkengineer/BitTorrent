@@ -2735,6 +2735,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22686f4785f02a4fcc856d3b3bb19bf6c8160d103f7a99cc258bddd0251dc7f2"
 
 [[package]]
+name = "port_mapping_example"
+version = "0.1.0"
+dependencies = [
+ "bittorrent-rs",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3585,6 +3592,13 @@ dependencies = [
 
 [[package]]
 name = "torrent_client_shared"
+version = "0.1.0"
+dependencies = [
+ "bittorrent-rs",
+]
+
+[[package]]
+name = "torrent_fast_resume_example"
 version = "0.1.0"
 dependencies = [
  "bittorrent-rs",
