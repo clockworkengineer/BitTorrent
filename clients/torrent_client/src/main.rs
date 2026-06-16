@@ -152,6 +152,9 @@ impl TorrentClientApp {
 
 impl eframe::App for TorrentClientApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Save final state before stopping sessions to capture the exact downloaded bitfields
+        self.save_state();
+
         // Stop all active sessions so background threads don't outlive the process.
         for state in &mut self.sessions {
             let _ = state.session.stop();
@@ -338,13 +341,18 @@ impl eframe::App for TorrentClientApp {
                         ui.add_space(6.0);
                     }
 
+                    let mut should_save_progress = false;
                     for (i, session_state) in self.sessions.iter_mut().enumerate() {
                         if !matches_filter(session_state, self.active_filter) {
                             continue;
                         }
 
                         if let Ok(ctx_guard) = session_state.session.context().try_lock() {
+                            let old_progress = session_state.last_progress;
                             session_state.update_fields(&ctx_guard);
+                            if session_state.last_progress != old_progress {
+                                should_save_progress = true;
+                            }
                         }
 
                         let is_selected = self.selected_session_index == Some(i);
@@ -419,6 +427,8 @@ impl eframe::App for TorrentClientApp {
                             }
                         }
                         self.save_state();
+                    } else if should_save_progress {
+                        self.save_state();
                     }
                 });
         });
@@ -487,7 +497,7 @@ impl TorrentClientApp {
         uploaded: u64,
         total: u64,
     ) {
-        if let Ok(ctx) = context.try_lock() {
+        if let Ok(ctx) = context.lock() {
             egui::Grid::new("overview_grid")
                 .num_columns(2)
                 .spacing([12.0, 6.0])
@@ -540,7 +550,7 @@ impl TorrentClientApp {
     }
 
     fn draw_files_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
-        if let Ok(ctx) = context.try_lock() {
+        if let Ok(ctx) = context.lock() {
             if ctx.files_to_download.is_empty() {
                 ui.label("No files list found (Magnet bootstrapping...)");
                 return;
@@ -569,7 +579,7 @@ impl TorrentClientApp {
     }
 
     fn draw_peers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
-        if let Ok(ctx) = context.try_lock() {
+        if let Ok(ctx) = context.lock() {
             let swarm = ctx.peer_swarm.read().unwrap();
             if swarm.is_empty() {
                 ui.label("No peers connected.");
@@ -612,7 +622,7 @@ impl TorrentClientApp {
     }
 
     fn draw_trackers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
-        if let Ok(ctx) = context.try_lock() {
+        if let Ok(ctx) = context.lock() {
             egui::Grid::new("trackers_grid")
                 .num_columns(2)
                 .spacing([12.0, 6.0])
@@ -671,7 +681,7 @@ impl TorrentClientApp {
 impl TorrentClientApp {
     fn save_state(&self) {
         let torrents = self.sessions.iter().map(|s| {
-            let bitfield_hex = if let Ok(ctx) = s.session.context().try_lock() {
+            let bitfield_hex = if let Ok(ctx) = s.session.context().lock() {
                 ctx.bitfield.iter().map(|b| format!("{:02x}", b)).collect::<String>()
             } else {
                 String::new()
