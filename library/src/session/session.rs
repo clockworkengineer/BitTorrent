@@ -47,6 +47,8 @@ pub struct SessionConfig {
     pub max_connections: usize,
     /// Maximum number of candidate peers queued for discovery (default: 1000).
     pub max_peer_candidates: usize,
+    /// Skip full block-by-block verification of existing files on disk on startup.
+    pub skip_hash_check: bool,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -57,7 +59,8 @@ impl std::fmt::Debug for SessionConfig {
           .field("write_timeout", &self.write_timeout)
           .field("min_reannounce_interval", &self.min_reannounce_interval)
           .field("dht_enabled", &self.dht_enabled)
-          .field("dht_port", &self.dht_port);
+          .field("dht_port", &self.dht_port)
+          .field("skip_hash_check", &self.skip_hash_check);
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
         ds.finish()
@@ -86,6 +89,7 @@ impl Default for SessionConfig {
             mse_enabled: false,
             max_connections: 50,
             max_peer_candidates: 1000,
+            skip_hash_check: false,
         }
     }
 }
@@ -225,7 +229,23 @@ impl TorrentSession {
             context.lock().unwrap().total_bytes_downloaded.store(total, std::sync::atomic::Ordering::Relaxed);
             context.lock().unwrap().initial_bytes_downloaded = total;
         } else {
-            disk_io.create_torrent_bitfield(&mut context.lock().unwrap())?;
+            if !config.skip_hash_check {
+                disk_io.create_torrent_bitfield(&mut context.lock().unwrap())?;
+            } else {
+                let mut ctx = context.lock().unwrap();
+                let number_of_pieces = ctx.number_of_pieces;
+                let piece_length = ctx.piece_length;
+                let mut total_bytes_left = ctx.total_bytes_to_download as i64;
+                for i in 0..number_of_pieces as u32 {
+                    ctx.mark_piece_missing(i, true);
+                    if total_bytes_left / piece_length as i64 != 0 {
+                        ctx.set_piece_length(i, piece_length);
+                    } else {
+                        ctx.set_piece_length(i, total_bytes_left as u32);
+                    }
+                    total_bytes_left -= piece_length as i64;
+                }
+            }
             let downloaded = context.lock().unwrap().total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
             context.lock().unwrap().initial_bytes_downloaded = downloaded;
         }
