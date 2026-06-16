@@ -316,6 +316,28 @@ impl eframe::App for TorrentClientApp {
                     let mut delete_indices = vec![];
                     let mut select_idx = None;
 
+                    // Display pending/loading sessions with a spinner for instant feedback
+                    for pending in &self.pending_sessions {
+                        let name = std::path::Path::new(&pending.torrent_path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| pending.torrent_path.clone());
+
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(&name).strong().color(egui::Color32::from_rgb(230, 126, 34)));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.add(egui::Spinner::new());
+                                    ui.label("Loading... ");
+                                });
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Verifying local storage and resolving metadata...");
+                            });
+                        });
+                        ui.add_space(6.0);
+                    }
+
                     for (i, session_state) in self.sessions.iter_mut().enumerate() {
                         if !matches_filter(session_state, self.active_filter) {
                             continue;
@@ -817,7 +839,8 @@ impl TorrentClientApp {
                 return;
             }
 
-            let mut tracker = match Tracker::new(session.context()) {
+            let context_clone = session.context();
+            let mut tracker = match Tracker::new(context_clone.clone()) {
                 Ok(t) => t,
                 Err(e) => {
                     log_err(format!("Tracker setup failed: {}", e));
@@ -825,6 +848,13 @@ impl TorrentClientApp {
                     return;
                 }
             };
+
+            let task_tx = session.task_tx.clone();
+            let peer_workers = session.peer_workers.clone();
+            let manager = session.manager.clone();
+
+            // Send TorrentSession to the UI thread immediately so the client displays it instantly
+            let _ = session_tx.send(session);
 
             let _ = msg_tx.send(format!("[{}] Announcing to trackers...", session_id));
             println!("[{}] Announcing to trackers...", session_id);
@@ -841,25 +871,75 @@ impl TorrentClientApp {
                         let msg = format!("[{}] No peers; waiting.", session_id);
                         let _ = msg_tx.send(msg.clone());
                         println!("{}", msg);
-                    } else if let Err(e) = session.download_from_peers(response.peer_list) {
-                        let msg = format!(
-                            "[{}] Download from peers failed: {}",
-                            session_id, e
-                        );
-                        let _ = msg_tx.send(msg.clone());
-                        eprintln!("{}", msg);
                     } else {
+                        for peer_details in response.peer_list {
+                            if let Some(ref mgr) = manager {
+                                if mgr.is_peer_dead(&peer_details.ip) {
+                                    continue;
+                                }
+                            }
+                            let ctx2 = context_clone.clone();
+                            let mgr2 = manager.clone();
+                            let peer_workers2 = peer_workers.clone();
+                            let handle = std::thread::spawn(move || {
+                                futures::executor::block_on(bittorrent_rs::session::worker::handle_peer_session(peer_details, ctx2, mgr2));
+                            });
+                            peer_workers2.lock().unwrap().push(handle);
+                        }
                         let msg = format!("[{}] Download started.", session_id);
                         let _ = msg_tx.send(msg.clone());
                         println!("{}", msg);
                     }
 
-                    let _reannounce_thread = session.start_reannounce_loop(tracker);
-                    let _ = session_tx.send(session);
+                    // Start the reannounce loop
+                    let context_reannounce = context_clone.clone();
+                    let peer_workers_reannounce = peer_workers.clone();
+                    let manager_reannounce = manager.clone();
+                    let _ = task_tx.send(Box::pin(async move {
+                        let mut announced_completed = false;
+                        loop {
+                            let min_reannounce = {
+                                let ctx = context_reannounce.lock().unwrap();
+                                ctx.config.min_reannounce_interval
+                            };
+                            let interval = tracker.interval.max(min_reannounce as usize);
+                            bittorrent_rs::session::worker::delay(Duration::from_secs(interval as u64)).await;
+
+                            let status = {
+                                let ctx = context_reannounce.lock().unwrap();
+                                if ctx.status == bittorrent_rs::TorrentStatus::Ended {
+                                    break;
+                                }
+                                ctx.status
+                            };
+
+                            if status == bittorrent_rs::TorrentStatus::Seeding && !announced_completed {
+                                announced_completed = true;
+                                let _ = tracker.announce_completed();
+                                continue;
+                            }
+
+                            match tracker.announce_once() {
+                                Ok(response) => {
+                                    for peer_details in response.peer_list {
+                                        let ctx2 = context_reannounce.clone();
+                                        let mgr2 = manager_reannounce.clone();
+                                        let peer_workers2 = peer_workers_reannounce.clone();
+
+                                        let handle = std::thread::spawn(move || {
+                                            futures::executor::block_on(bittorrent_rs::session::worker::handle_peer_session(peer_details, ctx2, mgr2));
+                                        });
+                                        peer_workers2.lock().unwrap().push(handle);
+                                    }
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                        let _ = tracker.announce_stopped();
+                    }));
                 }
                 Err(e) => {
                     log_err(format!("Tracker announce failed: {}", e));
-                    let _ = session_tx.send(session);
                 }
             }
         });

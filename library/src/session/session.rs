@@ -96,12 +96,12 @@ impl Default for SessionConfig {
 
 /// Represents an active Torrent transfer session.
 pub struct TorrentSession {
-    context: Arc<Mutex<TorrentContext>>,
-    download_path: PathBuf,
-    peer_workers: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
-    task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
-    executor_thread: Option<thread::JoinHandle<()>>,
-    manager: Option<Arc<Manager>>,
+    pub context: Arc<Mutex<TorrentContext>>,
+    pub download_path: PathBuf,
+    pub peer_workers: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
+    pub task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    pub executor_thread: Option<thread::JoinHandle<()>>,
+    pub manager: Option<Arc<Manager>>,
     #[cfg(feature = "dht")]
     pub dht: Option<Arc<crate::dht::Dht>>,
     #[cfg(feature = "nat-pmp")]

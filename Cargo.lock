@@ -3584,6 +3584,7 @@ dependencies = [
  "bittorrent-rs",
  "dirs",
  "eframe",
+ "futures",
  "rfd",
  "serde",
  "serde_json",
