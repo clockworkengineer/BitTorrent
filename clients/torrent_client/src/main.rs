@@ -315,13 +315,19 @@ impl eframe::App for TorrentClientApp {
 
                         let is_selected = self.selected_session_index == Some(i);
 
-                        let response = ui.group(|ui| {
+                        ui.group(|ui| {
                             ui.horizontal(|ui| {
                                 let name = egui::RichText::new(&session_state.last_file_name).strong();
-                                if is_selected {
-                                    ui.label(name.color(ui.visuals().selection.bg_fill));
+                                let label_response = if is_selected {
+                                    ui.label(name.color(ui.visuals().selection.bg_fill))
                                 } else {
-                                    ui.label(name);
+                                    ui.label(name)
+                                };
+                                
+                                // Make only name label clickable to select the torrent
+                                let label_click = label_response.interact(egui::Sense::click());
+                                if label_click.clicked() {
+                                    select_idx = Some(i);
                                 }
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -358,11 +364,6 @@ impl eframe::App for TorrentClientApp {
                                 ui.label(format!("Peers: {}", session_state.last_peers_connected));
                             });
                         });
-
-                        let click_response = response.response.interact(egui::Sense::click());
-                        if click_response.clicked() {
-                            select_idx = Some(i);
-                        }
 
                         ui.add_space(6.0);
                     }
