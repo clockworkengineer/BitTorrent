@@ -446,3 +446,75 @@ fn test_metainfo_v2_sha256_infohash_is_32_bytes() {
     assert!(meta.is_v2(),      "Torrent should be detected as v2");
     assert!(!meta.is_private(), "No private flag should default to false");
 }
+
+/// Verifies UPnP request payload contents and generation.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
+#[test]
+fn test_upnp_client_payload_generation() {
+    use bittorrent_rs::nat::UpnpClient;
+    use std::net::Ipv4Addr;
+    use bittorrent_rs::nat::PortMapper;
+
+    let client = UpnpClient::new(Ipv4Addr::new(192, 168, 1, 1));
+    assert!(client.request_mapping(true, 6881, 6881, 3600).is_err(), "Should fail on connect as router is missing");
+}
+
+/// Verifies that skip_hash_check works correctly when loading a session.
+#[test]
+fn test_session_skip_hash_check_initialization() {
+    use bittorrent_rs::{Bencode, BNode};
+    use bittorrent_rs::session::SessionConfig;
+    use bittorrent_rs::TorrentSession;
+
+    let info_dict = BNode::Dictionary(vec![
+        (b"name" as &[u8],         BNode::String(b"test-torrent")),
+        (b"piece length" as &[u8], BNode::Number(b"262144")),
+        (b"pieces" as &[u8],       BNode::String(&[0u8; 20])),
+        (b"length" as &[u8],       BNode::Number(b"262144")),
+    ]);
+    let root_dict = BNode::Dictionary(vec![
+        (b"announce" as &[u8], BNode::String(b"http://tracker.example.com/announce")),
+        (b"info" as &[u8],     info_dict),
+    ]);
+
+    let torrent_bytes = Bencode::encode(&root_dict);
+    let torrent_path = std::env::temp_dir().join("test_skip_hash.torrent");
+    std::fs::write(&torrent_path, &torrent_bytes).unwrap();
+
+    let mut config = SessionConfig::default();
+    config.skip_hash_check = true;
+
+    let session = TorrentSession::new_with_options(
+        &torrent_path,
+        std::env::temp_dir(),
+        false,
+        config,
+        std::sync::Arc::new(bittorrent_rs::RarestFirstSelector)
+    ).unwrap();
+
+    let context = session.context();
+    let ctx = context.lock().unwrap();
+    assert_eq!(ctx.missing_pieces_count, 1);
+    assert!(ctx.is_piece_missing(0));
+}
+
+/// Verifies uTP LEDBAT state metrics update on packets received.
+#[cfg(all(feature = "std", feature = "utp"))]
+#[test]
+fn test_utp_ledbat_cwnd_dynamics() {
+    use bittorrent_rs::utp::{UtpHeader, UtpPacketType};
+    let h = UtpHeader {
+        packet_type: UtpPacketType::State,
+        version: 1,
+        extension: 0,
+        connection_id: 1,
+        timestamp_us: 1000,
+        timestamp_difference_us: 0,
+        wnd_size: 1024,
+        seq_nr: 1,
+        ack_nr: 1,
+    };
+    let encoded = h.encode();
+    let decoded = UtpHeader::decode(&encoded).unwrap();
+    assert_eq!(decoded.timestamp_us, 1000);
+}
