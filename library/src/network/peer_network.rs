@@ -101,7 +101,8 @@ impl PeerNetwork {
     pub async fn read_exact(&self, buffer: &mut [u8]) -> Result<(), BitTorrentError> {
         let mut offset = 0;
         while offset < buffer.len() {
-            let n = self.socket.read(&mut buffer[offset..]).await?;
+            let limit = buffer.len() - offset;
+            let n = self.read(&mut buffer[offset..], limit).await?;
             if n == 0 {
                 return Err(BitTorrentError::Parse("Unexpected EOF reading socket".into()));
             }
