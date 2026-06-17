@@ -302,7 +302,14 @@ impl TorrentSession {
         let task_tx_stats = session.task_tx.clone();
         let _ = task_tx_stats.send(Box::pin(async move {
             loop {
-                delay(Duration::from_secs(5)).await;
+                let start_time = std::time::Instant::now();
+                let duration = Duration::from_secs(5);
+                while start_time.elapsed() < duration {
+                    if context_stats.lock().unwrap().status == TorrentStatus::Ended {
+                        break;
+                    }
+                    delay(Duration::from_millis(100)).await;
+                }
 
                 let status = {
                     let ctx = context_stats.lock().unwrap();
@@ -417,7 +424,14 @@ impl TorrentSession {
         let task_tx_stats = session.task_tx.clone();
         let _ = task_tx_stats.send(Box::pin(async move {
             loop {
-                delay(Duration::from_secs(5)).await;
+                let start_time = std::time::Instant::now();
+                let duration = Duration::from_secs(5);
+                while start_time.elapsed() < duration {
+                    if context_stats.lock().unwrap().status == TorrentStatus::Ended {
+                        break;
+                    }
+                    delay(Duration::from_millis(100)).await;
+                }
 
                 let status = {
                     let ctx = context_stats.lock().unwrap();
@@ -761,7 +775,19 @@ impl TorrentSession {
                     ctx.config.min_reannounce_interval
                 };
                 let interval = tracker.interval.max(min_reannounce as usize);
-                self::worker::delay(Duration::from_secs(interval as u64)).await;
+                let start_time = std::time::Instant::now();
+                let duration = Duration::from_secs(interval as u64);
+                let mut ended = false;
+                while start_time.elapsed() < duration {
+                    if context.lock().unwrap().status == TorrentStatus::Ended {
+                        ended = true;
+                        break;
+                    }
+                    self::worker::delay(Duration::from_millis(100)).await;
+                }
+                if ended {
+                    break;
+                }
 
                 let status = {
                     let ctx = context.lock().unwrap();
@@ -812,7 +838,19 @@ fn spawn_choking_loop(
         let mut optimistic_timer = 0;
         let mut current_optimistic_ip: Option<String> = None;
         loop {
-            delay(Duration::from_secs(10)).await;
+            let start_time = std::time::Instant::now();
+            let duration = Duration::from_secs(10);
+            let mut ended = false;
+            while start_time.elapsed() < duration {
+                if context.lock().unwrap().status == TorrentStatus::Ended {
+                    ended = true;
+                    break;
+                }
+                delay(Duration::from_millis(100)).await;
+            }
+            if ended {
+                break;
+            }
             
             let status = {
                 let ctx = context.lock().unwrap();

@@ -319,7 +319,19 @@ impl TorrentClientApp {
                                 ctx.config.min_reannounce_interval
                             };
                             let interval = tracker.interval.max(min_reannounce as usize);
-                            bittorrent_rs::session::worker::delay(Duration::from_secs(interval as u64)).await;
+                            let start_time = std::time::Instant::now();
+                            let duration = Duration::from_secs(interval as u64);
+                            let mut ended = false;
+                            while start_time.elapsed() < duration {
+                                if context_reannounce.lock().unwrap().status == bittorrent_rs::TorrentStatus::Ended {
+                                    ended = true;
+                                    break;
+                                }
+                                bittorrent_rs::session::worker::delay(Duration::from_millis(100)).await;
+                            }
+                            if ended {
+                                break;
+                            }
 
                             let status = {
                                 let ctx = context_reannounce.lock().unwrap();

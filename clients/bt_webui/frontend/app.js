@@ -1,4 +1,5 @@
 let ws;
+let toastTimeout;
 const torrentsBody = document.getElementById('torrents-body');
 const magnetInput = document.getElementById('magnet-input');
 const dirInput = document.getElementById('dir-input');
@@ -10,7 +11,12 @@ function showToast(message, isError = false) {
     toast.textContent = message;
     toast.style.borderColor = isError ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)';
     toast.classList.remove('hidden');
-    setTimeout(() => {
+    
+    if (toastTimeout) {
+        clearTimeout(toastTimeout);
+    }
+    
+    toastTimeout = setTimeout(() => {
         toast.classList.add('hidden');
     }, 4000);
 }
@@ -31,6 +37,12 @@ function connectWebSocket() {
             const data = JSON.parse(event.data);
             if (data.torrents) {
                 renderTorrents(data.torrents);
+            } else if (data.error) {
+                torrentsBody.innerHTML = `
+                    <tr class="empty-row">
+                        <td colspan="8" style="color: var(--danger-hover)">Error: ${data.error} (Is the daemon running?)</td>
+                    </tr>
+                `;
             }
         } catch (e) {
             console.error("Error parsing status message:", e);

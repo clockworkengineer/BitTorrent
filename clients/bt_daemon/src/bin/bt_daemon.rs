@@ -183,7 +183,19 @@ impl Engine {
                             ctx.config.min_reannounce_interval
                         };
                         let interval = tracker.interval.max(min_reannounce as usize);
-                        bittorrent_rs::session::worker::delay(Duration::from_secs(interval as u64)).await;
+                        let start_time = std::time::Instant::now();
+                        let duration = Duration::from_secs(interval as u64);
+                        let mut ended = false;
+                        while start_time.elapsed() < duration {
+                            if context_reannounce.lock().unwrap().status == TorrentStatus::Ended {
+                                ended = true;
+                                break;
+                            }
+                            bittorrent_rs::session::worker::delay(Duration::from_millis(100)).await;
+                        }
+                        if ended {
+                            break;
+                        }
 
                         let status = {
                             let ctx = context_reannounce.lock().unwrap();
@@ -398,7 +410,12 @@ mod ipc {
                 }
 
                 let connected = unsafe { ConnectNamedPipe(pipe, ptr::null_mut()) };
-                if connected != 0 || unsafe { windows_sys::Win32::Foundation::GetLastError() } == 997 { // ERROR_IO_PENDING
+                let last_err = if connected == 0 {
+                    unsafe { windows_sys::Win32::Foundation::GetLastError() }
+                } else {
+                    0
+                };
+                if connected != 0 || last_err == 997 || last_err == windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                     let handler_clone = handler.clone();
                     let pipe_raw = pipe as usize;
                     std::thread::spawn(move || {
