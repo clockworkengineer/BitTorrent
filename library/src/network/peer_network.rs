@@ -59,6 +59,7 @@ impl PeerNetwork {
         }
     }
 
+    /// Configures the RC4 encryption and decryption ciphers used for Message Stream Encryption (MSE).
     #[cfg(feature = "mse")]
     pub fn set_mse_ciphers(&mut self, encrypt: crate::mse::Rc4, decrypt: crate::mse::Rc4) {
         self.rc4_encrypt = Some(Arc::new(Mutex::new(encrypt)));
@@ -294,8 +295,11 @@ impl AsyncSocket for TcpSocket {
 #[cfg(feature = "std")]
 #[derive(Debug)]
 pub struct TcpSocketFactory {
+    /// Connection establishment timeout.
     pub connect_timeout: std::time::Duration,
+    /// Read timeout configured on the connected stream.
     pub read_timeout: std::time::Duration,
+    /// Write timeout configured on the connected stream.
     pub write_timeout: std::time::Duration,
 }
 

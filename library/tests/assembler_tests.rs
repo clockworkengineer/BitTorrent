@@ -1,5 +1,11 @@
+//! Unit Tests for Block Request Assembler and PieceBuffer
+//!
+//! Verifies block request reservation lifecycle states, release operations,
+//! target piece clear commands, and incremental sub-block completion inside PieceBuffer.
+
 use bittorrent_rs::Assembler;
 
+/// Verifies that reservation claims block request slots and returns false on duplicate requests.
 #[test]
 fn test_assembler_reservation() {
     let assembler = Assembler::new();
@@ -14,6 +20,7 @@ fn test_assembler_reservation() {
     assert!(!assembler.reserve_block_request(1, 0));
 }
 
+/// Verifies that releasing a block reservation frees it up for future queries.
 #[test]
 fn test_assembler_release() {
     let assembler = Assembler::new();
@@ -27,6 +34,7 @@ fn test_assembler_release() {
     assembler.release_block_request(2, 5);
 }
 
+/// Verifies that clearing a piece releases all associated block reservations.
 #[test]
 fn test_assembler_clear_piece() {
     let assembler = Assembler::new();
@@ -46,6 +54,7 @@ fn test_assembler_clear_piece() {
     assert!(assembler.is_block_requested(4, 0));
 }
 
+/// Verifies block configuration indexing, logging sources, and duplicate add ignores inside PieceBuffer.
 #[test]
 fn test_piece_buffer_block_management() {
     use bittorrent_rs::piece_buffer::PieceBuffer;
@@ -69,6 +78,7 @@ fn test_piece_buffer_block_management() {
     assert_eq!(pb.block_sources[0].as_deref(), Some("192.168.1.50"));
 }
 
+/// Verifies that PieceBuffer correctly flags when all blocks are complete.
 #[test]
 fn test_piece_buffer_completion() {
     use bittorrent_rs::piece_buffer::PieceBuffer;
