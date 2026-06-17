@@ -44,3 +44,25 @@ fn test_mre_timeout() {
     let mre = ManualResetEvent::new(false);
     assert!(!mre.wait_one(20));
 }
+
+#[test]
+fn test_mre_multiple_waiters() {
+    let mre = Arc::new(ManualResetEvent::new(false));
+    let mut handles = Vec::new();
+
+    for _ in 0..5 {
+        let mre_clone = mre.clone();
+        handles.push(thread::spawn(move || {
+            mre_clone.wait_one(2000)
+        }));
+    }
+
+    // Give the threads time to start and block
+    thread::sleep(Duration::from_millis(50));
+    mre.set();
+
+    for handle in handles {
+        let success = handle.join().unwrap();
+        assert!(success, "Waiting thread failed to unblock on signal");
+    }
+}
