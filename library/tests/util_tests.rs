@@ -86,3 +86,23 @@ fn test_static_buffer_pool() {
     assert!(reclaimed.is_some());
 }
 
+#[test]
+fn test_peer_id_generation() {
+    let peer_id = bittorrent_rs::get_peer_id();
+    
+    // Check format
+    assert_eq!(peer_id.len(), 20);
+    assert!(peer_id.starts_with("-AZ1000-"));
+    
+    // Check suffix is alphanumeric
+    let suffix = &peer_id["-AZ1000-".len()..];
+    assert_eq!(suffix.len(), 12);
+    for c in suffix.chars() {
+        assert!(c.is_ascii_alphanumeric());
+    }
+
+    // Check randomness/uniqueness across multiple calls
+    let peer_id_2 = bittorrent_rs::get_peer_id();
+    assert_ne!(peer_id, peer_id_2);
+}
+
