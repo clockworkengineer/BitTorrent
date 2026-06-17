@@ -54,3 +54,27 @@ fn test_validate_relative_path_harden() {
     assert!(torrent2.local_files_to_download_list(Path::new(".")).is_err());
     fs::remove_file(&path).unwrap();
 }
+
+#[test]
+fn test_validate_relative_path_traversal_and_reserved_names() {
+    let path = std::env::temp_dir().join("bittorrent_bad_path_traversal.torrent");
+
+    let test_cases = vec![
+        b"d8:announce18:http://tracker.com4:infod4:name10:/absolutep12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+        b"d8:announce18:http://tracker.com4:infod4:name11:\\absolutep212:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+        b"d8:announce18:http://tracker.com4:infod4:name10:foo/../bar12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+        b"d8:announce18:http://tracker.com4:infod4:name10:foo//bar/b12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+        b"d8:announce18:http://tracker.com4:infod4:name9:foo/./bar12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+        b"d8:announce18:http://tracker.com4:infod4:name8:lpt3.txt12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+        b"d8:announce18:http://tracker.com4:infod4:name0:12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+    ];
+
+    for contents in test_cases {
+        fs::write(&path, contents).unwrap();
+        let mut torrent = MetaInfoFile::new(&path).unwrap();
+        torrent.parse().unwrap();
+        assert!(torrent.local_files_to_download_list(Path::new(".")).is_err());
+        let _ = fs::remove_file(&path);
+    }
+}
+

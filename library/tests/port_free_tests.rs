@@ -96,3 +96,53 @@ fn test_http_client_injection() {
     let response = client.get("http://tracker.example.com/announce").unwrap();
     assert_eq!(response, mock_response);
 }
+
+#[test]
+fn test_spinlock_mutex() {
+    use bittorrent_rs::utils::io_traits::SpinLock;
+    let lock = Arc::new(SpinLock::new(0));
+    let lock_clone = lock.clone();
+
+    let handle = std::thread::spawn(move || {
+        let mut guard = lock_clone.lock();
+        *guard += 1;
+    });
+
+    {
+        let mut guard = lock.lock();
+        *guard += 1;
+    }
+
+    handle.join().unwrap();
+    assert_eq!(*lock.lock(), 2);
+}
+
+#[test]
+fn test_mem_storage_out_of_bounds() {
+    let storage = MemStorage::new(10);
+    
+    let err_write = storage.write_block(5, &[0; 6]);
+    assert!(err_write.is_err());
+    assert!(format!("{}", err_write.unwrap_err()).contains("write out of bounds"));
+
+    let mut buf = [0u8; 6];
+    let err_read = storage.read_block(5, &mut buf);
+    assert!(err_read.is_err());
+    assert!(format!("{}", err_read.unwrap_err()).contains("read out of bounds"));
+}
+
+#[test]
+fn test_mock_socket_closed() {
+    let (socket, _sender, _receiver) = MockSocket::new();
+    socket.close();
+
+    futures::executor::block_on(async {
+        let mut buf = [0u8; 10];
+        let read_res = socket.read(&mut buf).await;
+        assert_eq!(read_res.unwrap(), 0);
+
+        let write_res = socket.write(b"data").await;
+        assert!(write_res.is_err());
+    });
+}
+

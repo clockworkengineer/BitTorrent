@@ -1,5 +1,5 @@
 use bittorrent_rs::average::Average;
-use bittorrent_rs::util::{info_hash_to_string, pack_u32, pack_u64, unpack_u32, unpack_u64};
+use bittorrent_rs::util::{info_hash_to_string, pack_u32, pack_u64, unpack_u32, unpack_u64, get_bitfield_index_and_mask, acquire_buffer};
 
 #[test]
 fn test_pack_unpack_u32() {
@@ -48,5 +48,41 @@ fn test_pack_unpack_u64_with_offset() {
     let packed = pack_u64(value);
     buffer[6..14].copy_from_slice(&packed);
     assert_eq!(unpack_u64(&buffer, 6), value);
+}
+
+#[test]
+fn test_get_bitfield_index_and_mask() {
+    assert_eq!(get_bitfield_index_and_mask(0), (0, 0x80));
+    assert_eq!(get_bitfield_index_and_mask(4), (0, 0x08));
+    assert_eq!(get_bitfield_index_and_mask(7), (0, 0x01));
+    assert_eq!(get_bitfield_index_and_mask(8), (1, 0x80));
+    assert_eq!(get_bitfield_index_and_mask(13), (1, 0x04));
+}
+
+#[test]
+fn test_static_buffer_pool() {
+    let mut buffers = Vec::new();
+    
+    // Acquire all 8 buffers
+    for _ in 0..8 {
+        let buf = acquire_buffer();
+        assert!(buf.is_some());
+        buffers.push(buf.unwrap());
+    }
+    
+    // The 9th acquire must fail (return None)
+    let extra_buf = acquire_buffer();
+    assert!(extra_buf.is_none());
+    
+    // Mutate one of the buffers to verify it is accessible
+    let active_slice = buffers[0].as_mut();
+    active_slice[0] = 99;
+    assert_eq!(active_slice[0], 99);
+    
+    // Drop one buffer and reclaim it
+    drop(buffers.pop());
+    
+    let reclaimed = acquire_buffer();
+    assert!(reclaimed.is_some());
 }
 

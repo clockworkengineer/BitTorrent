@@ -74,3 +74,45 @@ fn test_peer_handshake_round_trip() {
     );
     handle.join().expect("Server thread panicked");
 }
+
+#[test]
+fn test_peer_handshake_decode_errors() {
+    assert!(PeerMessage::handshake_encode(&[0; 19], &[0; 20]).is_err());
+    assert!(PeerMessage::handshake_encode(&[0; 20], &[0; 21]).is_err());
+
+    assert!(PeerMessage::handshake_decode(&[0; 67]).is_err());
+    
+    let mut bad_proto_len = vec![18];
+    bad_proto_len.extend_from_slice(b"BitTorrent protocol");
+    bad_proto_len.extend_from_slice(&[0; 48]);
+    assert!(PeerMessage::handshake_decode(&bad_proto_len).is_err());
+
+    let mut bad_proto_str = vec![19];
+    bad_proto_str.extend_from_slice(b"BitTorrent protocul");
+    bad_proto_str.extend_from_slice(&[0; 48]);
+    assert!(PeerMessage::handshake_decode(&bad_proto_str).is_err());
+}
+
+#[test]
+fn test_peer_message_decode_errors() {
+    assert!(PeerMessage::decode(&[99, 1, 2, 3]).is_err());
+
+    assert!(PeerMessage::decode(&[4, 0, 0, 0]).is_err());
+    
+    assert!(PeerMessage::decode(&[6, 0, 0, 0, 1]).is_err());
+    
+    assert!(PeerMessage::decode(&[7, 0, 0, 0, 1, 2, 3]).is_err());
+    
+    assert!(PeerMessage::decode(&[8, 0, 0]).is_err());
+    
+    assert!(PeerMessage::decode(&[9, 0, 0, 0]).is_err());
+    
+    assert!(PeerMessage::decode(&[20]).is_err());
+    
+    assert!(PeerMessage::decode(&[13, 0, 0, 0]).is_err());
+    
+    assert!(PeerMessage::decode(&[16, 0]).is_err());
+    
+    assert!(PeerMessage::decode(&[17, 0, 0]).is_err());
+}
+
