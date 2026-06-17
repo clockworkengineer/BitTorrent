@@ -10,4 +10,5 @@ members = [
     "clients/torrent_client",
     "clients/torrent_client_shared",
     "clients/bt_daemon",
+    "clients/bt_webui",
 ]

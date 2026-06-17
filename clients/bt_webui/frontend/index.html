@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BitTorrent Web Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="glass-container">
+        <!-- Header -->
+        <header>
+            <div class="logo-area">
+                <div class="logo-icon"></div>
+                <h1>BitTorrent Dashboard</h1>
+            </div>
+            <div class="status-badge" id="daemon-status-badge">
+                <span class="indicator"></span> Connected
+            </div>
+        </header>
+
+        <!-- Actions Bar -->
+        <div class="action-bar">
+            <div class="add-torrent-form">
+                <input type="text" id="magnet-input" placeholder="Paste Magnet URL or Local .torrent file path..." />
+                <input type="text" id="dir-input" placeholder="Download folder (optional)..." />
+                <button id="add-btn" class="primary-btn">Add Torrent</button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main>
+            <div class="table-container">
+                <table id="torrents-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Progress</th>
+                            <th>Status</th>
+                            <th>Peers</th>
+                            <th>Speed</th>
+                            <th>Downloaded / Total</th>
+                            <th>Download Dir</th>
+                            <th class="actions-header">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="torrents-body">
+                        <!-- Dynamic content injected here -->
+                        <tr class="empty-row">
+                            <td colspan="8">Connecting to WebSocket stream and fetching active sessions...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
