@@ -284,6 +284,7 @@ impl Engine {
                 upload_rate: session_state.last_uploaded,
                 downloaded: session_state.last_downloaded,
                 uploaded: session_state.last_uploaded,
+                download_dir: session_state.session.download_path().display().to_string(),
                 total_size: session_state.last_total,
             });
         }

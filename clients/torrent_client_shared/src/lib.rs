@@ -84,6 +84,7 @@ pub struct TorrentStatusInfo {
     pub upload_rate: u64,
     pub downloaded: u64,
     pub uploaded: u64,
+    pub download_dir: String,
     pub total_size: u64,
 }
 

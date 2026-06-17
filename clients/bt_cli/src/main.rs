@@ -66,9 +66,9 @@ fn print_status_table(torrents: &[TorrentStatusInfo]) {
         return;
     }
 
-    println!("{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20}",
-             "Name", "Info Hash", "Progress", "Status", "Peers", "Speed", "Downloaded / Total");
-    println!("{}", "-".repeat(130));
+    println!("{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20} | {:<20}",
+             "Name", "Info Hash", "Progress", "Status", "Peers", "Speed", "Downloaded / Total", "Download Dir");
+    println!("{}", "-".repeat(155));
     for t in torrents {
         let progress_str = format!("{:.1}%", t.progress * 100.0);
         let peers_str = format!("{}({})", t.peers_active, t.peers_connected);
@@ -81,8 +81,8 @@ fn print_status_table(torrents: &[TorrentStatusInfo]) {
             t.name.clone()
         };
 
-        println!("{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20}",
-                 truncated_name, t.info_hash, progress_str, t.status, peers_str, speed_str, downloaded_str);
+        println!("{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20} | {:<20}",
+                 truncated_name, t.info_hash, progress_str, t.status, peers_str, speed_str, downloaded_str, t.download_dir);
     }
 }
 
