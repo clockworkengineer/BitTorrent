@@ -59,3 +59,58 @@ fn test_peer_message_extended_encode_decode() {
     let decoded = PeerMessage::decode(&bytes[4..]).unwrap();
     assert_eq!(decoded, msg);
 }
+
+#[test]
+fn test_magnet_link_parse_invalid_prefix() {
+    let uri = "http://tracker.ubuntu.com:6969/announce";
+    match MagnetLink::parse(uri) {
+        Err(e) => assert!(format!("{}", e).contains("Invalid magnet link prefix")),
+        Ok(_) => panic!("Expected error"),
+    }
+}
+
+#[test]
+fn test_magnet_link_parse_missing_xt() {
+    let uri = "magnet:?dn=Ubuntu+Desktop&tr=http%3A%2F%2Ftracker.ubuntu.com%3A6969%2Fannounce";
+    match MagnetLink::parse(uri) {
+        Err(e) => assert!(format!("{}", e).contains("Missing info hash (xt)")),
+        Ok(_) => panic!("Expected error"),
+    }
+}
+
+#[test]
+fn test_magnet_link_parse_invalid_infohash() {
+    // Info hash too short (hex should be 40 chars)
+    let uri_too_short = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f48039&dn=Ubuntu+Desktop";
+    match MagnetLink::parse(uri_too_short) {
+        Err(e) => assert!(format!("{}", e).contains("Invalid info hash format")),
+        Ok(_) => panic!("Expected error"),
+    }
+
+    // Base32 too short (should be 32 chars)
+    let uri_b32_too_short = "magnet:?xt=urn:btih:h4djci6nebjm5nkaosaip5em7d2ibw&dn=Ubuntu+Desktop";
+    assert!(MagnetLink::parse(uri_b32_too_short).is_err());
+
+    // Invalid hex character
+    let uri_invalid_hex = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393g&dn=Ubuntu+Desktop";
+    assert!(MagnetLink::parse(uri_invalid_hex).is_err());
+}
+
+#[test]
+fn test_magnet_link_percent_decode_edge_cases() {
+    // Percent decoding with incomplete escape at the end
+    let uri = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu+Desktop%2";
+    let magnet = MagnetLink::parse(uri).unwrap();
+    assert_eq!(magnet.display_name.as_deref(), Some("Ubuntu Desktop%"));
+
+    // Plus decoded to space
+    let uri_plus = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu+Desktop+21.04";
+    let magnet_plus = MagnetLink::parse(uri_plus).unwrap();
+    assert_eq!(magnet_plus.display_name.as_deref(), Some("Ubuntu Desktop 21.04"));
+
+    // Non-hex characters in escape sequence
+    let uri_non_hex = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu%2GDesktop";
+    let magnet_non_hex = MagnetLink::parse(uri_non_hex).unwrap();
+    assert_eq!(magnet_non_hex.display_name.as_deref(), Some("Ubuntu%Desktop"));
+}
+
