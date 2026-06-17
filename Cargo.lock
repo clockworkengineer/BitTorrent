@@ -649,15 +649,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bt_cli"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "torrent_client_shared",
-]
-
-[[package]]
 name = "bt_daemon"
 version = "0.1.0"
 dependencies = [
