@@ -1,8 +1,14 @@
+//! Unit Tests for PeerNetwork Socket Wrapper
+//!
+//! Verifies handshake encoding/decoding, keepalive and control message parsing,
+//! protocol boundary size constraints validation, and Message Stream Encryption (MSE) stream cipher obfuscation.
+
 use bittorrent_rs::peer_network::PeerNetwork;
 use bittorrent_rs::peer_message::PeerMessage;
 use bittorrent_rs::MockSocket;
 use std::sync::Arc;
 
+/// Verifies that peer handshake packets are successfully encoded, transmitted, and decoded.
 #[test]
 fn test_peer_network_handshake_roundtrip() {
     let (socket, in_tx, out_rx) = MockSocket::new();
@@ -31,6 +37,7 @@ fn test_peer_network_handshake_roundtrip() {
     assert_eq!(sent.len(), 68);
 }
 
+/// Verifies that KeepAlive, Choke, and Interested control messages are parsed correctly.
 #[test]
 fn test_peer_network_control_messages() {
     let (socket, in_tx, _out_rx) = MockSocket::new();
@@ -59,6 +66,7 @@ fn test_peer_network_control_messages() {
     });
 }
 
+/// Verifies that protocol constraint limits return validation errors for invalid sizes on specific message types.
 #[test]
 fn test_peer_network_validation_boundaries() {
     let mut read_buf = vec![0u8; 64];
@@ -97,6 +105,7 @@ fn test_peer_network_validation_boundaries() {
     });
 }
 
+/// Verifies that Message Stream Encryption (MSE) ciphers encrypt and decrypt peer messages successfully.
 #[cfg(feature = "mse")]
 #[test]
 fn test_peer_network_mse_integration() {

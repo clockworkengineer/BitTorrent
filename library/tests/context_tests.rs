@@ -1,7 +1,14 @@
+//! Unit Tests for TorrentContext Status State Transitions
+//!
+//! Verifies valid status transitions (such as Pause, Resume, Stop) and asserts
+//! that invalid state changes (e.g. pausing when already paused) return correct error results.
+
 use bittorrent_rs::{TorrentContext, TorrentStatus, RarestFirstSelector};
 use bittorrent_rs::session::SessionConfig;
 use std::sync::Arc;
 
+/// Verifies that TorrentContext transitions correctly through a normal lifecycle:
+/// Initialised -> Downloading -> Paused -> Downloading -> Ended.
 #[test]
 fn test_context_status_transitions_flow() {
     let config = SessionConfig::default();
@@ -30,6 +37,7 @@ fn test_context_status_transitions_flow() {
     assert_eq!(tc.status, TorrentStatus::Ended);
 }
 
+/// Verifies that TorrentContext yields errors when transitioning from invalid states.
 #[test]
 fn test_context_status_transitions_errors() {
     let config = SessionConfig::default();
