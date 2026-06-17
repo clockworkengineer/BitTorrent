@@ -12,6 +12,7 @@ use app::TorrentClientApp;
 use eframe::egui;
 use std::env;
 
+/// Configures visual styling and dark mode options for egui widgets.
 fn configure_visuals(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.window_rounding = 8.0.into();
@@ -26,6 +27,7 @@ fn configure_visuals(ctx: &egui::Context) {
     ctx.set_visuals(visuals);
 }
 
+/// The main entry point for the desktop GUI client application.
 fn main() {
     let mut args = env::args_os().skip(1);
     let initial_torrent_path = args.next().and_then(|arg| arg.into_string().ok());

@@ -1,25 +1,44 @@
+//! Application Shell and Egui Integration
+//!
+//! Orchestrates app startup, window repaint loop timing, sidebar selection updates,
+//! status metrics tracking, and mapping background messages to the main UI logger.
+
 use eframe::egui;
 use std::sync::mpsc;
 use std::time::Duration;
 use torrent_client_shared::{SessionState, PendingSession, fmt_bytes};
 use crate::state::{SidebarFilter, DetailTab, matches_filter};
 
+/// The main application state container holding UI variables, logs, and active session buffers.
 pub struct TorrentClientApp {
+    /// Input field containing the loaded torrent metainfo file path or magnet link.
     pub torrent_path: String,
+    /// Destination directory path where files are downloaded.
     pub download_dir: String,
+    /// Accumulated log entries printed to the logs console tab.
     pub messages: Vec<String>,
+    /// Array of fully active, initialized downloading/seeding torrent session states.
     pub sessions: Vec<SessionState>,
+    /// Array of torrents currently being parsed/verified in background threads.
     pub pending_sessions: Vec<PendingSession>,
+    /// Receiver channel connecting background log outputs to the application UI logger.
     pub log_rx: mpsc::Receiver<String>,
+    /// Sender channel for writing logs from spawned worker threads.
     pub log_tx: mpsc::Sender<String>,
+    
     // UI state
+    /// Index of the currently highlighted torrent session inside self.sessions.
     pub selected_session_index: Option<usize>,
+    /// Filter applied to the list of torrents shown (e.g. Seeding, Completed).
     pub active_filter: SidebarFilter,
+    /// Selected tab shown in the bottom metadata details container.
     pub active_detail_tab: DetailTab,
+    /// Search query string used to filter logs.
     pub log_search_query: String,
 }
 
 impl TorrentClientApp {
+    /// Creates a new, uninitialized `TorrentClientApp` instance using the log channels.
     pub fn new(log_rx: mpsc::Receiver<String>, log_tx: mpsc::Sender<String>) -> Self {
         Self {
             torrent_path: String::new(),
@@ -36,12 +55,15 @@ impl TorrentClientApp {
         }
     }
 
+    /// Counts how many of the currently loaded sessions match a given status category filter.
     pub fn count_torrents_for_filter(&self, filter: SidebarFilter) -> usize {
         self.sessions.iter().filter(|s| matches_filter(s, filter)).count()
     }
 }
 
 impl eframe::App for TorrentClientApp {
+    /// Callback executed when the desktop window is closed.
+    /// Saves the current configuration state and halts all active torrent worker threads.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Save final state before stopping sessions to capture the exact downloaded bitfields
         self.save_state();
@@ -52,6 +74,7 @@ impl eframe::App for TorrentClientApp {
         }
     }
 
+    /// Primary UI draw and events update loop called by the egui framework backend.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Repaint every 500 ms so progress updates live
         ctx.request_repaint_after(Duration::from_millis(500));

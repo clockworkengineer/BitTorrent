@@ -1,18 +1,30 @@
+//! Client State Management and Session Spawning
+//!
+//! Defines client-side state representations, settings storage structures,
+//! sidebar status filtering, config loading/saving, and asynchronous torrent session creation.
+
 use bittorrent_rs::{TorrentSession, Tracker};
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use torrent_client_shared::{SessionState, PendingSession};
 
+/// Sidebar filters for sorting active torrent sessions by status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SidebarFilter {
+    /// Show all torrents.
     All,
+    /// Show torrents actively downloading.
     Downloading,
+    /// Show torrents seeding to the swarm.
     Seeding,
+    /// Show paused torrents.
     Paused,
+    /// Show completed torrents.
     Completed,
 }
 
+/// Active selected tabs in the details panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
     Overview,
@@ -22,24 +34,28 @@ pub enum DetailTab {
     Logs,
 }
 
+/// Structure representing a saved torrent session details on disk.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SavedTorrent {
     pub torrent_path: String,
     pub bitfield_hex: String,
 }
 
+/// Config schema representing serialized client application options.
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct ClientState {
     pub download_dir: String,
     pub torrents: Vec<SavedTorrent>,
 }
 
+/// Legacy client state layout for backward compatibility support.
 #[derive(serde::Deserialize)]
 pub struct LegacyClientState {
     pub download_dir: String,
     pub torrents: Vec<String>,
 }
 
+/// Determines the file path where configuration and state will be saved.
 pub fn get_config_path() -> std::path::PathBuf {
     if let Some(mut proj_dirs) = dirs::data_local_dir() {
         proj_dirs.push("BitTorrent-rs");
@@ -51,6 +67,7 @@ pub fn get_config_path() -> std::path::PathBuf {
     }
 }
 
+/// Returns true if a given session matches the selected status filter.
 pub fn matches_filter(session: &SessionState, filter: SidebarFilter) -> bool {
     match filter {
         SidebarFilter::All => true,
@@ -64,6 +81,7 @@ pub fn matches_filter(session: &SessionState, filter: SidebarFilter) -> bool {
 use crate::app::TorrentClientApp;
 
 impl TorrentClientApp {
+    /// Saves the current client state (active download directory and torrent file paths with bitfields) to disk.
     pub fn save_state(&self) {
         let torrents = self.sessions.iter().map(|s| {
             let bitfield_hex = if let Ok(ctx) = s.session.context().lock() {
@@ -92,6 +110,7 @@ impl TorrentClientApp {
         }
     }
 
+    /// Loads the client configuration and restores active torrent sessions from local storage.
     pub fn load_state(&mut self) {
         let state_path = get_config_path();
         let content = if state_path.exists() {
@@ -126,6 +145,7 @@ impl TorrentClientApp {
         }
     }
 
+    /// Creates and launches a new torrent download session from the path and destination directory provided in the UI inputs.
     pub fn create_session(&mut self) {
         let torrent_path = self.torrent_path.trim().to_string();
         let download_dir = self.download_dir.trim().to_string();
@@ -145,6 +165,7 @@ impl TorrentClientApp {
         self.add_session_by_path(torrent_path, download_dir, None);
     }
 
+    /// Spawns a background thread to asynchronously resolve metadata, verify disk space, and establish tracker connections for a torrent session.
     pub fn add_session_by_path(&mut self, torrent_path: String, download_dir: String, bitfield_hex: Option<String>) {
         let (session_tx, session_rx) = mpsc::channel::<TorrentSession>();
         let msg_tx = self.log_tx.clone();

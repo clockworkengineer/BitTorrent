@@ -1,9 +1,15 @@
+//! User Interface Layout and Drawing Components
+//!
+//! Handles layout structures for sidebar elements, status labels, progress bars,
+//! options settings panels, and detail tab views.
+
 use eframe::egui;
 use crate::app::TorrentClientApp;
 use crate::state::DetailTab;
 use torrent_client_shared::fmt_bytes;
 
 impl TorrentClientApp {
+    /// Renders the bottom details container panel showing overview, file list, peer swarm, trackers, and logs.
     pub fn draw_details_panel(&mut self, ui: &mut egui::Ui) {
         let Some(selected_idx) = self.selected_session_index else { return; };
         if selected_idx >= self.sessions.len() {
@@ -52,6 +58,7 @@ impl TorrentClientApp {
             });
     }
 
+    /// Renders general information about the selected torrent session, such as info hash, save path, size, etc.
     pub fn draw_overview_tab(
         &self,
         ui: &mut egui::Ui,
@@ -113,6 +120,7 @@ impl TorrentClientApp {
         }
     }
 
+    /// Renders a list of the relative paths, lengths, and file offsets of all files packaged inside the torrent.
     pub fn draw_files_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
         if let Ok(ctx) = context.lock() {
             if ctx.files_to_download.is_empty() {
@@ -142,6 +150,7 @@ impl TorrentClientApp {
         }
     }
 
+    /// Renders a list of all connected peer swarm members, showing their IP, port, upload/download speeds, and choking state flags.
     pub fn draw_peers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
         if let Ok(ctx) = context.lock() {
             let swarm = ctx.peer_swarm.read().unwrap();
@@ -185,6 +194,7 @@ impl TorrentClientApp {
         }
     }
 
+    /// Renders the configured announce URLs and tracker endpoints.
     pub fn draw_trackers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
         if let Ok(ctx) = context.lock() {
             egui::Grid::new("trackers_grid")
@@ -207,6 +217,7 @@ impl TorrentClientApp {
         }
     }
 
+    /// Renders logged events and error messages, supporting text filters.
     pub fn draw_logs_tab(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("Search:");
