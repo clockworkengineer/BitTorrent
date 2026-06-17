@@ -106,3 +106,14 @@ fn test_peer_id_generation() {
     assert_ne!(peer_id, peer_id_2);
 }
 
+#[test]
+fn test_host_get_ip() {
+    use std::net::Ipv4Addr;
+    let ip_str = bittorrent_rs::host::get_ip();
+    assert!(!ip_str.is_empty());
+    
+    // Ensure it can be parsed as a valid IPv4 address
+    let parsed: Result<Ipv4Addr, _> = ip_str.parse();
+    assert!(parsed.is_ok(), "Returned IP is not a valid IPv4 address: {}", ip_str);
+}
+
