@@ -67,3 +67,19 @@ fn test_decode_large_integer_limit() {
     // Too many digits (more than 20)
     assert!(Bencode::decode(b"i123456789012345678901e").is_err());
 }
+
+#[test]
+fn test_get_dictionary_entry_non_dict() {
+    let list_node = BNode::List(vec![BNode::Number(b"42")]);
+    assert_eq!(Bencode::get_dictionary_entry(&list_node, b"key"), None);
+    assert_eq!(Bencode::get_dictionary_entry_string(&list_node, "key"), None);
+
+    let num_node = BNode::Number(b"123");
+    assert_eq!(Bencode::get_dictionary_entry(&num_node, b"key"), None);
+    assert_eq!(Bencode::get_dictionary_entry_string(&num_node, "key"), None);
+
+    let str_node = BNode::String(b"value");
+    assert_eq!(Bencode::get_dictionary_entry(&str_node, b"key"), None);
+    assert_eq!(Bencode::get_dictionary_entry_string(&str_node, "key"), None);
+}
+

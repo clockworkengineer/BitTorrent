@@ -31,3 +31,22 @@ fn test_average_add_and_get() {
     average.add(30);
     assert_eq!(average.get(), 20);
 }
+
+#[test]
+fn test_pack_unpack_u32_with_offset() {
+    let mut buffer = vec![0u8; 10];
+    let value = 0x12345678u32;
+    let packed = pack_u32(value);
+    buffer[4..8].copy_from_slice(&packed);
+    assert_eq!(unpack_u32(&buffer, 4), value);
+}
+
+#[test]
+fn test_pack_unpack_u64_with_offset() {
+    let mut buffer = vec![0u8; 20];
+    let value = 0x0123456789ABCDEFu64;
+    let packed = pack_u64(value);
+    buffer[6..14].copy_from_slice(&packed);
+    assert_eq!(unpack_u64(&buffer, 6), value);
+}
+
