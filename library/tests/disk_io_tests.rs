@@ -219,3 +219,56 @@ fn test_process_piece_block_writes_complete_piece_to_disk() {
 
     cleanup_path(&download_path);
 }
+
+#[test]
+fn test_disk_io_bounds_error_handling() {
+    let download_path = unique_test_path("bounds_error");
+    cleanup_path(&download_path);
+    fs::create_dir_all(&download_path).unwrap();
+
+    let torrent_file = download_path.join("single_file.torrent");
+    let piece_data = vec![0u8; 1024];
+    let piece_hash = sha1::Sha1::digest(&piece_data).to_vec();
+    write_single_file_torrent(
+        &torrent_file,
+        "http://tracker.example.com/announce",
+        "data.bin",
+        1024,
+        1024,
+        piece_hash,
+    );
+
+    let mut meta_info = MetaInfoFile::new(&torrent_file).unwrap();
+    meta_info.parse().unwrap();
+    let piece_length = meta_info.get_piece_length().unwrap();
+    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).unwrap();
+    let disk_io = DiskIO::new(
+        &download_path,
+        files_to_download,
+        piece_length,
+    );
+    disk_io.create_local_torrent_structure().unwrap();
+
+    use bittorrent_rs::BlockStorage;
+
+    // Out of bounds write (offset 1000 + length 50 = 1050, which is > 1024)
+    let err_write = disk_io.write_block(1000, &[0; 50]);
+    assert!(err_write.is_err());
+    if let bittorrent_rs::BitTorrentError::Io(e) = err_write.unwrap_err() {
+        assert_eq!(e.kind(), std::io::ErrorKind::UnexpectedEof);
+    } else {
+        panic!("Expected Io error");
+    }
+
+    // Out of bounds read (offset 1000 + length 50 = 1050, which is > 1024)
+    let mut read_buf = [0u8; 50];
+    let err_read = disk_io.read_block(1000, &mut read_buf);
+    assert!(err_read.is_err());
+    if let bittorrent_rs::BitTorrentError::Io(e) = err_read.unwrap_err() {
+        assert_eq!(e.kind(), std::io::ErrorKind::UnexpectedEof);
+    } else {
+        panic!("Expected Io error");
+    }
+
+    cleanup_path(&download_path);
+}
