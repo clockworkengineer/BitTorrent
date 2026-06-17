@@ -69,3 +69,55 @@ pub fn fmt_bytes(bytes: u64) -> String {
         format!("{} B", bytes)
     }
 }
+
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TorrentStatusInfo {
+    pub name: String,
+    pub info_hash: String,
+    pub progress: f32,
+    pub status: String,
+    pub peers_connected: usize,
+    pub peers_active: usize,
+    pub download_rate: u64,
+    pub upload_rate: u64,
+    pub downloaded: u64,
+    pub uploaded: u64,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type", content = "data")]
+pub enum IpcMessage {
+    Add {
+        torrent_path: String,
+        download_dir: Option<String>,
+    },
+    Status,
+    Pause {
+        info_hash: String,
+    },
+    Resume {
+        info_hash: String,
+    },
+    Remove {
+        info_hash: String,
+        delete_data: bool,
+    },
+    Shutdown,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type", content = "data")]
+pub enum IpcReply {
+    Success {
+        message: String,
+    },
+    StatusList {
+        torrents: Vec<TorrentStatusInfo>,
+    },
+    Error {
+        reason: String,
+    },
+}
