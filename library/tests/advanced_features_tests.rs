@@ -518,3 +518,41 @@ fn test_utp_ledbat_cwnd_dynamics() {
     let decoded = UtpHeader::decode(&encoded).unwrap();
     assert_eq!(decoded.timestamp_us, 1000);
 }
+
+/// Verifies uTP packet type decoding conversions.
+#[cfg(all(feature = "std", feature = "utp"))]
+#[test]
+fn test_utp_packet_type_from_u8_edge_cases() {
+    use bittorrent_rs::utp::UtpPacketType;
+
+    assert_eq!(UtpPacketType::from_u8(0), Some(UtpPacketType::Data));
+    assert_eq!(UtpPacketType::from_u8(1), Some(UtpPacketType::Ack));
+    assert_eq!(UtpPacketType::from_u8(2), Some(UtpPacketType::Syn));
+    assert_eq!(UtpPacketType::from_u8(3), Some(UtpPacketType::Reset));
+    assert_eq!(UtpPacketType::from_u8(4), Some(UtpPacketType::State));
+    
+    // Invalid values
+    assert_eq!(UtpPacketType::from_u8(5), None);
+    assert_eq!(UtpPacketType::from_u8(15), None);
+    assert_eq!(UtpPacketType::from_u8(255), None);
+}
+
+/// Verifies that uTP header decoding properly flags errors for invalid inputs.
+#[cfg(all(feature = "std", feature = "utp"))]
+#[test]
+fn test_utp_header_decode_errors() {
+    use bittorrent_rs::utp::UtpHeader;
+
+    // Buffer too short
+    let short_buf = vec![0u8; 19];
+    let res_short = UtpHeader::decode(&short_buf);
+    assert!(res_short.is_err());
+    assert!(format!("{:?}", res_short.unwrap_err()).contains("uTP header too short"));
+
+    // Invalid packet type in upper nibble (5 << 4 = 80 = 0x50)
+    let mut bad_type_buf = vec![0u8; 20];
+    bad_type_buf[0] = 0x51; // Type 5, Version 1
+    let res_bad_type = UtpHeader::decode(&bad_type_buf);
+    assert!(res_bad_type.is_err());
+    assert!(format!("{:?}", res_bad_type.unwrap_err()).contains("Invalid uTP packet type"));
+}
