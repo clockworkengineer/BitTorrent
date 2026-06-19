@@ -295,7 +295,7 @@ impl Engine {
                 peers_connected: session_state.last_peers_connected,
                 peers_active: session_state.last_peers_active,
                 download_rate: session_state.last_bps,
-                upload_rate: session_state.last_uploaded,
+                upload_rate: session_state.last_upload_bps,
                 downloaded: session_state.last_downloaded,
                 uploaded: session_state.last_uploaded,
                 download_dir: session_state.session.download_path().display().to_string(),

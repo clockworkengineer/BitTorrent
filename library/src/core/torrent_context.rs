@@ -81,6 +81,8 @@ pub struct TorrentContext {
     pub metadata_pieces: alloc::collections::BTreeMap<u32, Vec<u8>>,
     pub requested_metadata_pieces: alloc::collections::BTreeMap<u32, std::time::Instant>,
     pub info_dict_bytes: Option<Vec<u8>>,
+    pub download_speed_tracker: Mutex<(std::time::Instant, u64, i64)>,
+    pub upload_speed_tracker: Mutex<(std::time::Instant, u64, i64)>,
 }
 
 impl TorrentContext {
@@ -159,6 +161,8 @@ impl TorrentContext {
             metadata_pieces: alloc::collections::BTreeMap::new(),
             requested_metadata_pieces: alloc::collections::BTreeMap::new(),
             info_dict_bytes: None,
+            download_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
+            upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
         };
         Ok(context)
     }
@@ -211,6 +215,8 @@ impl TorrentContext {
             metadata_pieces: alloc::collections::BTreeMap::new(),
             requested_metadata_pieces: alloc::collections::BTreeMap::new(),
             info_dict_bytes: None,
+            download_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
+            upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
         };
         Ok(context)
     }
@@ -885,14 +891,37 @@ impl TorrentContext {
 
     /// Estimates the current download transfer rate in bytes per second.
     pub fn bytes_per_second(&self) -> i64 {
-        let ms = self
-            .assembler
-            .average_assembly_time
-            .lock()
-            .unwrap()
-            .get();
-        if ms != 0 {
-            (self.piece_length as i64 * 1000) / ms
+        if let Ok(mut guard) = self.download_speed_tracker.lock() {
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(guard.0);
+            let current_bytes = self.total_bytes_downloaded.load(Ordering::Relaxed);
+            if elapsed.as_millis() >= 500 {
+                let delta_bytes = current_bytes.saturating_sub(guard.1);
+                let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+                *guard = (now, current_bytes, bps);
+                bps
+            } else {
+                guard.2
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Estimates the current upload transfer rate in bytes per second.
+    pub fn upload_bytes_per_second(&self) -> i64 {
+        if let Ok(mut guard) = self.upload_speed_tracker.lock() {
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(guard.0);
+            let current_bytes = self.total_bytes_uploaded.load(Ordering::Relaxed);
+            if elapsed.as_millis() >= 500 {
+                let delta_bytes = current_bytes.saturating_sub(guard.1);
+                let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+                *guard = (now, current_bytes, bps);
+                bps
+            } else {
+                guard.2
+            }
         } else {
             0
         }

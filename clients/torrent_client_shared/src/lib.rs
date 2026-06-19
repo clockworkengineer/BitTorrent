@@ -10,6 +10,7 @@ pub struct SessionState {
     pub last_peers_connected: usize,
     pub last_peers_active: usize,
     pub last_bps: u64,
+    pub last_upload_bps: u64,
     pub last_downloaded: u64,
     pub last_total: u64,
     pub last_uploaded: u64,
@@ -26,6 +27,7 @@ impl SessionState {
             last_peers_connected: 0,
             last_peers_active: 0,
             last_bps: 0,
+            last_upload_bps: 0,
             last_downloaded: 0,
             last_total: 0,
             last_uploaded: 0,
@@ -47,6 +49,7 @@ impl SessionState {
         self.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
         self.last_peers_active = ctx_guard.number_of_unchoked_peers();
         self.last_bps = ctx_guard.bytes_per_second() as u64;
+        self.last_upload_bps = ctx_guard.upload_bytes_per_second() as u64;
         self.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
         self.last_total = ctx_guard.total_bytes_to_download;
         self.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
