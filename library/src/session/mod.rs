@@ -6,6 +6,11 @@ pub mod session;
 pub mod webseed;
 #[cfg(feature = "std")]
 pub mod worker;
+#[cfg(feature = "std")]
+pub mod client;
 
 #[cfg(feature = "std")]
 pub use self::session::*;
+#[cfg(feature = "std")]
+pub use self::client::*;
+

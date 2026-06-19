@@ -52,6 +52,9 @@ pub struct SessionConfig {
     pub skip_hash_check: bool,
     /// Allow Local Service Discovery (LSD) even when the torrent is marked private.
     pub allow_private_lsd: bool,
+    pub handshake_timeout: Duration,
+    pub connection_backoff: Duration,
+    pub block_size: usize,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -64,7 +67,10 @@ impl std::fmt::Debug for SessionConfig {
           .field("dht_enabled", &self.dht_enabled)
           .field("dht_port", &self.dht_port)
           .field("skip_hash_check", &self.skip_hash_check)
-          .field("allow_private_lsd", &self.allow_private_lsd);
+          .field("allow_private_lsd", &self.allow_private_lsd)
+          .field("handshake_timeout", &self.handshake_timeout)
+          .field("connection_backoff", &self.connection_backoff)
+          .field("block_size", &self.block_size);
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
         ds.finish()
@@ -95,6 +101,9 @@ impl Default for SessionConfig {
             max_peer_candidates: 1000,
             skip_hash_check: false,
             allow_private_lsd: false,
+            handshake_timeout: Duration::from_secs(5),
+            connection_backoff: Duration::from_secs(30),
+            block_size: crate::constants::BLOCK_SIZE,
         }
     }
 }

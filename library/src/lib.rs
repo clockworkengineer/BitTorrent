@@ -170,6 +170,8 @@ pub use network::utp::UtpSocketAdapter;
 #[cfg(feature = "std")]
 pub use session::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
+pub use session::client::TorrentClient;
+#[cfg(feature = "std")]
 pub use core::torrent_context::{TorrentContext, TorrentStatus};
 #[cfg(feature = "std")]
 pub use network::tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus, ScrapeResponse};

@@ -1,3 +1,31 @@
+//! Distributed Hash Table (DHT) peer discovery
+//!
+//! Implements the Kademlia-based Mainline DHT (BEP 5) protocol over UDP, allowing
+//! peers to discover routing table contacts and lookup torrent peer addresses without a tracker.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use bittorrent_rs::Dht;
+//! use std::sync::mpsc::channel;
+//!
+//! # fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a new DHT node bound to port 6881
+//! let dht = Dht::new(6881)?;
+//!
+//! // Start the background listener thread
+//! dht.start()?;
+//!
+//! // Perform bootstrapping from common routers
+//! dht.bootstrap();
+//!
+//! // Search for peers seeding/downloading a specific info hash
+//! let (tx, rx) = channel();
+//! dht.lookup_peers([0u8; 20], tx);
+//! # Ok(())
+//! # }
+//! ```
+
 use std::net::{UdpSocket, ToSocketAddrs};
 use std::sync::{Arc, Mutex, mpsc::{Sender, channel}};
 use std::thread;
@@ -506,7 +534,7 @@ impl Dht {
                                     if let Some(peer_bytes) = item.as_string() {
                                         if peer_bytes.len() == 6 {
                                             let ip = format!("{}.{}.{}.{}", peer_bytes[0], peer_bytes[1], peer_bytes[2], peer_bytes[3]);
-                                            let port = u16::from_be_bytes(peer_bytes[4..6].try_into().unwrap());
+                                            let port = peer_bytes[4..6].try_into().map(u16::from_be_bytes).unwrap_or(0);
                                             let _ = peer_sender.send(PeerDetails {
                                                 info_hash: info_hash.to_vec(),
                                                 peer_id: None,
@@ -544,7 +572,7 @@ fn parse_compact_nodes_slice(bytes: &[u8]) -> Vec<DhtNode> {
         let mut id = [0u8; 20];
         id.copy_from_slice(&bytes[offset..offset+20]);
         let ip = format!("{}.{}.{}.{}", bytes[offset+20], bytes[offset+21], bytes[offset+22], bytes[offset+23]);
-        let port = u16::from_be_bytes(bytes[offset+24..offset+26].try_into().unwrap());
+        let port = bytes[offset+24..offset+26].try_into().map(u16::from_be_bytes).unwrap_or(0);
         nodes.push(DhtNode { id, ip, port });
         offset += 26;
     }

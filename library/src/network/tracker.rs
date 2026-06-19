@@ -2,6 +2,23 @@
 //!
 //! Handles announcements to HTTP and UDP trackers, parsing responses, and maintaining
 //! state information like upload/download statistics and discovered peers.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use bittorrent_rs::Tracker;
+//! use std::sync::{Arc, Mutex};
+//!
+//! # fn run(context: Arc<Mutex<bittorrent_rs::core::torrent_context::TorrentContext>>) -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a tracker instance using the shared TorrentContext
+//! let mut tracker = Tracker::new(context)?;
+//!
+//! // Perform initial tracker registration / announcement
+//! let response = tracker.start_announcing()?;
+//! println!("Discovered {} peers", response.peer_list.len());
+//! # Ok(())
+//! # }
+//! ```
 
 use crate::announcer::{Announcer, AnnouncerEnum, AnnouncerFactory};
 use crate::error::BitTorrentError;

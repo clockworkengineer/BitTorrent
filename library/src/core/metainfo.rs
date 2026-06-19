@@ -3,7 +3,7 @@
 //! Handles parsing of `.torrent` files, extracting tracker URLs, files to download,
 //! piece size information, and computing the info hash of the torrent file's `info` section.
 
-use crate::bencode::{BNode, Bencode};
+
 use crate::utils::bencode_tokenizer::{BencodeToken, BencodeTokenizer};
 use crate::error::BitTorrentError;
 use sha1::{Digest, Sha1};
@@ -751,6 +751,11 @@ impl MetaInfoFile {
         if path.is_empty() {
             return Err(BitTorrentError::Parse(
                 "Torrent file path cannot be empty.".into(),
+            ));
+        }
+        if path.contains('\0') {
+            return Err(BitTorrentError::Parse(
+                "Torrent file path cannot contain null bytes.".into(),
             ));
         }
         if path.starts_with('/') || path.starts_with('\\') {

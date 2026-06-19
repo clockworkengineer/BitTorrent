@@ -67,6 +67,7 @@ fn test_validate_relative_path_traversal_and_reserved_names() {
         b"d8:announce18:http://tracker.com4:infod4:name9:foo/./bar12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
         b"d8:announce18:http://tracker.com4:infod4:name8:lpt3.txt12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
         b"d8:announce18:http://tracker.com4:infod4:name0:12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
+        b"d8:announce18:http://tracker.com4:infod4:name11:foo\x00bar.txt12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee".as_ref(),
     ];
 
     for contents in test_cases {
