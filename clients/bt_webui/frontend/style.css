@@ -168,7 +168,8 @@ button {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
     color: var(--text-main);
-    padding: 8px 16px;
+    padding: 6px 12px;
+    font-size: 13px;
 }
 
 .secondary-btn:hover {
@@ -179,7 +180,8 @@ button {
     background: rgba(239, 68, 68, 0.15);
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: var(--danger-hover);
-    padding: 8px 16px;
+    padding: 6px 12px;
+    font-size: 13px;
 }
 
 .danger-btn:hover {
@@ -200,20 +202,44 @@ table {
     border-collapse: collapse;
     text-align: left;
     font-size: 15px;
+    table-layout: fixed;
 }
 
 th {
     background: rgba(15, 23, 42, 0.4);
     color: var(--text-muted);
     font-weight: 500;
-    padding: 16px 20px;
+    padding: 12px 14px;
     border-bottom: 1px solid var(--border-color);
 }
 
+/* Stable column widths to prevent header shifting */
+th:nth-child(1) { width: 200px; } /* Name */
+th:nth-child(2) { width: 140px; } /* Progress */
+th:nth-child(3) { width: 100px; } /* Status */
+th:nth-child(4) { width: 80px; } /* Peers */
+th:nth-child(5) { width: 100px; } /* Speed */
+th:nth-child(6) { width: 140px; } /* Downloaded / Total */
+th:nth-child(7) { width: 160px; } /* Download Dir */
+th:nth-child(8) { width: 160px; } /* Actions */
+
 td {
-    padding: 18px 20px;
+    padding: 12px 14px;
     border-bottom: 1px solid var(--border-color);
     vertical-align: middle;
+    white-space: nowrap;
+}
+
+.torrent-name {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dir-cell {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 tr:last-child td {
@@ -235,7 +261,7 @@ tr:hover td {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    width: 150px;
+    width: 100px;
 }
 
 .progress-track {

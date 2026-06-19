@@ -42,11 +42,27 @@ fn execute_ipc(msg: IpcMessage) -> Result<IpcReply, String> {
     let response_str = {
         use std::fs::OpenOptions;
         use std::io::{Write, BufReader, BufRead};
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("\\\\.\\pipe\\bt-daemon")
-            .map_err(|e| e.to_string())?;
+        let mut file = None;
+        for _ in 0..10 {
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("\\\\.\\pipe\\bt-daemon")
+            {
+                Ok(f) => {
+                    file = Some(f);
+                    break;
+                }
+                Err(e) => {
+                    if e.raw_os_error() == Some(231) {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        continue;
+                    }
+                    return Err(e.to_string());
+                }
+            }
+        }
+        let mut file = file.ok_or_else(|| "All pipe instances are busy".to_string())?;
         let mut bytes = serialized.into_bytes();
         bytes.push(b'\n');
         file.write_all(&bytes).map_err(|e| e.to_string())?;

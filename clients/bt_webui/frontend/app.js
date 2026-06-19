@@ -84,7 +84,7 @@ function renderTorrents(torrents) {
 
         html += `
             <tr>
-                <td><strong>${t.name || 'Resolving...'}</strong></td>
+                <td class="torrent-name" title="${t.name || 'Resolving...'}"><strong>${t.name || 'Resolving...'}</strong></td>
                 <td>
                     <div class="progress-container">
                         <div class="progress-track">
@@ -97,7 +97,7 @@ function renderTorrents(torrents) {
                 <td>${peersText}</td>
                 <td>${speedText}</td>
                 <td>${sizeText}</td>
-                <td><small>${t.download_dir}</small></td>
+                <td class="dir-cell" title="${t.download_dir}"><small>${t.download_dir}</small></td>
                 <td>
                     <div class="actions-cell">
                         ${actionBtn}
