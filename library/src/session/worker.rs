@@ -169,10 +169,7 @@ pub async fn handle_peer_session(
         mark_peer_dead(&manager, &peer_details.ip);
         return;
     }
-    println!(
-        "Handshake completed with peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
+    log_debug!("[peer {}:{}] handshake sent", peer_details.ip, peer_details.port);
     let (remote_info_hash, remote_peer_id, reserved) = match net.read_handshake().await {
         Ok(res) => res,
         Err(_) => {
@@ -181,6 +178,11 @@ pub async fn handle_peer_session(
         }
     };
     if remote_info_hash != info_hash {
+        mark_peer_dead(&manager, &peer_details.ip);
+        return;
+    }
+    // Reject trivially invalid all-zero info hashes.
+    if remote_info_hash.iter().all(|&b| b == 0) {
         mark_peer_dead(&manager, &peer_details.ip);
         return;
     }
@@ -210,10 +212,7 @@ pub async fn handle_peer_session(
             return;
         }
         peer.lock().unwrap().update_last_message_sent();
-        println!(
-            "Sent Bitfield to peer {}:{}",
-            peer_details.ip, peer_details.port
-        );
+        log_debug!("[peer {}:{}] sent Bitfield", peer_details.ip, peer_details.port);
     }
     if net.write_message(PeerMessage::Unchoke).await.is_err() {
         mark_peer_dead(&manager, &peer_details.ip);
@@ -223,19 +222,13 @@ pub async fn handle_peer_session(
     {
         peer.lock().unwrap().am_choking = false;
     }
-    println!(
-        "Sent Unchoke to peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
+    log_debug!("[peer {}:{}] sent Unchoke", peer_details.ip, peer_details.port);
     if net.write_message(PeerMessage::Interested).await.is_err() {
         mark_peer_dead(&manager, &peer_details.ip);
         return;
     }
     peer.lock().unwrap().update_last_message_sent();
-    println!(
-        "Sent Interested to peer {}:{}",
-        peer_details.ip, peer_details.port
-    );
+    log_debug!("[peer {}:{}] sent Interested", peer_details.ip, peer_details.port);
 
     {
         let ctx = context.lock().unwrap();
@@ -485,7 +478,7 @@ pub async fn handle_peer_session(
                         } else {
                             ctx.metadata_pieces.clear();
                             ctx.requested_metadata_pieces.clear();
-                            println!("Metadata hash mismatch! Re-downloading...");
+                            log_debug!("[magnet] metadata hash mismatch, re-downloading...");
                             None
                         }
                     } else {
@@ -500,11 +493,11 @@ pub async fn handle_peer_session(
                 let mut ctx = context.lock().unwrap();
                 let dl_path = ctx.download_path.clone();
                 if let Err(e) = ctx.transition_from_metadata(&assembled, &dl_path) {
-                    log_debug!("Failed transition from metadata: {}", e);
+                    log_debug!("[peer {}:{}] failed transition from metadata: {}", peer_details.ip, peer_details.port, e);
                     mark_peer_dead(&manager, &peer_details.ip);
                     break;
                 }
-                println!("Successfully transitioned from metadata to standard download!");
+                log_debug!("[peer {}:{}] successfully transitioned from magnet to standard download", peer_details.ip, peer_details.port);
             }
         }
 

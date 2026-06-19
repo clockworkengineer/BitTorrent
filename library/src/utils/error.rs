@@ -50,6 +50,8 @@ pub enum BitTorrentError {
     MissingField(alloc::string::String),
     Parse(alloc::string::String),
     NotParsed(alloc::string::String),
+    /// A violation of the BitTorrent peer wire protocol (e.g. bad handshake, malformed message).
+    Protocol(alloc::string::String),
 }
 
 impl core::fmt::Display for BitTorrentError {
@@ -62,6 +64,7 @@ impl core::fmt::Display for BitTorrentError {
             BitTorrentError::MissingField(field) => write!(f, "Missing field: {field}"),
             BitTorrentError::Parse(msg) => write!(f, "Parse error: {msg}"),
             BitTorrentError::NotParsed(msg) => write!(f, "BitTorrent Error: {msg}"),
+            BitTorrentError::Protocol(msg) => write!(f, "Protocol error: {msg}"),
         }
     }
 }

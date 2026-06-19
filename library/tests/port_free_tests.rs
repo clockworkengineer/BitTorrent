@@ -123,12 +123,12 @@ fn test_mem_storage_out_of_bounds() {
     
     let err_write = storage.write_block(5, &[0; 6]);
     assert!(err_write.is_err());
-    assert!(format!("{}", err_write.unwrap_err()).contains("write out of bounds"));
+    assert!(format!("{}", err_write.unwrap_err()).contains("exceeds storage capacity"));
 
     let mut buf = [0u8; 6];
     let err_read = storage.read_block(5, &mut buf);
     assert!(err_read.is_err());
-    assert!(format!("{}", err_read.unwrap_err()).contains("read out of bounds"));
+    assert!(format!("{}", err_read.unwrap_err()).contains("exceeds storage capacity"));
 }
 
 #[test]

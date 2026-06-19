@@ -177,7 +177,7 @@ impl Tracker {
     /// Outputs debug log data detailing an outgoing announce request structure.
     pub fn log_announce(tracker: &TrackerAnnounceContext) {
         let info_hash = crate::util::info_hash_to_string(&tracker.info_hash);
-        println!(
+        crate::log_debug!(
             "Announce: info_hash={} peer_id={} port={} compact={} no_peer_id={} uploaded={} downloaded={} left={} event={} ip={} key={:?} trackerid={:?} numwanted={}",
             info_hash,
             tracker.peer_id,

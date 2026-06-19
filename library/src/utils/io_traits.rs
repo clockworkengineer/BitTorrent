@@ -105,13 +105,20 @@ pub struct MockReceiver {
 
 impl MockReceiver {
     /// Receives a packet from the mock socket, spinning until data is available or the socket closes.
+    /// Returns `Err` after a fixed number of empty spin iterations to prevent infinite loops in tests.
     pub fn recv(&self) -> Result<alloc::vec::Vec<u8>, BitTorrentError> {
+        const MAX_SPIN_ITERS: usize = 100_000;
+        let mut spins = 0usize;
         loop {
             if let Some(data) = self.queue.lock().pop_front() {
                 return Ok(data);
             }
             if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
-                return Err(BitTorrentError::Parse("Mock socket closed".into()));
+                return Err(BitTorrentError::Protocol("Mock socket closed".into()));
+            }
+            spins += 1;
+            if spins >= MAX_SPIN_ITERS {
+                return Err(BitTorrentError::Protocol("MockReceiver::recv timed out (no data)".into()));
             }
             core::hint::spin_loop();
         }
@@ -212,7 +219,13 @@ impl BlockStorage for MemStorage {
         let end = start + data.len();
         let mut guard = self.data.lock();
         if end > guard.len() {
-            return Err(BitTorrentError::Parse("MemStorage write out of bounds".into()));
+            #[cfg(feature = "std")]
+            return Err(BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "write offset + length exceeds storage capacity",
+            )));
+            #[cfg(not(feature = "std"))]
+            return Err(BitTorrentError::Protocol("write offset + length exceeds storage capacity".into()));
         }
         guard[start..end].copy_from_slice(data);
         Ok(())
@@ -223,7 +236,13 @@ impl BlockStorage for MemStorage {
         let end = start + buffer.len();
         let guard = self.data.lock();
         if end > guard.len() {
-            return Err(BitTorrentError::Parse("MemStorage read out of bounds".into()));
+            #[cfg(feature = "std")]
+            return Err(BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "read offset + length exceeds storage capacity",
+            )));
+            #[cfg(not(feature = "std"))]
+            return Err(BitTorrentError::Protocol("read offset + length exceeds storage capacity".into()));
         }
         buffer.copy_from_slice(&guard[start..end]);
         Ok(buffer.len())

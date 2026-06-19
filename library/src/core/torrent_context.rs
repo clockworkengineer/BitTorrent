@@ -583,14 +583,16 @@ impl TorrentContext {
         peer_ip: &str,
     ) -> Result<bool, crate::error::BitTorrentError> {
         if piece_number >= self.number_of_pieces as u32 {
-            return Err(crate::error::BitTorrentError::Parse("Invalid piece index".into()));
+            return Err(crate::error::BitTorrentError::Protocol("Invalid piece index".into()));
+        }
+        // Validate alignment before any early-return so misaligned blocks from any
+        // peer are always rejected — even if we already have this piece locally.
+        if begin % BLOCK_SIZE as u32 != 0 {
+            return Err(crate::error::BitTorrentError::Protocol("Block offset not aligned".into()));
         }
         let expected_piece_length = self.get_piece_length(piece_number);
         if begin.checked_add(block_data.len() as u32).map_or(true, |end| end > expected_piece_length) {
-            return Err(crate::error::BitTorrentError::Parse("Block out of piece bounds".into()));
-        }
-        if begin % BLOCK_SIZE as u32 != 0 {
-            return Err(crate::error::BitTorrentError::Parse("Block offset not aligned".into()));
+            return Err(crate::error::BitTorrentError::Protocol("Block out of piece bounds".into()));
         }
 
         if self.is_piece_local(piece_number) {
@@ -633,8 +635,8 @@ impl TorrentContext {
 
         if piece_complete {
             if self.check_piece_hash_streaming(storage, piece_number, piece_length) {
-                println!(
-                    "Piece {} passed hash verification ({} bytes)",
+                crate::log_debug!(
+                    "[piece] {} passed hash verification ({} bytes)",
                     piece_number,
                     piece_length
                 );
@@ -661,7 +663,7 @@ impl TorrentContext {
                     .remove(&piece_number);
                 return Ok(true);
             } else {
-                println!("Piece {} failed hash verification", piece_number);
+                crate::log_debug!("[piece] {} failed hash verification", piece_number);
                 self.clear_piece_requests(piece_number);
                 self.assembler
                     .piece_buffers
@@ -676,7 +678,7 @@ impl TorrentContext {
                     }
                 }
 
-                return Err(crate::error::BitTorrentError::Parse(
+                return Err(crate::error::BitTorrentError::Protocol(
                     "Piece failed hash verification".to_string(),
                 ));
             }
@@ -720,12 +722,19 @@ impl TorrentContext {
     }
 
     /// Reports a bad block from a peer IP address, potentially blacklisting and disconnecting them.
+    ///
+    /// # Deadlock Safety
+    /// This method is careful to release the `bad_peer_scores` lock before acquiring the
+    /// `peer_swarm` write lock to avoid a potential lock-ordering deadlock.
     pub fn report_bad_peer(&self, ip: &str) {
-        let mut scores = self.bad_peer_scores.lock().unwrap();
-        let score = scores.entry(ip.to_string()).or_insert(0);
-        *score += 1;
-        if *score >= 3 {
-            crate::log_debug!("[swarm] Blacklisting peer {} due to {} bad blocks", ip, *score);
+        let should_blacklist = {
+            let mut scores = self.bad_peer_scores.lock().unwrap();
+            let score = scores.entry(ip.to_string()).or_insert(0);
+            *score += 1;
+            *score >= 3
+        }; // bad_peer_scores lock released here
+        if should_blacklist {
+            crate::log_debug!("[swarm] Blacklisting peer {} due to repeated bad blocks", ip);
             let peer_opt = self.peer_swarm.write().unwrap().remove(ip);
             if let Some(peer_arc) = peer_opt {
                 if let Ok(mut peer_guard) = peer_arc.lock() {
@@ -760,19 +769,30 @@ impl TorrentContext {
     }
 
     /// Sets the byte length for a given piece index.
+    ///
+    /// If `piece_length` is larger than the torrent's standard piece length, the call is
+    /// ignored and an error is logged — the piece length is left unchanged.
     pub fn set_piece_length(&mut self, piece_number: u32, piece_length: u32) {
         if piece_length <= self.piece_length {
             self.piece_data[piece_number as usize].piece_length = piece_length;
         } else {
-            panic!("Piece length larger than maximum for torrent.");
+            crate::log_debug!(
+                "[context] set_piece_length: piece {} length {} exceeds torrent max {}; ignoring",
+                piece_number, piece_length, self.piece_length
+            );
         }
     }
 
-    /// Helper asserting whether a peer IP can join the swarm (not duplicate and swarm capacity not exceeded).
+    /// Helper asserting whether a peer IP can join the swarm.
+    ///
+    /// Acquires the `peer_swarm` read lock exactly once to avoid a TOCTOU race between
+    /// the duplicate-check and the capacity-check.
     pub fn is_space_in_swarm(&self, ip: &str) -> bool {
-        !ip.is_empty()
-            && self.peer_swarm.read().unwrap().get(ip).is_none()
-            && self.peer_swarm.read().unwrap().len() < self.maximum_swarm_size
+        if ip.is_empty() {
+            return false;
+        }
+        let swarm = self.peer_swarm.read().unwrap();
+        !swarm.contains_key(ip) && swarm.len() < self.maximum_swarm_size
     }
 
     /// Finds the next unrequested block offset and length within a given piece.
