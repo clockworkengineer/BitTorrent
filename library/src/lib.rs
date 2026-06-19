@@ -170,6 +170,10 @@ pub use network::utp::UtpSocketAdapter;
 #[cfg(feature = "std")]
 pub use session::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
+pub use session::builder::MagnetSessionBuilder;
+#[cfg(feature = "std")]
+pub use session::config::SessionConfig;
+#[cfg(feature = "std")]
 pub use session::client::TorrentClient;
 #[cfg(feature = "std")]
 pub use core::torrent_context::{TorrentContext, TorrentStatus};

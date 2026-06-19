@@ -1,7 +1,10 @@
 //! Torrent download session management
 //!
 //! Orchestrates the active downloading/seeding processes for a torrent. Spawn
-//! workers to establish connections, request/download blocks, process messages, and handle disk writes.
+//! workers to establish connections, request/download blocks, process messages,
+//! and handle disk writes.
+//!
+//! Configuration lives in [`super::config`]; builder types live in [`super::builder`].
 
 use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
@@ -30,85 +33,10 @@ use core::future::Future;
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
 
-/// Represents an active Torrent transfer session.
-#[derive(Clone)]
-pub struct SessionConfig {
-    pub connect_timeout: Duration,
-    pub read_timeout: Duration,
-    pub write_timeout: Duration,
-    pub min_reannounce_interval: u32,
-    pub socket_factory: Arc<dyn crate::io_traits::SocketFactory>,
-    #[cfg(feature = "http-tracker")]
-    pub http_client: Arc<dyn crate::io_traits::HttpClient>,
-    pub dht_enabled: bool,
-    pub dht_port: u16,
-    /// Enable Message Stream Encryption (MSE/PE) handshake obfuscation.
-    pub mse_enabled: bool,
-    /// Maximum number of concurrent peer connections per torrent (default: 50).
-    pub max_connections: usize,
-    /// Maximum number of candidate peers queued for discovery (default: 1000).
-    pub max_peer_candidates: usize,
-    /// Skip full block-by-block verification of existing files on disk on startup.
-    pub skip_hash_check: bool,
-    /// Allow Local Service Discovery (LSD) even when the torrent is marked private.
-    pub allow_private_lsd: bool,
-    pub handshake_timeout: Duration,
-    pub connection_backoff: Duration,
-    pub block_size: usize,
-}
+pub use super::config::SessionConfig;
+pub use super::builder::{TorrentSessionBuilder, MagnetSessionBuilder};
 
-impl std::fmt::Debug for SessionConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut ds = f.debug_struct("SessionConfig");
-        ds.field("connect_timeout", &self.connect_timeout)
-          .field("read_timeout", &self.read_timeout)
-          .field("write_timeout", &self.write_timeout)
-          .field("min_reannounce_interval", &self.min_reannounce_interval)
-          .field("dht_enabled", &self.dht_enabled)
-          .field("dht_port", &self.dht_port)
-          .field("skip_hash_check", &self.skip_hash_check)
-          .field("allow_private_lsd", &self.allow_private_lsd)
-          .field("handshake_timeout", &self.handshake_timeout)
-          .field("connection_backoff", &self.connection_backoff)
-          .field("block_size", &self.block_size);
-        #[cfg(feature = "http-tracker")]
-        ds.field("http_client", &self.http_client);
-        ds.finish()
-    }
-}
-
-impl Default for SessionConfig {
-    fn default() -> Self {
-        let connect_timeout = Duration::from_secs(10);
-        let read_timeout = Duration::from_secs(5);
-        let write_timeout = Duration::from_secs(5);
-        SessionConfig {
-            connect_timeout,
-            read_timeout,
-            write_timeout,
-            min_reannounce_interval: 60,
-            socket_factory: Arc::new(crate::peer_network::TcpSocketFactory {
-                connect_timeout,
-                read_timeout,
-                write_timeout,
-            }),
-            #[cfg(feature = "http-tracker")]
-            http_client: Arc::new(crate::io_traits::UreqHttpClient),
-            dht_enabled: true,
-            dht_port: 6881,
-            mse_enabled: false,
-            max_connections: 50,
-            max_peer_candidates: 1000,
-            skip_hash_check: false,
-            allow_private_lsd: false,
-            handshake_timeout: Duration::from_secs(5),
-            connection_backoff: Duration::from_secs(30),
-            block_size: crate::constants::BLOCK_SIZE,
-        }
-    }
-}
-
-/// Represents an active Torrent transfer session.
+/// Represents an active torrent transfer session.
 pub struct TorrentSession {
     pub context: Arc<Mutex<TorrentContext>>,
     pub download_path: PathBuf,
@@ -122,71 +50,15 @@ pub struct TorrentSession {
     pub nat_pmp: Option<Arc<dyn crate::nat::PortMapper>>,
 }
 
-/// A builder for constructing `TorrentSession` configurations.
-pub struct TorrentSessionBuilder {
-    torrent_path: PathBuf,
-    download_path: PathBuf,
-    seeding: bool,
-    manager: Option<Arc<Manager>>,
-    config: SessionConfig,
-    selector: Arc<dyn PieceSelector>,
-}
-
-impl TorrentSessionBuilder {
-    /// Creates a new `TorrentSessionBuilder` with the specified torrent file path and target download directory path.
-    pub fn new(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> Self {
-        TorrentSessionBuilder {
-            torrent_path: torrent_path.as_ref().to_path_buf(),
-            download_path: download_path.as_ref().to_path_buf(),
-            seeding: false,
-            manager: None,
-            config: SessionConfig::default(),
-            selector: Arc::new(RarestFirstSelector),
-        }
-    }
-
-    /// Sets whether the session is for seeding.
-    pub fn seeding(mut self, seeding: bool) -> Self {
-        self.seeding = seeding;
-        self
-    }
-
-    /// Sets the peer manager registry for the session.
-    pub fn manager(mut self, manager: Arc<Manager>) -> Self {
-        self.manager = Some(manager);
-        self
-    }
-
-    /// Sets the dynamic configuration of session timeouts and intervals.
-    pub fn config(mut self, config: SessionConfig) -> Self {
-        self.config = config;
-        self
-    }
-
-    /// Sets the pluggable piece selector strategy.
-    pub fn selector(mut self, selector: Arc<dyn PieceSelector>) -> Self {
-        self.selector = selector;
-        self
-    }
-
-    /// Builds the `TorrentSession` using the configured parameters.
-    pub fn build(self) -> Result<TorrentSession, BitTorrentError> {
-        let mut session = TorrentSession::new_with_options(
-            self.torrent_path,
-            self.download_path,
-            self.seeding,
-            self.config,
-            self.selector,
-        )?;
-        session.manager = self.manager;
-        Ok(session)
-    }
-}
-
 impl TorrentSession {
-    /// Creates a builder to configure and construct a new `TorrentSession`.
+    /// Creates a builder to configure and construct a new `TorrentSession` from a `.torrent` file.
     pub fn builder(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> TorrentSessionBuilder {
         TorrentSessionBuilder::new(torrent_path, download_path)
+    }
+
+    /// Creates a builder to configure and construct a new `TorrentSession` from a magnet link.
+    pub fn magnet_builder(magnet_link: impl Into<String>, download_path: impl AsRef<Path>) -> MagnetSessionBuilder {
+        MagnetSessionBuilder::new(magnet_link, download_path)
     }
 
     /// Creates and initializes a new `TorrentSession` using the specified torrent file and target download path.
