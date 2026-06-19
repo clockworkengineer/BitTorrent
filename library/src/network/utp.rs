@@ -149,6 +149,7 @@ impl UtpHeader {
 ///
 /// > **Note**: The receive window (`wnd_size`) is currently fixed at 1 MiB.
 /// > LEDBAT-based dynamic window sizing is a planned future enhancement.
+#[derive(Debug)]
 pub struct UtpSocketAdapter {
     udp: Arc<UdpSocket>,
     connection_id: u16,
@@ -240,99 +241,89 @@ impl AsyncSocket for UtpSocketAdapter {
     /// Loops until a `ST_DATA` packet is received (skipping non-data packets).
     /// Sends a `ST_STATE` ACK for each data packet received.
     /// Returns `Ok(0)` if a `ST_RESET` packet is received or the socket is closed.
-    fn read<'a>(
-        &'a self,
-        buf: &'a mut [u8],
-    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
-        Box::pin(async move {
-            if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
-                return Ok(0);
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError> {
+        if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(0);
+        }
+
+        let mut packet_buf = vec![0u8; 2048];
+        loop {
+            let n = self.udp.recv(&mut packet_buf).map_err(BitTorrentError::Io)?;
+            if n < 20 {
+                continue;
             }
 
-            let mut packet_buf = vec![0u8; 2048];
-            loop {
-                let n = self.udp.recv(&mut packet_buf).map_err(BitTorrentError::Io)?;
-                if n < 20 {
-                    continue;
+            if let Ok(header) = UtpHeader::decode(&packet_buf[..20]) {
+                // Track the remote peer's sequence number for our ACK field
+                {
+                    let mut ack = self.ack_nr.lock().unwrap();
+                    *ack = header.seq_nr;
                 }
 
-                if let Ok(header) = UtpHeader::decode(&packet_buf[..20]) {
-                    // Track the remote peer's sequence number for our ACK field
-                    {
-                        let mut ack = self.ack_nr.lock().unwrap();
-                        *ack = header.seq_nr;
+                // Compute dynamic delay for LEDBAT
+                let now_us = (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() & 0xFFFFFFFF) as u32;
+
+                if header.timestamp_us > 0 {
+                    let current_delay = now_us.saturating_sub(header.timestamp_us);
+                    let mut base = self.base_delay.lock().unwrap();
+                    if current_delay < *base {
+                        *base = current_delay;
                     }
+                    let queuing_delay = current_delay.saturating_sub(*base);
 
-                    // Compute dynamic delay for LEDBAT
-                    let now_us = (std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_micros() & 0xFFFFFFFF) as u32;
-
-                    if header.timestamp_us > 0 {
-                        let current_delay = now_us.saturating_sub(header.timestamp_us);
-                        let mut base = self.base_delay.lock().unwrap();
-                        if current_delay < *base {
-                            *base = current_delay;
-                        }
-                        let queuing_delay = current_delay.saturating_sub(*base);
-
-                        // LEDBAT adjustment: target delay is 100ms (100_000 microseconds)
-                        let target_delay = 100_000;
-                        let mut cwnd_val = self.cwnd.lock().unwrap();
-                        if queuing_delay < target_delay {
-                            *cwnd_val = cwnd_val.saturating_add(146);
-                        } else {
-                            *cwnd_val = (*cwnd_val).saturating_sub(146).max(1460);
-                        }
+                    // LEDBAT adjustment: target delay is 100ms (100_000 microseconds)
+                    let target_delay = 100_000;
+                    let mut cwnd_val = self.cwnd.lock().unwrap();
+                    if queuing_delay < target_delay {
+                        *cwnd_val = cwnd_val.saturating_add(146);
+                    } else {
+                        *cwnd_val = (*cwnd_val).saturating_sub(146).max(1460);
                     }
+                }
 
-                    // Acknowledge sent packets
-                    {
-                        let mut sent = self.sent_packets.lock().unwrap();
-                        sent.retain(|&(seq, _, _)| {
-                            let diff = header.ack_nr.wrapping_sub(seq);
-                            diff > 32768
-                        });
-                    }
+                // Acknowledge sent packets
+                {
+                    let mut sent = self.sent_packets.lock().unwrap();
+                    sent.retain(|&(seq, _, _)| {
+                        let diff = header.ack_nr.wrapping_sub(seq);
+                        diff > 32768
+                    });
+                }
 
-                    if header.packet_type == UtpPacketType::Reset {
-                        return Ok(0); // Connection aborted by remote
-                    }
+                if header.packet_type == UtpPacketType::Reset {
+                    return Ok(0); // Connection aborted by remote
+                }
 
-                    if header.packet_type == UtpPacketType::Data {
-                        let payload_len = n - 20;
-                        let to_read = buf.len().min(payload_len);
-                        buf[..to_read].copy_from_slice(&packet_buf[20..20 + to_read]);
+                if header.packet_type == UtpPacketType::Data {
+                    let payload_len = n - 20;
+                    let to_read = buf.len().min(payload_len);
+                    buf[..to_read].copy_from_slice(&packet_buf[20..20 + to_read]);
 
-                        // Acknowledge receipt with ST_STATE
-                        let _ = self.send_packet(UtpPacketType::State, &[]);
+                    // Acknowledge receipt with ST_STATE
+                    let _ = self.send_packet(UtpPacketType::State, &[]);
 
-                        return Ok(to_read);
-                    }
+                    return Ok(to_read);
                 }
             }
-        })
+        }
     }
 
     /// Wraps `buf` in a `ST_DATA` uTP packet and sends it over UDP.
     ///
     /// Returns an error if the socket is already closed.
-    fn write<'a>(
-        &'a self,
-        buf: &'a [u8],
-    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
-        Box::pin(async move {
-            if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(BitTorrentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionAborted,
-                    "Socket closed",
-                )));
-            }
+    async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
+        if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "Socket closed",
+            )));
+        }
 
-            self.send_packet(UtpPacketType::Data, buf)?;
-            Ok(buf.len())
-        })
+        self.send_packet(UtpPacketType::Data, buf)?;
+        Ok(buf.len())
     }
 
     /// Closes the connection by sending `ST_RESET` and marking the adapter as closed.

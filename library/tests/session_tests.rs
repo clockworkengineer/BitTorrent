@@ -36,7 +36,7 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
     let server_handle = thread::spawn(move || {
         futures::executor::block_on(async {
             let (stream, _) = listener.accept().expect("Failed to accept connection");
-            let socket = std::sync::Arc::new(bittorrent_rs::peer_network::TcpSocket::new(stream));
+            let socket = std::sync::Arc::new(bittorrent_rs::Socket::Tcp(bittorrent_rs::peer_network::TcpSocket::new(stream)));
             let net = PeerNetwork::new(socket);
             let (remote_info_hash, _, _) = net.read_handshake().await.expect("Failed to read handshake");
             assert_eq!(remote_info_hash, expected_info_hash_clone);
@@ -92,7 +92,7 @@ fn test_uploads_piece_when_peer_requests_block() {
     let server_handle = thread::spawn(move || {
         futures::executor::block_on(async {
             let (stream, _) = listener.accept().expect("Failed to accept connection");
-            let socket = std::sync::Arc::new(bittorrent_rs::peer_network::TcpSocket::new(stream));
+            let socket = std::sync::Arc::new(bittorrent_rs::Socket::Tcp(bittorrent_rs::peer_network::TcpSocket::new(stream)));
             let net = PeerNetwork::new(socket);
             let (remote_info_hash, _, _) = net.read_handshake().await.expect("Failed to read handshake");
             assert_eq!(remote_info_hash, expected_info_hash_clone);
@@ -235,7 +235,7 @@ fn test_download_piece_from_peer() {
     let server_handle = thread::spawn(move || {
         futures::executor::block_on(async {
             let (stream, _) = listener.accept().expect("Failed to accept connection");
-            let socket = std::sync::Arc::new(bittorrent_rs::peer_network::TcpSocket::new(stream));
+            let socket = std::sync::Arc::new(bittorrent_rs::Socket::Tcp(bittorrent_rs::peer_network::TcpSocket::new(stream)));
             let net = PeerNetwork::new(socket);
             let (remote_info_hash, _, _) = net.read_handshake().await.expect("Failed to read handshake");
             assert_eq!(remote_info_hash, expected_info_hash_clone);

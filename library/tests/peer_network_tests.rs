@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[test]
 fn test_peer_network_handshake_roundtrip() {
     let (socket, in_tx, out_rx) = MockSocket::new();
-    let network = PeerNetwork::new(Arc::new(socket));
+    let network = PeerNetwork::new(Arc::new(bittorrent_rs::Socket::Mock(socket)));
 
     let info_hash = vec![0x12; 20];
     let peer_id = vec![0x34; 20];
@@ -41,7 +41,7 @@ fn test_peer_network_handshake_roundtrip() {
 #[test]
 fn test_peer_network_control_messages() {
     let (socket, in_tx, _out_rx) = MockSocket::new();
-    let network = PeerNetwork::new(Arc::new(socket));
+    let network = PeerNetwork::new(Arc::new(bittorrent_rs::Socket::Mock(socket)));
 
     // KeepAlive msg (length prefix 0)
     in_tx.send(vec![0, 0, 0, 0]).unwrap();
@@ -73,7 +73,7 @@ fn test_peer_network_validation_boundaries() {
 
     // 1. Control message Choke with invalid length 2 instead of 1 (ID 0)
     let (socket1, in_tx1, _out_rx1) = MockSocket::new();
-    let network1 = PeerNetwork::new(Arc::new(socket1));
+    let network1 = PeerNetwork::new(Arc::new(bittorrent_rs::Socket::Mock(socket1)));
     in_tx1.send(vec![0, 0, 0, 2, 0, 0]).unwrap();
 
     futures::executor::block_on(async {
@@ -84,7 +84,7 @@ fn test_peer_network_validation_boundaries() {
 
     // 2. Request message with invalid length 10 instead of 13 (ID 6)
     let (socket2, in_tx2, _out_rx2) = MockSocket::new();
-    let network2 = PeerNetwork::new(Arc::new(socket2));
+    let network2 = PeerNetwork::new(Arc::new(bittorrent_rs::Socket::Mock(socket2)));
     in_tx2.send(vec![0, 0, 0, 10, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
 
     futures::executor::block_on(async {
@@ -95,7 +95,7 @@ fn test_peer_network_validation_boundaries() {
 
     // 3. Piece message with invalid length 5 (too short, must be at least 9) (ID 7)
     let (socket3, in_tx3, _out_rx3) = MockSocket::new();
-    let network3 = PeerNetwork::new(Arc::new(socket3));
+    let network3 = PeerNetwork::new(Arc::new(bittorrent_rs::Socket::Mock(socket3)));
     in_tx3.send(vec![0, 0, 0, 5, 7, 0, 0, 0, 0]).unwrap();
 
     futures::executor::block_on(async {
@@ -112,7 +112,7 @@ fn test_peer_network_mse_integration() {
     use bittorrent_rs::mse::Rc4;
 
     let (socket, in_tx, out_rx) = MockSocket::new();
-    let mut network = PeerNetwork::new(Arc::new(socket));
+    let mut network = PeerNetwork::new(Arc::new(bittorrent_rs::Socket::Mock(socket)));
 
     let key = b"encryption_key";
     let enc = Rc4::new(key);

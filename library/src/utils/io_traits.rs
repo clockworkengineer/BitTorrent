@@ -6,16 +6,10 @@ use crate::error::BitTorrentError;
 /// A hardware-agnostic asynchronous socket trait.
 pub trait AsyncSocket: Send + Sync {
     /// Reads up to `buf.len()` bytes asynchronously from the socket.
-    fn read<'a>(
-        &'a self,
-        buf: &'a mut [u8],
-    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>>;
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError>;
 
     /// Writes raw bytes asynchronously to the socket.
-    fn write<'a>(
-        &'a self,
-        buf: &'a [u8],
-    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>>;
+    async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError>;
 
     /// Shuts down the socket connection.
     fn close(&self);
@@ -163,43 +157,33 @@ impl MockSocket {
 }
 
 impl AsyncSocket for MockSocket {
-    fn read<'a>(
-        &'a self,
-        buf: &'a mut [u8],
-    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
-        Box::pin(async move {
-            if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError> {
+        if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
+            return Ok(0);
+        }
+        let mut read_guard = self.read_buf.lock();
+        if read_guard.is_empty() {
+            let mut rx_guard = self.rx.lock();
+            if let Some(data) = rx_guard.pop_front() {
+                read_guard.extend_from_slice(&data);
+            } else if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
                 return Ok(0);
             }
-            let mut read_guard = self.read_buf.lock();
-            if read_guard.is_empty() {
-                let mut rx_guard = self.rx.lock();
-                if let Some(data) = rx_guard.pop_front() {
-                    read_guard.extend_from_slice(&data);
-                } else if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
-                    return Ok(0);
-                }
-            }
-            let to_read = buf.len().min(read_guard.len());
-            if to_read > 0 {
-                buf[..to_read].copy_from_slice(&read_guard[..to_read]);
-                read_guard.drain(..to_read);
-            }
-            Ok(to_read)
-        })
+        }
+        let to_read = buf.len().min(read_guard.len());
+        if to_read > 0 {
+            buf[..to_read].copy_from_slice(&read_guard[..to_read]);
+            read_guard.drain(..to_read);
+        }
+        Ok(to_read)
     }
 
-    fn write<'a>(
-        &'a self,
-        buf: &'a [u8],
-    ) -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>> {
-        Box::pin(async move {
-            if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
-                return Err(BitTorrentError::Parse("Socket closed".into()));
-            }
-            self.tx.lock().push_back(buf.to_vec());
-            Ok(buf.len())
-        })
+    async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
+        if self.closed.load(core::sync::atomic::Ordering::Relaxed) {
+            return Err(BitTorrentError::Parse("Socket closed".into()));
+        }
+        self.tx.lock().push_back(buf.to_vec());
+        Ok(buf.len())
     }
 
     fn close(&self) {
@@ -246,11 +230,52 @@ impl BlockStorage for MemStorage {
     }
 }
 
+#[derive(Debug)]
+pub enum Socket {
+    #[cfg(feature = "std")]
+    Tcp(crate::network::peer_network::TcpSocket),
+    #[cfg(feature = "utp")]
+    Utp(crate::network::utp::UtpSocketAdapter),
+    Mock(MockSocket),
+}
+
+impl AsyncSocket for Socket {
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError> {
+        match self {
+            #[cfg(feature = "std")]
+            Socket::Tcp(s) => s.read(buf).await,
+            #[cfg(feature = "utp")]
+            Socket::Utp(s) => s.read(buf).await,
+            Socket::Mock(s) => s.read(buf).await,
+        }
+    }
+
+    async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
+        match self {
+            #[cfg(feature = "std")]
+            Socket::Tcp(s) => s.write(buf).await,
+            #[cfg(feature = "utp")]
+            Socket::Utp(s) => s.write(buf).await,
+            Socket::Mock(s) => s.write(buf).await,
+        }
+    }
+
+    fn close(&self) {
+        match self {
+            #[cfg(feature = "std")]
+            Socket::Tcp(s) => s.close(),
+            #[cfg(feature = "utp")]
+            Socket::Utp(s) => s.close(),
+            Socket::Mock(s) => s.close(),
+        }
+    }
+}
+
 /// A hardware-agnostic socket factory trait.
 #[cfg(feature = "std")]
 pub trait SocketFactory: Send + Sync + std::fmt::Debug {
     /// Establishes a socket connection to target IP and port.
-    fn connect(&self, ip: &str, port: u16) -> Result<alloc::sync::Arc<dyn AsyncSocket>, BitTorrentError>;
+    fn connect(&self, ip: &str, port: u16) -> Result<alloc::sync::Arc<Socket>, BitTorrentError>;
 }
 
 /// A hardware-agnostic HTTP client trait.

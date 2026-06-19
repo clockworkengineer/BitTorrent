@@ -4,6 +4,7 @@
 //! piece size information, and computing the info hash of the torrent file's `info` section.
 
 use crate::bencode::{BNode, Bencode};
+use crate::utils::bencode_tokenizer::{BencodeToken, BencodeTokenizer};
 use crate::error::BitTorrentError;
 use sha1::{Digest, Sha1};
 
@@ -90,68 +91,387 @@ impl MetaInfoFile {
 
     /// Parses the bencoded raw metadata into dictionary keys and validates fields.
     pub fn parse(&mut self) -> Result<(), BitTorrentError> {
-        let root = Bencode::decode(&self.meta_info_data)?;
-        if !matches!(root, BNode::Dictionary(_)) {
+        let mut tokenizer = BencodeTokenizer::new(&self.meta_info_data);
+        let root_token = tokenizer.next_token()
+            .ok_or_else(|| BitTorrentError::Bencode(
+                crate::error::BencodeError::Custom("Torrent file root is empty".into()),
+            ))??;
+        if root_token != BencodeToken::DictStart {
             return Err(BitTorrentError::Bencode(
                 crate::error::BencodeError::Custom("Torrent file root is not a dictionary".into()),
             ));
         }
 
-        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "announce")?;
-        Self::get_list_of_strings(&mut self.meta_info_dict, &root, "announce-list")?;
-        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "comment")?;
-        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "created by")?;
-        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "creation date")?;
-        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "name")?;
-        Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "piece length")?;
-        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "meta version")?;
-        Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "private")?;
+        while let Some(token_res) = tokenizer.next_token() {
+            let token = token_res?;
+            if token == BencodeToken::End {
+                break;
+            }
+            let key = match token {
+                BencodeToken::String(k) => k,
+                _ => return Err(BitTorrentError::Bencode(
+                    crate::error::BencodeError::Custom("Torrent root key is not a string".into()),
+                )),
+            };
 
+            match key {
+                b"announce" | b"comment" | b"created by" | b"creation date" => {
+                    let val_token = tokenizer.next_token()
+                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                    let val_bytes = match val_token {
+                        BencodeToken::String(s) => s.to_vec(),
+                        BencodeToken::Integer(i) => i.to_vec(),
+                        _ => return Err(BitTorrentError::Bencode(
+                            crate::error::BencodeError::Custom("Expected string or integer value".into()),
+                        )),
+                    };
+                    self.meta_info_dict.insert(String::from_utf8_lossy(key).to_string(), val_bytes);
+                }
+                b"announce-list" => {
+                    let list_token = tokenizer.next_token()
+                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                    if list_token != BencodeToken::ListStart {
+                        return Err(BitTorrentError::Bencode(
+                            crate::error::BencodeError::Custom("announce-list is not a list".into()),
+                        ));
+                    }
+                    let mut urls = Vec::new();
+                    loop {
+                        let next_tok = tokenizer.next_token()
+                            .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                        if next_tok == BencodeToken::End {
+                            break;
+                        }
+                        if next_tok != BencodeToken::ListStart {
+                            return Err(BitTorrentError::Bencode(
+                                crate::error::BencodeError::Custom("announce-list inner element is not a list".into()),
+                            ));
+                        }
+                        loop {
+                            let inner_tok = tokenizer.next_token()
+                                .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                            if inner_tok == BencodeToken::End {
+                                break;
+                            }
+                            if let BencodeToken::String(s) = inner_tok {
+                                urls.push(String::from_utf8_lossy(s).to_string());
+                            } else {
+                                return Err(BitTorrentError::Bencode(
+                                    crate::error::BencodeError::Custom("announce-list url is not a string".into()),
+                                ));
+                            }
+                        }
+                    }
+                    self.meta_info_dict.insert("announce-list".to_string(), urls.join(",").into_bytes());
+                }
+                b"url-list" => {
+                    let val_token = tokenizer.next_token()
+                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                    match val_token {
+                        BencodeToken::String(s) => {
+                            self.meta_info_dict.insert("url-list".to_string(), s.to_vec());
+                        }
+                        BencodeToken::ListStart => {
+                            let mut urls = Vec::new();
+                            loop {
+                                let next_tok = tokenizer.next_token()
+                                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                if next_tok == BencodeToken::End {
+                                    break;
+                                }
+                                if let BencodeToken::String(s) = next_tok {
+                                    urls.push(String::from_utf8_lossy(s).to_string());
+                                }
+                            }
+                            self.meta_info_dict.insert("url-list".to_string(), urls.join(",").into_bytes());
+                        }
+                        _ => return Err(BitTorrentError::Bencode(
+                            crate::error::BencodeError::Custom("url-list must be a string or list".into()),
+                        )),
+                    }
+                }
+                b"info" => {
+                    let start_pos = tokenizer.position();
+                    let val_token = tokenizer.next_token()
+                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                    
+                    let mut depth = 0;
+                    match val_token {
+                        BencodeToken::DictStart | BencodeToken::ListStart => {
+                            depth += 1;
+                            while depth > 0 {
+                                let tok = tokenizer.next_token()
+                                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                if tok == BencodeToken::DictStart || tok == BencodeToken::ListStart {
+                                    depth += 1;
+                                } else if tok == BencodeToken::End {
+                                    depth -= 1;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    let end_pos = tokenizer.position();
+                    let raw_info_bytes = &self.meta_info_data[start_pos..end_pos];
+                    
+                    // Parse fields inside 'info' dictionary
+                    let mut info_tokenizer = BencodeTokenizer::new(raw_info_bytes);
+                    let info_root = info_tokenizer.next_token()
+                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                    if info_root != BencodeToken::DictStart {
+                        return Err(BitTorrentError::Bencode(
+                            crate::error::BencodeError::Custom("info must be a dictionary".into()),
+                        ));
+                    }
+                    
+                    while let Some(info_tok_res) = info_tokenizer.next_token() {
+                        let info_tok = info_tok_res?;
+                        if info_tok == BencodeToken::End {
+                            break;
+                        }
+                        let info_key = match info_tok {
+                            BencodeToken::String(k) => k,
+                            _ => return Err(BitTorrentError::Bencode(
+                                crate::error::BencodeError::Custom("info key is not a string".into()),
+                            )),
+                        };
+                        
+                        match info_key {
+                            b"name" | b"piece length" | b"meta version" | b"private" | b"pieces" | b"length" | b"md5sum" => {
+                                let val = info_tokenizer.next_token()
+                                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                let val_bytes = match val {
+                                    BencodeToken::String(s) => s.to_vec(),
+                                    BencodeToken::Integer(i) => i.to_vec(),
+                                    _ => return Err(BitTorrentError::Bencode(
+                                        crate::error::BencodeError::Custom("Expected length/md5sum as string or integer".into()),
+                                    )),
+                                };
+                                self.meta_info_dict.insert(String::from_utf8_lossy(info_key).to_string(), val_bytes);
+                            }
+                            b"files" => {
+                                let list_tok = info_tokenizer.next_token()
+                                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                if list_tok != BencodeToken::ListStart {
+                                    return Err(BitTorrentError::Bencode(
+                                        crate::error::BencodeError::Custom("files must be a list".into()),
+                                    ));
+                                }
+                                let mut file_no = 0;
+                                loop {
+                                    let item_tok = info_tokenizer.next_token()
+                                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                    if item_tok == BencodeToken::End {
+                                        break;
+                                    }
+                                    if item_tok != BencodeToken::DictStart {
+                                        return Err(BitTorrentError::Bencode(
+                                            crate::error::BencodeError::Custom("files list item must be a dictionary".into()),
+                                        ));
+                                    }
+                                    
+                                    let mut length = String::new();
+                                    let mut md5sum = String::new();
+                                    let mut path_segments = Vec::new();
+                                    
+                                    loop {
+                                        let f_key_tok = info_tokenizer.next_token()
+                                            .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                        if f_key_tok == BencodeToken::End {
+                                            break;
+                                        }
+                                        let f_key = match f_key_tok {
+                                            BencodeToken::String(k) => k,
+                                            _ => return Err(BitTorrentError::Bencode(
+                                                crate::error::BencodeError::Custom("File dict key is not a string".into()),
+                                            )),
+                                        };
+                                        let f_val = info_tokenizer.next_token()
+                                            .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                        match f_key {
+                                            b"length" => {
+                                                match f_val {
+                                                    BencodeToken::Integer(i) | BencodeToken::String(i) => {
+                                                        length = String::from_utf8_lossy(i).to_string();
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                            b"md5sum" => {
+                                                match f_val {
+                                                    BencodeToken::Integer(s) | BencodeToken::String(s) => {
+                                                        md5sum = String::from_utf8_lossy(s).to_string();
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                            b"path" => {
+                                                if f_val != BencodeToken::ListStart {
+                                                    return Err(BitTorrentError::Bencode(
+                                                        crate::error::BencodeError::Custom("path must be a list".into()),
+                                                    ));
+                                                }
+                                                loop {
+                                                    let path_tok = info_tokenizer.next_token()
+                                                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                                    if path_tok == BencodeToken::End {
+                                                        break;
+                                                    }
+                                                    if let BencodeToken::String(s) = path_tok {
+                                                        path_segments.push(String::from_utf8_lossy(s).to_string());
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                // Skip
+                                                let mut depth = 0;
+                                                match f_val {
+                                                    BencodeToken::DictStart | BencodeToken::ListStart => {
+                                                        depth += 1;
+                                                        while depth > 0 {
+                                                            let t = info_tokenizer.next_token()
+                                                                .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                                            if t == BencodeToken::DictStart || t == BencodeToken::ListStart {
+                                                                depth += 1;
+                                                            } else if t == BencodeToken::End {
+                                                                depth -= 1;
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    let mut file_entry = path_segments
+                                        .iter()
+                                        .map(|seg| format!("{}{}", MAIN_SEPARATOR, seg))
+                                        .collect::<String>();
+                                    file_entry.push('\0');
+                                    file_entry.push_str(&length);
+                                    file_entry.push('\0');
+                                    file_entry.push_str(&md5sum);
+                                    
+                                    self.meta_info_dict.insert(file_no.to_string(), file_entry.into_bytes());
+                                    file_no += 1;
+                                }
+                            }
+                            b"file tree" => {
+                                let tree_tok = info_tokenizer.next_token()
+                                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                if tree_tok != BencodeToken::DictStart {
+                                    return Err(BitTorrentError::Bencode(
+                                        crate::error::BencodeError::Custom("file tree must be a dictionary".into()),
+                                    ));
+                                }
+                                let mut current_path = Vec::new();
+                                let mut files = Vec::new();
+                                parse_file_tree_tokenized(&mut info_tokenizer, &mut current_path, &mut files)?;
+                                
+                                for (i, (path, length, pieces_root)) in files.into_iter().enumerate() {
+                                    let file_entry = format!("{}{}\0{}", MAIN_SEPARATOR, path.replace("/", &MAIN_SEPARATOR.to_string()), length);
+                                    self.meta_info_dict.insert(format!("pieces_root_{}", i), pieces_root);
+                                    self.meta_info_dict.insert(i.to_string(), file_entry.into_bytes());
+                                }
+                            }
+                            _ => {
+                                // Skip
+                                let val = info_tokenizer.next_token()
+                                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                let mut depth = 0;
+                                match val {
+                                    BencodeToken::DictStart | BencodeToken::ListStart => {
+                                        depth += 1;
+                                        while depth > 0 {
+                                            let t = info_tokenizer.next_token()
+                                                .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                            if t == BencodeToken::DictStart || t == BencodeToken::ListStart {
+                                                depth += 1;
+                                            } else if t == BencodeToken::End {
+                                                depth -= 1;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Compute info hash
+                    let is_v2 = if let Some(ver) = self.meta_info_dict.get("meta version") {
+                        String::from_utf8_lossy(ver).trim() == "2"
+                    } else {
+                        false
+                    };
+                    
+                    if is_v2 {
+                        #[cfg(feature = "v2")]
+                        {
+                            use sha2::Digest;
+                            let mut hasher = sha2::Sha256::new();
+                            hasher.update(raw_info_bytes);
+                            self.meta_info_dict.insert("info hash".to_string(), hasher.finalize().to_vec());
+                        }
+                        #[cfg(not(feature = "v2"))]
+                        {
+                            return Err(BitTorrentError::Parse("BitTorrent v2 is not compiled in this build".into()));
+                        }
+                    } else {
+                        let mut hasher = Sha1::new();
+                        hasher.update(raw_info_bytes);
+                        self.meta_info_dict.insert("info hash".to_string(), hasher.finalize().to_vec());
+                    }
+                }
+                _ => {
+                    // Skip
+                    let val = tokenizer.next_token()
+                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                    let mut depth = 0;
+                    match val {
+                        BencodeToken::DictStart | BencodeToken::ListStart => {
+                            depth += 1;
+                            while depth > 0 {
+                                let t = tokenizer.next_token()
+                                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                if t == BencodeToken::DictStart || t == BencodeToken::ListStart {
+                                    depth += 1;
+                                } else if t == BencodeToken::End {
+                                    depth -= 1;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Validate required fields
+        if !self.meta_info_dict.contains_key("announce") {
+            return Err(BitTorrentError::MissingField("announce".into()));
+        }
+        if !self.meta_info_dict.contains_key("name") {
+            return Err(BitTorrentError::MissingField("name".into()));
+        }
+        if !self.meta_info_dict.contains_key("piece length") {
+            return Err(BitTorrentError::MissingField("piece length".into()));
+        }
+        
         let is_v2 = if let Some(ver) = self.meta_info_dict.get("meta version") {
             String::from_utf8_lossy(ver).trim() == "2"
         } else {
             false
         };
 
-        if is_v2 {
-            Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "pieces")?;
-        } else {
-            Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "pieces")?;
+        if !is_v2 && !self.meta_info_dict.contains_key("pieces") {
+            return Err(BitTorrentError::MissingField("pieces".into()));
+        }
+        if !self.meta_info_dict.contains_key("info hash") {
+            return Err(BitTorrentError::MissingField("info".into()));
         }
 
-        if let Some(entry) = Bencode::get_dictionary_entry(&root, b"url-list") {
-            match entry {
-                BNode::String(_) => {
-                    Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "url-list")?;
-                }
-                BNode::List(_) => {
-                    Self::get_list_of_strings(&mut self.meta_info_dict, &root, "url-list")?;
-                }
-                _ => {}
-            }
-        }
-
-        if is_v2 {
-            if let Some(file_tree) = Bencode::get_dictionary_entry(&root, b"file tree") {
-                let mut current_path = Vec::new();
-                let mut files = Vec::new();
-                traverse_file_tree(file_tree, &mut current_path, &mut files);
-                for (i, (path, length, pieces_root)) in files.into_iter().enumerate() {
-                    let file_entry = format!("{}{}\0{}", MAIN_SEPARATOR, path.replace("/", &MAIN_SEPARATOR.to_string()), length);
-                    self.meta_info_dict.insert(format!("pieces_root_{}", i), pieces_root);
-                    self.meta_info_dict.insert(i.to_string(), file_entry.into_bytes());
-                }
-            }
-        } else {
-            if Bencode::get_dictionary_entry(&root, b"files").is_none() {
-                Self::require_string_or_numeric(&mut self.meta_info_dict, &root, "length")?;
-                Self::get_string_or_numeric(&mut self.meta_info_dict, &root, "md5sum")?;
-            } else {
-                Self::get_list_of_dictionarys(&mut self.meta_info_dict, &root, "files")?;
-            }
-        }
-
-        Self::calculate_info_hash(&mut self.meta_info_dict, &root)?;
         self.parsed = true;
         Ok(())
     }
@@ -424,147 +744,6 @@ impl MetaInfoFile {
         Ok((total_bytes, files_to_download))
     }
 
-    /// Extracts a string or numeric value from a `BNode` and caches it in `meta_info_dict`.
-    fn get_string_or_numeric(
-        meta_info_dict: &mut MetaInfoDict,
-        root: &BNode<'_>,
-        field: &str,
-    ) -> Result<(), BitTorrentError> {
-        if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
-            if let Some(bytes) = entry.as_string() {
-                meta_info_dict.insert(field.to_string(), bytes.to_vec());
-            } else if let Some(bytes) = entry.as_number_bytes() {
-                meta_info_dict.insert(field.to_string(), bytes.to_vec());
-            }
-        }
-        Ok(())
-    }
-
-    /// Asserts that a field exists and extracts it as string or numeric, returning an error otherwise.
-    fn require_string_or_numeric(
-        meta_info_dict: &mut MetaInfoDict,
-        root: &BNode<'_>,
-        field: &str,
-    ) -> Result<(), BitTorrentError> {
-        if Bencode::get_dictionary_entry(root, field.as_bytes()).is_none() {
-            return Err(BitTorrentError::MissingField(field.to_string()));
-        }
-        Self::get_string_or_numeric(meta_info_dict, root, field)
-    }
-
-    /// Extracts a list of strings from a `BNode` and saves them in `meta_info_dict` as a comma-separated string.
-    fn get_list_of_strings(
-        meta_info_dict: &mut MetaInfoDict,
-        root: &BNode<'_>,
-        field: &str,
-    ) -> Result<(), BitTorrentError> {
-        if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
-            if let BNode::List(list) = entry {
-                let mut values = Vec::new();
-                for item in list {
-                    match item {
-                        BNode::String(bytes) => {
-                            values.push(String::from_utf8_lossy(bytes).to_string());
-                        }
-                        BNode::List(inner) => {
-                            if let Some(BNode::String(bytes)) = inner.get(0) {
-                                values.push(String::from_utf8_lossy(bytes).to_string());
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                meta_info_dict.insert(field.to_string(), values.join(",").into_bytes());
-            }
-        }
-        Ok(())
-    }
-
-    /// Extracts file dict arrays under the "files" list, caching them in `meta_info_dict` as numbered entries.
-    fn get_list_of_dictionarys(
-        meta_info_dict: &mut MetaInfoDict,
-        root: &BNode<'_>,
-        field: &str,
-    ) -> Result<(), BitTorrentError> {
-        if let Some(entry) = Bencode::get_dictionary_entry(root, field.as_bytes()) {
-            if let BNode::List(list) = entry {
-                let mut file_no: i32 = 0;
-                for item in list {
-                    if let BNode::Dictionary(_) = item {
-                        let mut file_entry = String::new();
-                        if let Some(path_node) = Bencode::get_dictionary_entry(item, b"path") {
-                            if let BNode::List(path_list) = path_node {
-                                let mut path_segments = Vec::new();
-                                for segment in path_list {
-                                    if let BNode::String(bytes) = segment {
-                                        path_segments
-                                            .push(String::from_utf8_lossy(bytes).to_string());
-                                    }
-                                }
-                                file_entry.push_str(
-                                    &path_segments
-                                        .iter()
-                                        .map(|seg| format!("{}{}", MAIN_SEPARATOR, seg))
-                                        .collect::<String>(),
-                                );
-                            }
-                        }
-                        file_entry.push('\0');
-                        file_entry.push_str(
-                            &Bencode::get_dictionary_entry_string(item, "length")
-                                .unwrap_or_default(),
-                        );
-                        file_entry.push('\0');
-                        file_entry.push_str(
-                            &Bencode::get_dictionary_entry_string(item, "md5sum")
-                                .unwrap_or_default(),
-                        );
-
-                        meta_info_dict.insert(file_no.to_string(), file_entry.into_bytes());
-                        file_no += 1;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Computes the SHA-1 info hash of the `info` sub-dictionary.
-    fn calculate_info_hash(
-        meta_info_dict: &mut MetaInfoDict,
-        root: &BNode<'_>,
-    ) -> Result<(), BitTorrentError> {
-        let info = Bencode::get_dictionary_entry(root, b"info")
-            .ok_or_else(|| BitTorrentError::MissingField("info".into()))?;
-        let encoded = Bencode::encode(info);
-        
-        let is_v2 = if let Some(ver) = meta_info_dict.get("meta version") {
-            String::from_utf8_lossy(ver).trim() == "2"
-        } else {
-            false
-        };
-        
-        if is_v2 {
-            #[cfg(feature = "v2")]
-            {
-                use sha2::Digest;
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(&encoded);
-                let digest = hasher.finalize();
-                meta_info_dict.insert("info hash".to_string(), digest.to_vec());
-            }
-            #[cfg(not(feature = "v2"))]
-            {
-                return Err(BitTorrentError::Parse("BitTorrent v2 is not compiled in this build".into()));
-            }
-        } else {
-            let mut hasher = Sha1::new();
-            hasher.update(&encoded);
-            let digest = hasher.finalize();
-            meta_info_dict.insert("info hash".to_string(), digest.to_vec());
-        }
-        Ok(())
-    }
 
     /// Validates that a parsed relative path is secure and contains no directory traversal elements.
     #[cfg(feature = "std")]
@@ -625,32 +804,92 @@ impl MetaInfoFile {
     }
 }
 
-fn traverse_file_tree(
-    node: &BNode<'_>,
+fn parse_file_tree_tokenized(
+    tokenizer: &mut BencodeTokenizer<'_>,
     current_path: &mut Vec<String>,
     files: &mut Vec<(String, u64, Vec<u8>)>,
-) {
-    if let BNode::Dictionary(entries) = node {
-        if let Some(leaf_props) = entries.iter().find(|(k, _)| k.is_empty()).map(|(_, v)| v) {
-            let length = leaf_props.dict_get(b"length")
-                .and_then(|n| n.as_number_bytes())
-                .and_then(|b| core::str::from_utf8(b).ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
-            let pieces_root = leaf_props.dict_get(b"pieces root")
-                .and_then(|s| s.as_string())
-                .unwrap_or(&[])
-                .to_vec();
+) -> Result<(), BitTorrentError> {
+    loop {
+        let token = tokenizer.next_token()
+            .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+        if token == BencodeToken::End {
+            break;
+        }
+        let key = match token {
+            BencodeToken::String(k) => k,
+            _ => return Err(BitTorrentError::Bencode(crate::error::BencodeError::Custom("File tree key must be a string".into()))),
+        };
+        
+        let val_token = tokenizer.next_token()
+            .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+        if val_token != BencodeToken::DictStart {
+            return Err(BitTorrentError::Bencode(crate::error::BencodeError::Custom("File tree value must be a dictionary".into())));
+        }
+        
+        if key.is_empty() {
+            // This dictionary contains file properties: length, pieces root, etc.
+            let mut length: u64 = 0;
+            let mut pieces_root = Vec::new();
+            loop {
+                let prop_key_tok = tokenizer.next_token()
+                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                if prop_key_tok == BencodeToken::End {
+                    break;
+                }
+                let prop_key = match prop_key_tok {
+                    BencodeToken::String(k) => k,
+                    _ => return Err(BitTorrentError::Bencode(crate::error::BencodeError::Custom("File property key must be a string".into()))),
+                };
+                let prop_val = tokenizer.next_token()
+                    .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                match prop_key {
+                    b"length" => {
+                        if let BencodeToken::Integer(i) = prop_val {
+                            if let Ok(s) = core::str::from_utf8(i) {
+                                if let Ok(l) = s.parse::<u64>() {
+                                    length = l;
+                                }
+                            }
+                        }
+                    }
+                    b"pieces root" => {
+                        if let BencodeToken::String(s) = prop_val {
+                            pieces_root = s.to_vec();
+                        }
+                    }
+                    _ => {
+                        // Skip prop_val
+                        let mut depth = 0;
+                        match prop_val {
+                            BencodeToken::DictStart | BencodeToken::ListStart => {
+                                depth += 1;
+                                while depth > 0 {
+                                    let t = tokenizer.next_token().ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                                    if t == BencodeToken::DictStart || t == BencodeToken::ListStart {
+                                        depth += 1;
+                                    } else if t == BencodeToken::End {
+                                        depth -= 1;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
             let file_path = current_path.join("/");
             files.push((file_path, length, pieces_root));
         } else {
-            for (key, val) in entries {
-                if let Ok(segment) = core::str::from_utf8(key) {
-                    current_path.push(segment.to_string());
-                    traverse_file_tree(val, current_path, files);
-                    current_path.pop();
-                }
+            // This is a directory/file name segment. Recurse!
+            if let Ok(segment) = core::str::from_utf8(key) {
+                current_path.push(segment.to_string());
+                parse_file_tree_tokenized(tokenizer, current_path, files)?;
+                current_path.pop();
+            } else {
+                return Err(BitTorrentError::Bencode(crate::error::BencodeError::Custom("Invalid UTF-8 directory segment".into())));
             }
         }
     }
+    Ok(())
 }
+

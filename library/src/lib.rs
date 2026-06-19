@@ -143,8 +143,9 @@ pub use utils::util;
 
 pub use utils::average::Average;
 pub use utils::bencode::{BNode, Bencode};
+pub use utils::bencode_tokenizer::{BencodeToken, BencodeTokenizer};
 pub use utils::error::{BitTorrentError, BencodeError};
-pub use utils::io_traits::{AsyncSocket, BlockStorage, MemStorage, MockSocket, MockSender, MockReceiver};
+pub use utils::io_traits::{AsyncSocket, BlockStorage, MemStorage, MockSocket, MockSender, MockReceiver, Socket};
 #[cfg(feature = "std")]
 pub use utils::io_traits::SocketFactory;
 #[cfg(all(feature = "std", feature = "http-tracker"))]

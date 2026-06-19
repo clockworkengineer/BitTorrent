@@ -1,4 +1,4 @@
-use bittorrent_rs::{AsyncSocket, BlockStorage, MemStorage, MockSocket, SocketFactory, BitTorrentError};
+use bittorrent_rs::{AsyncSocket, BlockStorage, MemStorage, MockSocket, SocketFactory, BitTorrentError, Socket};
 #[cfg(feature = "http-tracker")]
 use bittorrent_rs::HttpClient;
 use std::sync::Arc;
@@ -49,11 +49,11 @@ fn test_mock_socket_communication() {
 
 #[derive(Debug)]
 struct TestSocketFactory {
-    socket: Arc<MockSocket>,
+    socket: Arc<Socket>,
 }
 
 impl SocketFactory for TestSocketFactory {
-    fn connect(&self, _ip: &str, _port: u16) -> Result<Arc<dyn AsyncSocket>, BitTorrentError> {
+    fn connect(&self, _ip: &str, _port: u16) -> Result<Arc<Socket>, BitTorrentError> {
         Ok(self.socket.clone())
     }
 }
@@ -76,7 +76,7 @@ fn test_socket_factory_injection() {
     use bittorrent_rs::SocketFactory;
 
     let (socket, _in_tx, _out_rx) = MockSocket::new();
-    let socket = Arc::new(socket);
+    let socket = Arc::new(Socket::Mock(socket));
     let factory = TestSocketFactory { socket: socket.clone() };
     
     let connected_socket = factory.connect("127.0.0.1", 6881).unwrap();

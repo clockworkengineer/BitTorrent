@@ -30,7 +30,7 @@
 //! ```
 
 use crate::average::Average;
-use crate::io_traits::AsyncSocket;
+use crate::io_traits::{AsyncSocket, Socket};
 use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
@@ -104,7 +104,7 @@ pub struct Peer {
 
 impl Peer {
     /// Creates a new `Peer` representing a remote client connected via the provided socket.
-    pub fn new_with_socket(ip: String, port: u16, socket: Arc<dyn AsyncSocket>) -> Self {
+    pub fn new_with_socket(ip: String, port: u16, socket: Arc<Socket>) -> Self {
         Peer {
             network: Some(PeerNetwork::new(socket)),
             packet_response_timer: None,
@@ -139,7 +139,7 @@ impl Peer {
 
     /// Creates a new `Peer` representing a remote client connected via the provided TCP stream.
     pub fn new(ip: String, port: u16, stream: TcpStream) -> Self {
-        let socket = Arc::new(crate::peer_network::TcpSocket::new(stream));
+        let socket = Arc::new(Socket::Tcp(crate::peer_network::TcpSocket::new(stream)));
         Self::new_with_socket(ip, port, socket)
     }
 

@@ -19,7 +19,7 @@ fn test_pex_parsing() {
     let payload = bittorrent_rs::Bencode::encode(&pex_dict);
     
     let (socket, _in_tx, _out_rx) = bittorrent_rs::MockSocket::new();
-    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, Arc::new(socket));
+    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, Arc::new(bittorrent_rs::Socket::Mock(socket)));
     
     let config = SessionConfig::default();
     let selector = Arc::new(RarestFirstSelector);
@@ -47,7 +47,7 @@ fn test_pex_parsing() {
 #[test]
 fn test_choking_decay_and_sorting() {
     let (socket, _, _) = bittorrent_rs::MockSocket::new();
-    let socket = Arc::new(socket);
+    let socket = Arc::new(bittorrent_rs::Socket::Mock(socket));
     
     let mut p1 = Peer::new_with_socket("1.1.1.1".to_string(), 1111, socket.clone());
     p1.peer_interested = true;
@@ -95,7 +95,7 @@ fn test_choking_decay_and_sorting() {
 #[test]
 fn test_keep_alive_timers() {
     let (socket, _, _) = bittorrent_rs::MockSocket::new();
-    let socket = Arc::new(socket);
+    let socket = Arc::new(bittorrent_rs::Socket::Mock(socket));
     
     let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, socket.clone());
     
@@ -127,7 +127,7 @@ fn test_pex_ipv6_parsing() {
     let payload = bittorrent_rs::Bencode::encode(&pex_dict);
     
     let (socket, _in_tx, _out_rx) = bittorrent_rs::MockSocket::new();
-    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, Arc::new(socket));
+    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, Arc::new(bittorrent_rs::Socket::Mock(socket)));
     
     let config = SessionConfig::default();
     let selector = Arc::new(RarestFirstSelector);

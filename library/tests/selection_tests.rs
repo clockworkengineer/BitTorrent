@@ -113,7 +113,7 @@ fn test_sequential_and_rarest_first_selectors() {
 
     // Create a peer that has all pieces
     let (socket, _, _) = bittorrent_rs::MockSocket::new();
-    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, std::sync::Arc::new(socket));
+    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, std::sync::Arc::new(bittorrent_rs::Socket::Mock(socket)));
     let context_ref = std::sync::Arc::new(std::sync::Mutex::new(context));
     peer.set_torrent_context(context_ref.clone());
     peer.connected = true;
