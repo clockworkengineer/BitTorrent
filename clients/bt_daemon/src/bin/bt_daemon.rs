@@ -261,7 +261,6 @@ impl Engine {
         if let Some(pos) = self.sessions.iter().position(|s| info_hash_hex(&s.session).to_lowercase() == target_hash.to_lowercase()) {
             let mut state = self.sessions.remove(pos);
             let _ = state.session.stop();
-            state.session.join_peer_workers();
             if delete_data {
                 if let Ok(ctx) = state.session.context().lock() {
                     for file in &ctx.files_to_download {
@@ -272,6 +271,9 @@ impl Engine {
                     }
                 }
             }
+            std::thread::spawn(move || {
+                state.session.join_peer_workers();
+            });
             self.save_state();
             Ok(())
         } else {
