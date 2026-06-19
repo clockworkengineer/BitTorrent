@@ -19,6 +19,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::log_debug;
+#[cfg(feature = "nat-pmp")]
 use crate::nat::PortMapper;
 
 pub use crate::session::worker;

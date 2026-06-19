@@ -73,23 +73,16 @@ impl Rc4 {
     }
 }
 
-use num_bigint::BigUint;
-use std::sync::OnceLock;
+use crypto_bigint::{Encoding, U768};
+use crypto_bigint::modular::runtime_mod::{DynResidue, DynResidueParams};
 use rand::{RngCore, SeedableRng};
 use rand::rngs::StdRng;
 
-fn get_prime() -> &'static BigUint {
-    static PRIME: OnceLock<BigUint> = OnceLock::new();
-    PRIME.get_or_init(|| {
-        BigUint::parse_bytes(
-            b"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74\
-              020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F1437\
-              4FE1356D6D51C245E485B576625E7EC6F44C42E9A63A3620FFFFFFFFFFFFFFFF",
-            16,
-        )
-        .unwrap()
-    })
-}
+const PRIME: U768 = U768::from_be_hex(
+    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74\
+     020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F1437\
+     4FE1356D6D51C245E485B576625E7EC6F44C42E9A63A3620FFFFFFFFFFFFFFFF",
+);
 
 /// A Diffie-Hellman key negotiator using the 768-bit Oakley Group 1 prime.
 ///
@@ -104,7 +97,7 @@ fn get_prime() -> &'static BigUint {
 /// ```
 pub struct DiffieHellman {
     /// The private key — never transmitted on the wire.
-    private_key: BigUint,
+    private_key: U768,
     /// The 96-byte public key derived as `G^private_key mod P`.
     /// Share this with the remote peer.
     pub public_key: [u8; 96],
@@ -120,15 +113,12 @@ impl DiffieHellman {
         let mut rng = StdRng::from_entropy();
         let mut private_bytes = [0u8; 96];
         rng.fill_bytes(&mut private_bytes);
-        let private_key = BigUint::from_bytes_be(&private_bytes) % get_prime();
+        let private_key = U768::from_be_slice(&private_bytes);
         
-        let g = BigUint::from(2u8);
-        let public_key_big = g.modpow(&private_key, get_prime());
-        
-        let mut public_key = [0u8; 96];
-        let pub_bytes = public_key_big.to_bytes_be();
-        let offset = 96 - pub_bytes.len();
-        public_key[offset..].copy_from_slice(&pub_bytes);
+        let params = DynResidueParams::new(&PRIME);
+        let g = DynResidue::new(&U768::from(2u8), params);
+        let public_key_big = g.pow(&private_key).retrieve();
+        let public_key = public_key_big.to_be_bytes();
         
         DiffieHellman { private_key, public_key }
     }
@@ -138,12 +128,10 @@ impl DiffieHellman {
     /// Computes `secret = remote_pub^private mod P` and returns it as a big-endian
     /// byte array. Both sides produce the same secret: `G^(a*b) mod P = G^(b*a) mod P`.
     pub fn compute_shared_secret(&self, remote_public_key: [u8; 96]) -> [u8; 96] {
-        let remote_pub_big = BigUint::from_bytes_be(&remote_public_key);
-        let secret_big = remote_pub_big.modpow(&self.private_key, get_prime());
-        let mut secret = [0u8; 96];
-        let secret_bytes = secret_big.to_bytes_be();
-        let offset = 96 - secret_bytes.len();
-        secret[offset..].copy_from_slice(&secret_bytes);
-        secret
+        let remote_pub_big = U768::from_be_slice(&remote_public_key);
+        let params = DynResidueParams::new(&PRIME);
+        let remote_res = DynResidue::new(&remote_pub_big, params);
+        let secret_big = remote_res.pow(&self.private_key).retrieve();
+        secret_big.to_be_bytes()
     }
 }
