@@ -15,46 +15,45 @@ use alloc::format;
 
 /// Packs a 32-bit unsigned integer into a 4-byte big-endian array.
 pub fn pack_u32(value: u32) -> [u8; 4] {
-    [
-        (value >> 24) as u8,
-        (value >> 16) as u8,
-        (value >> 8) as u8,
-        value as u8,
-    ]
+    value.to_be_bytes()
 }
 
 /// Unpacks a 32-bit unsigned integer from a big-endian byte slice starting at `offset`.
 pub fn unpack_u32(buffer: &[u8], offset: usize) -> u32 {
-    ((buffer[offset] as u32) << 24)
-        | ((buffer[offset + 1] as u32) << 16)
-        | ((buffer[offset + 2] as u32) << 8)
-        | (buffer[offset + 3] as u32)
+    let mut bytes = [0u8; 4];
+    bytes.copy_from_slice(&buffer[offset..offset + 4]);
+    u32::from_be_bytes(bytes)
 }
 
 /// Packs a 64-bit unsigned integer into an 8-byte big-endian array.
 pub fn pack_u64(value: u64) -> [u8; 8] {
-    [
-        (value >> 56) as u8,
-        (value >> 48) as u8,
-        (value >> 40) as u8,
-        (value >> 32) as u8,
-        (value >> 24) as u8,
-        (value >> 16) as u8,
-        (value >> 8) as u8,
-        value as u8,
-    ]
+    value.to_be_bytes()
 }
 
 /// Unpacks a 64-bit unsigned integer from a big-endian byte slice starting at `offset`.
 pub fn unpack_u64(buffer: &[u8], offset: usize) -> u64 {
-    ((buffer[offset] as u64) << 56)
-        | ((buffer[offset + 1] as u64) << 48)
-        | ((buffer[offset + 2] as u64) << 40)
-        | ((buffer[offset + 3] as u64) << 32)
-        | ((buffer[offset + 4] as u64) << 24)
-        | ((buffer[offset + 5] as u64) << 16)
-        | ((buffer[offset + 6] as u64) << 8)
-        | (buffer[offset + 7] as u64)
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&buffer[offset..offset + 8]);
+    u64::from_be_bytes(bytes)
+}
+
+/// Decodes a compact IPv4 peer list (6 bytes per peer: 4 bytes IP, 2 bytes port) starting from a given offset.
+pub fn decode_compact_ipv4_peers(peers: &[u8], offset: usize) -> alloc::vec::Vec<(String, u16)> {
+    let mut list = alloc::vec::Vec::new();
+    let mut num = offset;
+    while num + 6 <= peers.len() {
+        let ip = format!(
+            "{}.{}.{}.{}",
+            peers[num],
+            peers[num + 1],
+            peers[num + 2],
+            peers[num + 3]
+        );
+        let port = ((peers[num + 4] as u16) << 8) | peers[num + 5] as u16;
+        list.push((ip, port));
+        num += 6;
+    }
+    list
 }
 
 /// Formats a 20-byte info hash byte slice into its hexadecimal string representation.

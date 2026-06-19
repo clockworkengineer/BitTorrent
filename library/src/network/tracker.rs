@@ -114,28 +114,17 @@ pub struct TrackerAnnounceContext {
 impl TrackerAnnounceContext {
     /// Extracts peer details from a compact-format peer byte list starting from a given offset.
     pub fn get_compact_peer_list(&self, peers: &[u8], offset: usize) -> Vec<PeerDetails> {
-        let mut peer_list = Vec::new();
-        let mut num = offset;
-        while num + 6 <= peers.len() {
-            let ip = format!(
-                "{}.{}.{}.{}",
-                peers[num],
-                peers[num + 1],
-                peers[num + 2],
-                peers[num + 3]
-            );
-            let port = ((peers[num + 4] as u16) << 8) | peers[num + 5] as u16;
-            if ip != self.ip {
-                peer_list.push(PeerDetails {
-                    info_hash: self.info_hash.clone(),
-                    peer_id: None,
-                    ip: ip.clone(),
-                    port,
-                });
-            }
-            num += 6;
-        }
-        peer_list
+        let decoded = crate::util::decode_compact_ipv4_peers(peers, offset);
+        decoded
+            .into_iter()
+            .filter(|(ip, _)| ip != &self.ip)
+            .map(|(ip, port)| PeerDetails {
+                info_hash: self.info_hash.clone(),
+                peer_id: None,
+                ip,
+                port,
+            })
+            .collect()
     }
 }
 
@@ -170,16 +159,7 @@ pub struct Tracker {
 impl Tracker {
     /// Outputs debug log data detailing an outgoing announce request structure.
     pub fn log_announce(tracker: &TrackerAnnounceContext) {
-        #[cfg(feature = "http-tracker")]
-        let info_hash = urlencoding::encode_binary(&tracker.info_hash);
-        #[cfg(not(feature = "http-tracker"))]
-        let info_hash = {
-            let mut s = String::new();
-            for &b in &tracker.info_hash {
-                s.push_str(&format!("{:02x}", b));
-            }
-            s
-        };
+        let info_hash = crate::util::info_hash_to_string(&tracker.info_hash);
         println!(
             "Announce: info_hash={} peer_id={} port={} compact={} no_peer_id={} uploaded={} downloaded={} left={} event={} ip={} key={:?} trackerid={:?} numwanted={}",
             info_hash,

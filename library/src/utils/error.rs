@@ -100,3 +100,15 @@ impl From<alloc::string::FromUtf8Error> for BitTorrentError {
         BitTorrentError::Parse(err.to_string())
     }
 }
+
+impl From<alloc::string::String> for BitTorrentError {
+    fn from(msg: alloc::string::String) -> Self {
+        BitTorrentError::Parse(msg)
+    }
+}
+
+impl From<&str> for BitTorrentError {
+    fn from(msg: &str) -> Self {
+        BitTorrentError::Parse(alloc::string::String::from(msg))
+    }
+}
