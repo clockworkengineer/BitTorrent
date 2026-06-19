@@ -185,6 +185,22 @@ async fn serve_js() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    let mut port = 8080;
+    
+    // Parse arguments
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        if (args[i] == "--port" || args[i] == "-p") && i + 1 < args.len() {
+            if let Ok(p) = args[i + 1].parse::<u16>() {
+                port = p;
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
     let notify = Arc::new(tokio::sync::Notify::new());
     let state = AppState { notify };
 
@@ -201,7 +217,7 @@ async fn main() {
         .route("/api/torrents/:info_hash", axum::routing::delete(delete_torrent))
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     println!("WebUI Server running at http://{}", addr);
     
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
