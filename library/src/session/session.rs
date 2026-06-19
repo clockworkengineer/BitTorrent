@@ -49,6 +49,8 @@ pub struct SessionConfig {
     pub max_peer_candidates: usize,
     /// Skip full block-by-block verification of existing files on disk on startup.
     pub skip_hash_check: bool,
+    /// Allow Local Service Discovery (LSD) even when the torrent is marked private.
+    pub allow_private_lsd: bool,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -60,7 +62,8 @@ impl std::fmt::Debug for SessionConfig {
           .field("min_reannounce_interval", &self.min_reannounce_interval)
           .field("dht_enabled", &self.dht_enabled)
           .field("dht_port", &self.dht_port)
-          .field("skip_hash_check", &self.skip_hash_check);
+          .field("skip_hash_check", &self.skip_hash_check)
+          .field("allow_private_lsd", &self.allow_private_lsd);
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
         ds.finish()
@@ -90,6 +93,7 @@ impl Default for SessionConfig {
             max_connections: 50,
             max_peer_candidates: 1000,
             skip_hash_check: false,
+            allow_private_lsd: false,
         }
     }
 }
@@ -535,7 +539,7 @@ impl TorrentSession {
         #[cfg(feature = "lsd")]
         {
             let is_private = self.context.lock().unwrap().is_private;
-            if !is_private {
+            if !is_private || config.allow_private_lsd {
                 let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
                 let _lsd_listener_handle = lsd_listener.start();
 

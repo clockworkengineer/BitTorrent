@@ -7,7 +7,6 @@ use crate::error::{BitTorrentError, BencodeError};
 use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::string::ToString;
-use alloc::format;
 
 /// Represents a node in a parsed Bencode structure.
 #[derive(Debug, Clone, PartialEq)]

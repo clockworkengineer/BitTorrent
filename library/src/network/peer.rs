@@ -578,7 +578,7 @@ impl Peer {
                 self.remote_piece_bitfield.fill(0x00);
                 self.number_of_missing_pieces = tc.number_of_pieces;
             }
-            PeerMessage::Reject { index, begin, length } => {
+            PeerMessage::Reject { index, begin, length: _length } => {
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
                 self.reserved_blocks.retain(|&(p, b, _)| !(p == index && b == block_index));
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);

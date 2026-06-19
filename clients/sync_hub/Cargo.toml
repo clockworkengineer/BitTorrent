@@ -1,0 +1,12 @@
+[package]
+name = "sync_hub"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bittorrent-rs = { path = "../../library", package = "bittorrent-rs" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+notify = "6.1.1"
+futures = { version = "0.3", features = ["executor"] }
+sha1 = "0.10.6"

@@ -59,4 +59,8 @@ Replace `[torrent-file]` with the path to a `.torrent` file and `[download-dir]`
 - [`docs/portability.md`](docs/portability.md) — `#![no_std]` bare-metal support and mock environments
 - [`docs/performance.md`](docs/performance.md) — zero-copy slice parsing and fast-resume caching
 - [`docs/ui-layout.md`](docs/ui-layout.md) — desktop client GUI layout notes
+- [`docs/use-cases.md`](docs/use-cases.md) — potential applications and architectures using the library
+- [`docs/sync-hub.md`](docs/sync-hub.md) — local-first encrypted file-syncing hub user guide
+
+
 
