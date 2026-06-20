@@ -204,6 +204,18 @@ impl TorrentSession {
     }
 
     /// Transitions the session status to `Downloading`, commencing active peer-based downloading.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent status is already `Seeding`.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use bittorrent_rs::TorrentSession;
+    /// # fn run(mut session: TorrentSession) -> Result<(), Box<dyn std::error::Error>> {
+    /// session.start_download()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn start_download(&mut self) -> Result<(), BitTorrentError> {
         let context = self.context.lock().unwrap();
         if context.status == TorrentStatus::Seeding {
@@ -331,16 +343,52 @@ impl TorrentSession {
     }
 
     /// Pauses the torrent download session.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent is not downloading or seeding.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use bittorrent_rs::TorrentSession;
+    /// # fn run(mut session: TorrentSession) -> Result<(), Box<dyn std::error::Error>> {
+    /// session.pause()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn pause(&mut self) -> Result<(), BitTorrentError> {
         self.context.lock().unwrap().pause()
     }
 
     /// Resumes the torrent download session from a paused state.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent is not currently paused.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use bittorrent_rs::TorrentSession;
+    /// # fn run(mut session: TorrentSession) -> Result<(), Box<dyn std::error::Error>> {
+    /// session.resume()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn resume(&mut self) -> Result<(), BitTorrentError> {
         self.context.lock().unwrap().resume()
     }
 
     /// Stops the session, disconnecting all connected peers and releasing resources.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the session has already ended.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use bittorrent_rs::TorrentSession;
+    /// # fn run(mut session: TorrentSession) -> Result<(), Box<dyn std::error::Error>> {
+    /// session.stop()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn stop(&mut self) -> Result<(), BitTorrentError> {
         #[cfg(feature = "dht")]
         if let Some(ref d) = self.dht {

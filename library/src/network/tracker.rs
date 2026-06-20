@@ -474,21 +474,33 @@ impl Tracker {
     }
 
     /// Sends a 'started' event request to the tracker.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError`] if the connection to the tracker fails or the response cannot be parsed.
     pub fn announce_started(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
         self.change_status(TrackerEvent::Started)
     }
 
     /// Sends a 'completed' event request to the tracker.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError`] if the connection to the tracker fails or the response cannot be parsed.
     pub fn announce_completed(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
         self.change_status(TrackerEvent::Completed)
     }
 
     /// Sends a 'stopped' event request to the tracker.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError`] if the connection to the tracker fails or the response cannot be parsed.
     pub fn announce_stopped(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
         self.change_status(TrackerEvent::Stopped)
     }
 
     /// Commences periodic tracker announcements, choosing started or completed events based on download progress.
+    ///
+    /// # Errors
+    /// Returns a [`BitTorrentError`] if the connection to the tracker fails, the response cannot be parsed, or the tracker is already running.
     pub fn start_announcing(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
         if self.tracker_status == TrackerStatus::Running {
             return Err(BitTorrentError::Parse("Tracker is already running".into()));
