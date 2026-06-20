@@ -7,6 +7,7 @@ use eframe::egui;
 use crate::app::TorrentClientApp;
 use crate::state::DetailTab;
 use torrent_client_shared::fmt_bytes;
+use bittorrent_rs::internals::TorrentContext;
 
 impl TorrentClientApp {
     /// Renders the bottom details container panel showing overview, file list, peer swarm, trackers, and logs.
@@ -62,7 +63,7 @@ impl TorrentClientApp {
     pub fn draw_overview_tab(
         &self,
         ui: &mut egui::Ui,
-        context: &std::sync::Mutex<bittorrent_rs::TorrentContext>,
+        context: &std::sync::Mutex<TorrentContext>,
         file_name: &str,
         downloaded: u64,
         uploaded: u64,
@@ -121,7 +122,7 @@ impl TorrentClientApp {
     }
 
     /// Renders a list of the relative paths, lengths, and file offsets of all files packaged inside the torrent.
-    pub fn draw_files_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
+    pub fn draw_files_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>) {
         if let Ok(ctx) = context.lock() {
             if ctx.files_to_download.is_empty() {
                 ui.label("No files list found (Magnet bootstrapping...)");
@@ -151,7 +152,7 @@ impl TorrentClientApp {
     }
 
     /// Renders a list of all connected peer swarm members, showing their IP, port, upload/download speeds, and choking state flags.
-    pub fn draw_peers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
+    pub fn draw_peers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>) {
         if let Ok(ctx) = context.lock() {
             let swarm = ctx.peer_swarm.read().unwrap();
             if swarm.is_empty() {
@@ -195,7 +196,7 @@ impl TorrentClientApp {
     }
 
     /// Renders the configured announce URLs and tracker endpoints.
-    pub fn draw_trackers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<bittorrent_rs::TorrentContext>) {
+    pub fn draw_trackers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>) {
         if let Ok(ctx) = context.lock() {
             egui::Grid::new("trackers_grid")
                 .num_columns(2)

@@ -4,7 +4,7 @@
 //! scanning existing files to compute/verify the bitfield of local pieces, and writing downloaded pieces.
 
 use crate::error::BitTorrentError;
-use crate::torrent_context::TorrentContext;
+use crate::core::torrent_context::TorrentContext;
 use crate::io_traits::BlockStorage;
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};

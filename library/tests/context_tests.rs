@@ -3,7 +3,8 @@
 //! Verifies valid status transitions (such as Pause, Resume, Stop) and asserts
 //! that invalid state changes (e.g. pausing when already paused) return correct error results.
 
-use bittorrent_rs::{TorrentContext, TorrentStatus, RarestFirstSelector};
+use bittorrent_rs::{TorrentStatus, RarestFirstSelector};
+use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::session::SessionConfig;
 use std::sync::Arc;
 

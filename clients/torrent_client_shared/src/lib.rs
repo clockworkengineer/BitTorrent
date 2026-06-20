@@ -1,4 +1,5 @@
-use bittorrent_rs::{TorrentSession, TorrentContext};
+use bittorrent_rs::TorrentSession;
+use bittorrent_rs::internals::TorrentContext;
 use std::sync::mpsc;
 
 pub struct SessionState {

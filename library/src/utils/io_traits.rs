@@ -312,9 +312,12 @@ pub struct UreqHttpClient;
 #[cfg(all(feature = "std", feature = "http-tracker"))]
 impl HttpClient for UreqHttpClient {
     fn get(&self, url: &str) -> Result<alloc::vec::Vec<u8>, BitTorrentError> {
-        let response = ureq::get(url).call().map_err(|err| {
-            BitTorrentError::Parse(err.to_string())
-        })?;
+        let response = ureq::get(url)
+            .timeout(std::time::Duration::from_secs(5))
+            .call()
+            .map_err(|err| {
+                BitTorrentError::Parse(err.to_string())
+            })?;
         let mut body = alloc::vec::Vec::new();
         use std::io::Read;
         response

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use crate::error::BitTorrentError;
-use crate::torrent_context::{TorrentContext, TorrentStatus};
+use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::constants::BLOCK_SIZE;
 
 pub fn start_webseed_loop(

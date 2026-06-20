@@ -1,10 +1,21 @@
-use bittorrent_rs::{PeerDetails, PeerMessage, TorrentSession, TorrentStatus};
+use bittorrent_rs::{PeerDetails, PeerMessage, TorrentSession, TorrentStatus, HttpClient, session::SessionConfig};
 use bittorrent_rs::peer_network::PeerNetwork;
 use std::fs;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+use std::sync::Arc;
+
+#[derive(Debug)]
+struct DummyHttpClient;
+
+impl HttpClient for DummyHttpClient {
+    fn get(&self, _url: &str) -> Result<Vec<u8>, bittorrent_rs::BitTorrentError> {
+        Ok(b"d8:intervali1800e5:peers0:e".to_vec())
+    }
+}
+
 
 fn sample_file(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -24,7 +35,8 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
         .join("session_handshake");
     cleanup_download_path(&download_path);
 
-    let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
+    let mut session = TorrentSession::builder(sample_file("singlefile.torrent"), &download_path)
+        .build()
         .expect("Failed to create torrent session");
     let expected_info_hash = session.context().lock().unwrap().info_hash.clone();
     let expected_bitfield = session.context().lock().unwrap().bitfield.clone();
@@ -81,7 +93,9 @@ fn test_uploads_piece_when_peer_requests_block() {
         .join("session_upload_request");
     cleanup_download_path(&download_path);
 
-    let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, true)
+    let mut session = TorrentSession::builder(sample_file("singlefile.torrent"), &download_path)
+        .seeding(true)
+        .build()
         .expect("Failed to create seeding torrent session");
     let expected_info_hash = session.context().lock().unwrap().info_hash.clone();
     let expected_info_hash_clone = expected_info_hash.clone();
@@ -149,7 +163,12 @@ fn test_create_session_for_download() {
         .join("session_download");
     cleanup_download_path(&download_path);
 
-    let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
+    let mut config = SessionConfig::default();
+    config.http_client = Arc::new(DummyHttpClient);
+
+    let mut session = TorrentSession::builder(sample_file("singlefile.torrent"), &download_path)
+        .config(config)
+        .build()
         .expect("Failed to create torrent session");
 
     assert_eq!(session.status(), TorrentStatus::Initialised);
@@ -187,7 +206,9 @@ fn test_create_session_for_seeding() {
         .join("session_seeding");
     cleanup_download_path(&download_path);
 
-    let session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, true)
+    let session = TorrentSession::builder(sample_file("singlefile.torrent"), &download_path)
+        .seeding(true)
+        .build()
         .expect("Failed to create seeding torrent session");
 
     assert_eq!(session.status(), TorrentStatus::Seeding);
@@ -204,7 +225,12 @@ fn test_download_piece_from_peer() {
         .join("session_download_piece");
     cleanup_download_path(&download_path);
 
-    let mut session = TorrentSession::new(sample_file("singlefile.torrent"), &download_path, false)
+    let mut config = SessionConfig::default();
+    config.http_client = Arc::new(DummyHttpClient);
+
+    let mut session = TorrentSession::builder(sample_file("singlefile.torrent"), &download_path)
+        .config(config)
+        .build()
         .expect("Failed to create torrent session");
 
     let expected_info_hash = session.context().lock().unwrap().info_hash.clone();

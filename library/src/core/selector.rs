@@ -4,7 +4,7 @@
 //! strategies (e.g. rarest-first vs. sequential download).
 
 use crate::peer::Peer;
-use crate::torrent_context::TorrentContext;
+use crate::core::torrent_context::TorrentContext;
 
 /// Pluggable piece selection strategy.
 pub trait PieceSelector: std::fmt::Debug + Send + Sync {

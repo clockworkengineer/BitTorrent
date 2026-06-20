@@ -35,7 +35,7 @@ use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
-use crate::torrent_context::TorrentContext;
+use crate::core::torrent_context::TorrentContext;
 use crate::tracker::PeerDetails;
 use crate::manager::Manager;
 use crate::util::get_bitfield_index_and_mask;

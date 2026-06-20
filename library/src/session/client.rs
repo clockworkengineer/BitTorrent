@@ -16,7 +16,9 @@ pub struct TorrentClient {
 impl TorrentClient {
     /// Creates a new `TorrentClient` with default settings.
     pub fn new(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> Result<Self, BitTorrentError> {
-        let session = TorrentSession::new(torrent_path, download_path, false)?;
+        let session = TorrentSession::builder(torrent_path, download_path)
+            .seeding(false)
+            .build()?;
         Ok(Self {
             session,
             tracker_thread: None,
@@ -31,7 +33,11 @@ impl TorrentClient {
         config: SessionConfig,
         selector: Arc<dyn PieceSelector>,
     ) -> Result<Self, BitTorrentError> {
-        let session = TorrentSession::new_with_options(torrent_path, download_path, seeding, config, selector)?;
+        let session = TorrentSession::builder(torrent_path, download_path)
+            .seeding(seeding)
+            .config(config)
+            .selector(selector)
+            .build()?;
         Ok(Self {
             session,
             tracker_thread: None,

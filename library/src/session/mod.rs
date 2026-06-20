@@ -20,4 +20,4 @@ pub use self::client::*;
 #[cfg(feature = "std")]
 pub use self::config::SessionConfig;
 #[cfg(feature = "std")]
-pub use self::builder::{TorrentSessionBuilder, MagnetSessionBuilder};
+pub use self::builder::{TorrentSessionBuilder, TorrentSource};

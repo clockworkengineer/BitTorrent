@@ -3,7 +3,7 @@ use bittorrent_rs::disk_io::DiskIO;
 use bittorrent_rs::metainfo::MetaInfoFile;
 use bittorrent_rs::selector::RarestFirstSelector;
 use bittorrent_rs::session::SessionConfig;
-use bittorrent_rs::torrent_context::TorrentContext;
+use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::tracker::{PeerDetails, Tracker};
 use std::fs;
 use std::path::PathBuf;

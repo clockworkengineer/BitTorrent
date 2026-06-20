@@ -14,7 +14,9 @@ fn main() {
     let torrent_path = PathBuf::from(torrent_path);
     let download_dir = PathBuf::from(download_dir);
 
-    let mut session = TorrentSession::new(&torrent_path, &download_dir, false)
+    let mut session = TorrentSession::builder(&torrent_path, &download_dir)
+        .seeding(false)
+        .build()
         .expect("Failed to create torrent session");
 
     println!("Loaded torrent from: {}", torrent_path.display());

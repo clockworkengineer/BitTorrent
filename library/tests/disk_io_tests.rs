@@ -1,6 +1,7 @@
 use bittorrent_rs::bencode::{BNode, Bencode};
 use bittorrent_rs::disk_io::DiskIO;
-use bittorrent_rs::{MetaInfoFile, TorrentContext, selector::RarestFirstSelector, session::SessionConfig};
+use bittorrent_rs::{MetaInfoFile, selector::RarestFirstSelector, session::SessionConfig};
+use bittorrent_rs::internals::TorrentContext;
 use sha1::Digest;
 use std::fs;
 use std::io::Read;

@@ -1,4 +1,5 @@
-use bittorrent_rs::{BNode, Bencode, MetaInfoFile, TorrentContext, selector::RarestFirstSelector, session::SessionConfig, disk_io::DiskIO};
+use bittorrent_rs::{BNode, Bencode, MetaInfoFile, selector::RarestFirstSelector, session::SessionConfig, disk_io::DiskIO};
+use bittorrent_rs::internals::TorrentContext;
 use sha1::Digest;
 use std::fs;
 use std::path::{Path, PathBuf};

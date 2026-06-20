@@ -33,7 +33,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Initialize a Magnet-based TorrentSession
     println!("\nInitializing torrent session with magnet link...");
     let download_path = Path::new(&download_dir);
-    let session = TorrentSession::new_magnet(&magnet_uri, download_path)?;
+    let session = TorrentSession::from_magnet(&magnet_uri, download_path)
+        .build()?;
 
     println!("Session status: {:?}", session.status());
     println!("This session is ready to announce to trackers and download via magnet metadata bootstrap.");

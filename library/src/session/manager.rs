@@ -4,7 +4,7 @@
 //! and orchestrates peer discovery queues.
 
 use crate::peer::Peer;
-use crate::torrent_context::TorrentContext;
+use crate::core::torrent_context::TorrentContext;
 use crate::tracker::PeerDetails;
 use crate::util::info_hash_to_string;
 use std::collections::HashMap;

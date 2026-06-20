@@ -1,7 +1,7 @@
 use crate::error::BitTorrentError;
 use crate::peer::Peer;
 use crate::peer_message::PeerMessage;
-use crate::torrent_context::{TorrentContext, TorrentStatus};
+use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::PeerDetails;
 use crate::manager::Manager;
 use crate::log_debug;
@@ -427,7 +427,7 @@ async fn run_peer_loop(
             if ctx.status == TorrentStatus::Ended {
                 break;
             }
-            ctx.paused.wait_one(0)
+            ctx.is_paused()
         };
         if status {
             delay(Duration::from_millis(100)).await;

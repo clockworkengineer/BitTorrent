@@ -59,16 +59,16 @@ pub struct TorrentContext {
     pub status: TorrentStatus,
     pub file_name: String,
     pub main_tracker: Option<Tracker>,
-    pub callback_data: Option<String>,
-    pub call_back: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-    pub paused: ManualResetEvent,
+    callback_data: Option<String>,
+    call_back: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    paused: ManualResetEvent,
     pub download_finished: Arc<ManualResetEvent>,
     pub selector: Arc<dyn PieceSelector>,
     pub peer_swarm: RwLock<HashMap<String, Arc<Mutex<Peer>>>>,
     pub missing_pieces_count: usize,
     pub maximum_swarm_size: usize,
-    pub assembler: Assembler,
-    pub bad_peer_scores: Mutex<HashMap<String, usize>>,
+    assembler: Assembler,
+    bad_peer_scores: Mutex<HashMap<String, usize>>,
     pieces_missing: Vec<u8>,
     piece_data: Vec<PieceInfo>,
     pub storage: Arc<dyn crate::io_traits::BlockStorage>,
@@ -798,11 +798,12 @@ impl TorrentContext {
     /// Finds the next unrequested block offset and length within a given piece.
     pub fn next_pending_block(&self, piece_number: u32) -> Option<(u32, u32)> {
         let piece_length = self.get_piece_length(piece_number);
-        let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
+        let block_size = self.config.block_size;
+        let block_count = ((piece_length as usize + block_size - 1) / block_size) as u32;
         for block_index in 0..block_count {
             if !self.is_block_requested(piece_number, block_index) {
-                let begin = block_index * BLOCK_SIZE as u32;
-                let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));
+                let begin = block_index * block_size as u32;
+                let length = min(block_size as u32, piece_length.saturating_sub(begin));
                 return Some((begin, length));
             }
         }
@@ -840,6 +841,7 @@ impl TorrentContext {
         if self.status != TorrentStatus::Downloading {
             return None;
         }
+        let block_size = self.config.block_size;
         let endgame = self.is_endgame();
         if endgame {
             // Endgame mode: request any block from the rarest available piece.
@@ -848,7 +850,7 @@ impl TorrentContext {
                 .min_by_key(|&piece| (self.piece_data[piece as usize].peer_count, piece))?;
 
             let piece_length = self.get_piece_length(piece_number);
-            let block_count = ((piece_length as usize + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
+            let block_count = ((piece_length as usize + block_size - 1) / block_size) as u32;
 
             let piece_buffers = self.assembler.piece_buffers.lock().unwrap();
             let present_blocks = piece_buffers.get(&piece_number)
@@ -863,8 +865,8 @@ impl TorrentContext {
                 if peer.reserved_blocks.iter().any(|&(p, b, _)| p == piece_number && b == block_index) {
                     continue;
                 }
-                let begin = block_index * BLOCK_SIZE as u32;
-                let length = min(BLOCK_SIZE as u32, piece_length.saturating_sub(begin));
+                let begin = block_index * block_size as u32;
+                let length = min(block_size as u32, piece_length.saturating_sub(begin));
                 self.reserve_block_request(piece_number, block_index);
                 return Some((piece_number, begin, length));
             }
@@ -878,7 +880,7 @@ impl TorrentContext {
                 .min_by_key(|&(piece, _)| (self.piece_data[piece as usize].peer_count, piece));
 
             if let Some((piece_number, (begin, length))) = best {
-                let block_index = begin / BLOCK_SIZE as u32;
+                let block_index = begin / block_size as u32;
                 if self.reserve_block_request(piece_number, block_index) {
                     return Some((piece_number, begin, length));
                 }
@@ -964,5 +966,15 @@ impl TorrentContext {
                     .unwrap_or(false)
             })
             .count()
+    }
+
+    /// Checks if the session is currently paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused.wait_one(0)
+    }
+
+    /// Returns the number of blocks currently reserved/requested.
+    pub fn number_of_reserved_blocks(&self) -> usize {
+        self.assembler.requested_blocks.read().map(|r| r.len()).unwrap_or(0)
     }
 }

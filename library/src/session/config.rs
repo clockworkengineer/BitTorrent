@@ -48,7 +48,21 @@ pub struct SessionConfig {
     pub connection_backoff: Duration,
     /// Block size in bytes used for piece requests (default: `BLOCK_SIZE` constant).
     pub block_size: usize,
+    /// Choking algorithm strategy.
+    pub choking_strategy: Arc<dyn ChokingStrategy>,
 }
+
+pub trait ChokingStrategy: Send + Sync {
+    fn spawn_choking_loop(
+        &self,
+        context: Arc<std::sync::Mutex<crate::core::torrent_context::TorrentContext>>,
+        task_tx: std::sync::mpsc::Sender<core::pin::Pin<Box<dyn core::future::Future<Output = ()> + Send + 'static>>>,
+        manager: Option<Arc<crate::manager::Manager>>,
+    );
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StandardChoking;
 
 impl std::fmt::Debug for SessionConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -64,7 +78,8 @@ impl std::fmt::Debug for SessionConfig {
           .field("allow_private_lsd", &self.allow_private_lsd)
           .field("handshake_timeout", &self.handshake_timeout)
           .field("connection_backoff", &self.connection_backoff)
-          .field("block_size", &self.block_size);
+          .field("block_size", &self.block_size)
+          .field("choking_strategy", &"Arc<dyn ChokingStrategy>");
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
         ds.finish()
@@ -99,6 +114,7 @@ impl Default for SessionConfig {
             handshake_timeout: Duration::from_secs(5),
             connection_backoff: Duration::from_secs(30),
             block_size: crate::constants::BLOCK_SIZE,
+            choking_strategy: Arc::new(StandardChoking),
         }
     }
 }

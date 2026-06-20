@@ -12,7 +12,7 @@ use crate::manager::Manager;
 use crate::metainfo::MetaInfoFile;
 use crate::peer::Peer;
 use crate::selector::{PieceSelector, RarestFirstSelector};
-use crate::torrent_context::{TorrentContext, TorrentStatus};
+use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::{PeerDetails, Tracker};
 use crate::magnet::MagnetLink;
 use std::fs;
@@ -34,7 +34,20 @@ use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
 
 pub use super::config::SessionConfig;
-pub use super::builder::{TorrentSessionBuilder, MagnetSessionBuilder};
+pub use super::builder::{TorrentSessionBuilder, TorrentSource};
+
+/// Statistics snapshot of an active torrent session.
+#[derive(Debug, Clone)]
+pub struct SessionStats {
+    pub progress: f32,
+    pub status: TorrentStatus,
+    pub bytes_downloaded: u64,
+    pub bytes_uploaded: u64,
+    pub bytes_left: u64,
+    pub download_speed: f64,
+    pub upload_speed: f64,
+    pub connected_peers: usize,
+}
 
 /// Represents an active torrent transfer session.
 pub struct TorrentSession {
@@ -57,27 +70,12 @@ impl TorrentSession {
     }
 
     /// Creates a builder to configure and construct a new `TorrentSession` from a magnet link.
-    pub fn magnet_builder(magnet_link: impl Into<String>, download_path: impl AsRef<Path>) -> MagnetSessionBuilder {
-        MagnetSessionBuilder::new(magnet_link, download_path)
-    }
-
-    /// Creates and initializes a new `TorrentSession` using the specified torrent file and target download path.
-    pub fn new(
-        torrent_path: impl AsRef<Path>,
-        download_path: impl AsRef<Path>,
-        seeding: bool,
-    ) -> Result<Self, BitTorrentError> {
-        Self::new_with_options(
-            torrent_path,
-            download_path,
-            seeding,
-            SessionConfig::default(),
-            Arc::new(RarestFirstSelector),
-        )
+    pub fn from_magnet(magnet_link: impl Into<String>, download_path: impl AsRef<Path>) -> TorrentSessionBuilder {
+        TorrentSessionBuilder::from_magnet(magnet_link, download_path)
     }
 
     /// Creates and initializes a new `TorrentSession` using options.
-    pub fn new_with_options(
+    pub(crate) fn new_with_options_internal(
         torrent_path: impl AsRef<Path>,
         download_path: impl AsRef<Path>,
         seeding: bool,
@@ -154,26 +152,13 @@ impl TorrentSession {
         };
 
         session.context.lock().unwrap().validate()?;
-        spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
+        config.choking_strategy.spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
 
         Ok(session)
     }
 
-    /// Creates and initializes a new `TorrentSession` using a magnet link.
-    pub fn new_magnet(
-        magnet_link: &str,
-        download_path: impl AsRef<Path>,
-    ) -> Result<Self, BitTorrentError> {
-        Self::new_magnet_with_options(
-            magnet_link,
-            download_path,
-            SessionConfig::default(),
-            Arc::new(RarestFirstSelector),
-        )
-    }
-
     /// Creates and initializes a new `TorrentSession` using a magnet link and options.
-    pub fn new_magnet_with_options(
+    pub(crate) fn new_magnet_with_options_internal(
         magnet_link: &str,
         download_path: impl AsRef<Path>,
         config: SessionConfig,
@@ -208,7 +193,7 @@ impl TorrentSession {
             nat_pmp: None,
         };
 
-        spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
+        config.choking_strategy.spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
 
         Ok(session)
     }
@@ -270,7 +255,7 @@ impl TorrentSession {
                 let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
                 let _lsd_listener_handle = lsd_listener.start();
 
-                let lsd_announcer = crate::lsd::LsdAnnouncer::new(info_hash.clone(), 6881);
+                let lsd_announcer = crate::lsd::LsdAnnouncer::new(info_hash.clone(), config.listen_port);
                 let _lsd_announcer_handle = lsd_announcer.start(self.context.clone());
             }
         }
@@ -291,7 +276,7 @@ impl TorrentSession {
                         ih.copy_from_slice(&info_hash);
                     }
 
-                    d_arc.lookup_peers(ih, peer_tx);
+                    d_arc.lookup_peers(ih, peer_tx.clone());
                 }
             }
         }
@@ -312,6 +297,7 @@ impl TorrentSession {
             let nat_client = Arc::new(crate::nat::FallbackPortMapper::new(gateway));
             self.nat_pmp = Some(nat_client.clone());
             let context_clone = self.context.clone();
+            let port = config.listen_port;
             thread::spawn(move || {
                 loop {
                     let status = {
@@ -324,12 +310,21 @@ impl TorrentSession {
                     if status == TorrentStatus::Ended {
                         break;
                     }
-                    let _ = nat_client.request_mapping(true, 6881, 6881, 3600);
-                    let _ = nat_client.request_mapping(false, 6881, 6881, 3600);
+                    let _ = nat_client.request_mapping(true, port, port, 3600);
+                    let _ = nat_client.request_mapping(false, port, port, 3600);
                     std::thread::sleep(Duration::from_secs(1800));
                 }
             });
         }
+
+        // Wire tracker automatically
+        let mut tracker = Tracker::new(self.context.clone())?;
+        tracker.set_peer_swarm_queue(peer_tx);
+        if let Some(ref mgr) = self.manager {
+            tracker.set_peer_manager(mgr.clone());
+        }
+        let _ = tracker.start_announcing();
+        let _ = self.start_reannounce_loop(tracker);
 
         let mut context = self.context.lock().unwrap();
         context.start_downloading()
@@ -354,9 +349,10 @@ impl TorrentSession {
         #[cfg(feature = "nat-pmp")]
         if let Some(ref nat) = self.nat_pmp {
             let nat_clone = nat.clone();
+            let port = self.context.lock().unwrap().config.listen_port;
             thread::spawn(move || {
-                let _ = nat_clone.release_mapping(true, 6881);
-                let _ = nat_clone.release_mapping(false, 6881);
+                let _ = nat_clone.release_mapping(true, port);
+                let _ = nat_clone.release_mapping(false, port);
             });
         }
         let context = self.context.lock().unwrap();
@@ -378,6 +374,30 @@ impl TorrentSession {
     /// Returns the percentage of download completion (0.0 to 100.0).
     pub fn progress(&self) -> f32 {
         self.context.lock().unwrap().progress_percent()
+    }
+
+    /// Returns a snapshot of statistics for the current session.
+    pub fn stats(&self) -> SessionStats {
+        let ctx = self.context.lock().unwrap();
+        let progress = ctx.progress_percent();
+        let status = ctx.status;
+        let bytes_downloaded = ctx.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+        let bytes_uploaded = ctx.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
+        let bytes_left = ctx.bytes_left_to_download().unwrap_or(0);
+        let download_speed = ctx.bytes_per_second() as f64;
+        let upload_speed = ctx.upload_bytes_per_second() as f64;
+        let connected_peers = ctx.peer_swarm.read().unwrap().len();
+        
+        SessionStats {
+            progress,
+            status,
+            bytes_downloaded,
+            bytes_uploaded,
+            bytes_left,
+            download_speed,
+            upload_speed,
+            connected_peers,
+        }
     }
 
     /// Validates the presence and integrity (exact sizes) of downloaded files on disk.
@@ -616,7 +636,7 @@ fn spawn_stats_loop_standard(
                 let done = ctx.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
                 let total = ctx.total_bytes_to_download;
                 let bps = ctx.bytes_per_second();
-                let reserved = ctx.assembler.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
+                let reserved = ctx.number_of_reserved_blocks();
                 let progress = if total > 0 { (done * 10000) / total } else { 0 };
                 log_debug!(
                     "[stats] peers={}/{} downloaded={}/{} ({}.{:02}%) speed={}/s reserved_blocks={}",
@@ -655,7 +675,7 @@ fn spawn_stats_loop_magnet(
                 let done = ctx.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
                 let total = ctx.total_bytes_to_download;
                 let bps = ctx.bytes_per_second();
-                let reserved = ctx.assembler.requested_blocks.read().map(|r| r.len()).unwrap_or(0);
+                let reserved = ctx.number_of_reserved_blocks();
                 let progress = if total > 0 { (done * 10000) / total } else { 0 };
                 if ctx.pieces_info_hash.is_empty() {
                     let got = ctx.metadata_pieces.len();
@@ -680,13 +700,15 @@ fn spawn_stats_loop_magnet(
     }));
 }
 
-fn spawn_choking_loop(
-    context: Arc<Mutex<TorrentContext>>,
-    task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
-    manager: Option<Arc<Manager>>,
-) {
-    let _ = task_tx.send(Box::pin(async move {
-        let mut optimistic_timer = 0;
+impl super::config::ChokingStrategy for super::config::StandardChoking {
+    fn spawn_choking_loop(
+        &self,
+        context: Arc<Mutex<TorrentContext>>,
+        task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+        manager: Option<Arc<Manager>>,
+    ) {
+        let _ = task_tx.send(Box::pin(async move {
+            let mut optimistic_timer = 0;
         let mut current_optimistic_ip: Option<String> = None;
         loop {
             let start_time = std::time::Instant::now();
@@ -815,7 +837,6 @@ fn spawn_choking_loop(
                     }
                 }
             }
-            
             for (peer_arc, action) in peers_to_action {
                 let net_opt = peer_arc.lock().unwrap().network.clone();
                 if let Some(net) = net_opt {
@@ -825,4 +846,5 @@ fn spawn_choking_loop(
             }
         }
     }));
+}
 }

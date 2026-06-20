@@ -25,7 +25,7 @@ use crate::error::BitTorrentError;
 use crate::host;
 use crate::manager::Manager;
 use crate::peer_id;
-use crate::torrent_context::TorrentContext;
+use crate::core::torrent_context::TorrentContext;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -422,8 +422,8 @@ impl Tracker {
         }
 
         let status = self.tc.lock().unwrap().status;
-        if status != crate::torrent_context::TorrentStatus::Downloading
-            && status != crate::torrent_context::TorrentStatus::Seeding
+        if status != crate::core::torrent_context::TorrentStatus::Downloading
+            && status != crate::core::torrent_context::TorrentStatus::Seeding
         {
             return;
         }
@@ -447,8 +447,8 @@ impl Tracker {
         self.tracker_id = response.tracker_id.clone();
         self.min_interval = response.min_interval;
         let status = self.tc.lock().unwrap().status;
-        if (status == crate::torrent_context::TorrentStatus::Downloading
-            || status == crate::torrent_context::TorrentStatus::Seeding)
+        if (status == crate::core::torrent_context::TorrentStatus::Downloading
+            || status == crate::core::torrent_context::TorrentStatus::Seeding)
             && response.interval > self.min_interval
         {
             self.interval = response.interval;
@@ -507,7 +507,7 @@ impl Tracker {
 
     /// Adjusts the announcement interval when the client enters seeding state.
     pub fn set_seeding_interval(&mut self, seeding_interval: usize) -> Result<(), BitTorrentError> {
-        if self.tc.lock().unwrap().status == crate::torrent_context::TorrentStatus::Seeding {
+        if self.tc.lock().unwrap().status == crate::core::torrent_context::TorrentStatus::Seeding {
             if seeding_interval > self.min_interval {
                 self.interval = seeding_interval;
             }

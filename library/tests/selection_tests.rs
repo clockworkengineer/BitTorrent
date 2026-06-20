@@ -28,7 +28,7 @@ fn test_next_block_request_from_peer_reserves_request() {
     ));
     disk_io.create_local_torrent_structure().unwrap();
     let selector = std::sync::Arc::new(bittorrent_rs::selector::RarestFirstSelector);
-    let mut context = bittorrent_rs::torrent_context::TorrentContext::new(
+    let mut context = bittorrent_rs::internals::TorrentContext::new(
         &meta,
         selector,
         disk_io.clone(),
@@ -38,7 +38,7 @@ fn test_next_block_request_from_peer_reserves_request() {
     )
     .expect("Failed to create torrent context");
     disk_io.create_torrent_bitfield(&mut context).unwrap();
-    context.status = bittorrent_rs::torrent_context::TorrentStatus::Downloading;
+    context.status = bittorrent_rs::TorrentStatus::Downloading;
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
     let addr = listener
@@ -87,7 +87,7 @@ fn test_sequential_and_rarest_first_selectors() {
     let storage = std::sync::Arc::new(bittorrent_rs::MemStorage::new(1024 * 1024));
     let seq_selector = std::sync::Arc::new(bittorrent_rs::selector::SequentialSelector);
     
-    let mut context = bittorrent_rs::torrent_context::TorrentContext::new(
+    let mut context = bittorrent_rs::internals::TorrentContext::new(
         &meta,
         seq_selector.clone(),
         storage,

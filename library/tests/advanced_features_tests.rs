@@ -1,4 +1,5 @@
-use bittorrent_rs::{Peer, TorrentContext, RarestFirstSelector};
+use bittorrent_rs::{Peer, RarestFirstSelector};
+use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::session::SessionConfig;
 use bittorrent_rs::peer::PeerAction;
 use bittorrent_rs::peer_message::PeerMessage;
@@ -484,13 +485,11 @@ fn test_session_skip_hash_check_initialization() {
     let mut config = SessionConfig::default();
     config.skip_hash_check = true;
 
-    let session = TorrentSession::new_with_options(
-        &torrent_path,
-        std::env::temp_dir(),
-        false,
-        config,
-        std::sync::Arc::new(bittorrent_rs::RarestFirstSelector)
-    ).unwrap();
+    let session = TorrentSession::builder(&torrent_path, std::env::temp_dir())
+        .config(config)
+        .selector(std::sync::Arc::new(bittorrent_rs::RarestFirstSelector))
+        .build()
+        .unwrap();
 
     let context = session.context();
     let ctx = context.lock().unwrap();

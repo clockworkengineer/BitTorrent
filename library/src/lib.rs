@@ -93,7 +93,7 @@ pub use core::metainfo;
 #[cfg(feature = "std")]
 pub use core::selector;
 #[cfg(feature = "std")]
-pub use core::torrent_context;
+pub use core::torrent_context::TorrentStatus;
 
 #[cfg(feature = "std")]
 pub use network::announcer;
@@ -170,12 +170,20 @@ pub use network::utp::UtpSocketAdapter;
 #[cfg(feature = "std")]
 pub use session::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
-pub use session::builder::MagnetSessionBuilder;
 #[cfg(feature = "std")]
 pub use session::config::SessionConfig;
 #[cfg(feature = "std")]
 pub use session::client::TorrentClient;
 #[cfg(feature = "std")]
-pub use core::torrent_context::{TorrentContext, TorrentStatus};
+pub use core::torrent_context::TorrentStatus as TorrentContextStatus; // Keep alias if needed, but TorrentStatus is already exported above
+
+/// Internal and unstable APIs of the bittorrent-rs library.
+///
+/// WARNING: These APIs are exposed for advanced use and testing, but they are not
+/// part of the stable API surface and may change without a major version bump.
+pub mod internals {
+    #[cfg(feature = "std")]
+    pub use crate::core::torrent_context::TorrentContext;
+}
 #[cfg(feature = "std")]
 pub use network::tracker::{AnnounceResponse, PeerDetails, Tracker, TrackerEvent, TrackerStatus, ScrapeResponse};

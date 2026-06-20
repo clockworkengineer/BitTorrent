@@ -96,7 +96,7 @@ impl LsdAnnouncer {
         }
     }
 
-    pub fn start(self, context: Arc<Mutex<crate::torrent_context::TorrentContext>>) -> std::thread::JoinHandle<()> {
+    pub fn start(self, context: Arc<Mutex<crate::core::torrent_context::TorrentContext>>) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let socket = match UdpSocket::bind("0.0.0.0:0") {
                 Ok(s) => s,
@@ -108,7 +108,7 @@ impl LsdAnnouncer {
             loop {
                 {
                     let ctx = context.lock().unwrap();
-                    if ctx.status == crate::torrent_context::TorrentStatus::Ended {
+                    if ctx.status == crate::core::torrent_context::TorrentStatus::Ended {
                         break;
                     }
                 }
