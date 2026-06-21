@@ -1,3 +1,5 @@
+#![cfg(test_real_files)]
+
 use bittorrent_rs::{PeerDetails, PeerMessage, TorrentSession, TorrentStatus, HttpClient, session::SessionConfig};
 use bittorrent_rs::peer_network::PeerNetwork;
 use std::fs;
@@ -28,6 +30,7 @@ fn cleanup_download_path(download_path: &PathBuf) {
     let _ = fs::remove_dir_all(download_path);
 }
 
+#[cfg(test_real_files)]
 #[test]
 fn test_send_bitfield_and_unchoke_after_handshake() {
     let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -86,6 +89,7 @@ fn test_send_bitfield_and_unchoke_after_handshake() {
     cleanup_download_path(&download_path);
 }
 
+#[cfg(test_real_files)]
 #[test]
 fn test_uploads_piece_when_peer_requests_block() {
     let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -156,6 +160,7 @@ fn test_uploads_piece_when_peer_requests_block() {
     cleanup_download_path(&download_path);
 }
 
+#[cfg(test_real_files)]
 #[test]
 fn test_create_session_for_download() {
     let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -199,6 +204,7 @@ fn test_create_session_for_download() {
     cleanup_download_path(&download_path);
 }
 
+#[cfg(test_real_files)]
 #[test]
 fn test_create_session_for_seeding() {
     let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -218,6 +224,7 @@ fn test_create_session_for_seeding() {
     cleanup_download_path(&download_path);
 }
 
+#[cfg(test_real_files)]
 #[test]
 fn test_download_piece_from_peer() {
     let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

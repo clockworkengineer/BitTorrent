@@ -472,6 +472,9 @@ impl TorrentContext {
         let mut piece_number = 0u32;
         for byte in &remote_peer.remote_piece_bitfield {
             for bit in &[0x80u8, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01] {
+                if piece_number as usize >= self.number_of_pieces {
+                    return;
+                }
                 if byte & bit != 0 {
                     let idx = piece_number as usize;
                     if increment {
@@ -481,9 +484,6 @@ impl TorrentContext {
                     }
                 }
                 piece_number += 1;
-                if piece_number as usize >= self.number_of_pieces {
-                    break;
-                }
             }
         }
     }
@@ -576,12 +576,7 @@ impl TorrentContext {
         number_of_bytes: u32,
     ) {
         let piece_there = self.check_piece_hash(piece_number, piece_buffer, number_of_bytes);
-        if piece_there && !self.is_piece_local(piece_number) {
-            self.total_bytes_downloaded.fetch_add(number_of_bytes as u64, Ordering::Relaxed);
-        }
-        self.set_piece_length(piece_number, number_of_bytes);
-        self.mark_piece_local(piece_number, piece_there);
-        self.mark_piece_missing(piece_number, !piece_there);
+        self.update_bitfield_status(piece_number, piece_there, number_of_bytes);
     }
 
     /// Checks if the session download is complete.
@@ -717,6 +712,70 @@ impl TorrentContext {
             }
         }
 
+        Ok(false)
+    }
+
+    /// Appends block data and marks the piece as verified immediately when completed, bypassing hash checks.
+    /// Exclusively intended for testing and mocking.
+    pub fn process_verified_block(
+        &mut self,
+        storage: &dyn crate::io_traits::BlockStorage,
+        piece_number: u32,
+        begin: u32,
+        block_data: &[u8],
+        peer_ip: &str,
+    ) -> Result<bool, crate::error::BitTorrentError> {
+        if piece_number >= self.number_of_pieces as u32 {
+            return Err(crate::error::BitTorrentError::Protocol("Invalid piece index".into()));
+        }
+        if begin % BLOCK_SIZE as u32 != 0 {
+            return Err(crate::error::BitTorrentError::Protocol("Block offset not aligned".into()));
+        }
+        let expected_piece_length = self.get_piece_length(piece_number);
+        if begin.checked_add(block_data.len() as u32).map_or(true, |end| end > expected_piece_length) {
+            return Err(crate::error::BitTorrentError::Protocol("Block out of piece bounds".into()));
+        }
+
+        if self.is_piece_local(piece_number) {
+            return Ok(false);
+        }
+        let piece_length = self.get_piece_length(piece_number);
+        let block_index = begin / BLOCK_SIZE as u32;
+
+        let mut piece_buffers = self.assembler.piece_buffers.lock().unwrap();
+        let piece_buffer_arc = piece_buffers
+            .entry(piece_number)
+            .or_insert_with(|| Arc::new(Mutex::new(PieceBuffer::new(piece_number, piece_length))))
+            .clone();
+        drop(piece_buffers);
+
+        let mut piece_buffer = piece_buffer_arc.lock().unwrap();
+        let already_present = piece_buffer.blocks_present()[block_index as usize];
+        if !already_present {
+            let block_offset = (block_index as u64) * BLOCK_SIZE as u64;
+            let global_offset = (piece_number as u64) * self.piece_length as u64 + block_offset;
+            storage.write_block(global_offset, block_data)?;
+            piece_buffer.add_block(block_index, peer_ip);
+        }
+
+        let piece_complete = piece_buffer.all_blocks_there();
+        drop(piece_buffer);
+
+        if piece_complete {
+            self.update_bitfield_status(piece_number, true, piece_length);
+            {
+                let swarm = self.peer_swarm.read().unwrap();
+                for peer_arc in swarm.values() {
+                    if let Ok(peer_guard) = peer_arc.try_lock() {
+                        let _ = peer_guard.send_have(piece_number);
+                    }
+                }
+            }
+            self.try_complete_download();
+            self.clear_piece_requests(piece_number);
+            self.assembler.piece_buffers.lock().unwrap().remove(&piece_number);
+            return Ok(true);
+        }
         Ok(false)
     }
 
