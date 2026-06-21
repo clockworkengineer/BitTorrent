@@ -63,12 +63,12 @@ fn test_piece_buffer_block_management() {
     let mut pb = PieceBuffer::new(5, 32768);
     assert_eq!(pb.number, 5);
     assert_eq!(pb.length, 32768);
-    assert_eq!(pb.blocks_present().len(), 2);
+    assert_eq!(pb.block_sources.len(), 2);
     
     // Add first block
     pb.add_block(0, "192.168.1.50");
-    assert!(pb.blocks_present()[0]);
-    assert!(!pb.blocks_present()[1]);
+    assert!(pb.is_block_present(0));
+    assert!(!pb.is_block_present(1));
     assert_eq!(pb.block_sources[0].as_deref(), Some("192.168.1.50"));
     assert_eq!(pb.block_sources[1], None);
     assert!(!pb.all_blocks_there());
@@ -85,7 +85,7 @@ fn test_piece_buffer_completion() {
 
     // Piece length 20000, should have 2 blocks (ceil(20000 / 16384))
     let mut pb = PieceBuffer::new(6, 20000);
-    assert_eq!(pb.blocks_present().len(), 2);
+    assert_eq!(pb.block_sources.len(), 2);
     assert!(!pb.all_blocks_there());
 
     pb.add_block(0, "10.0.0.1");

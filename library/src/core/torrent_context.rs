@@ -16,8 +16,30 @@ use crate::util::get_bitfield_index_and_mask;
 use sha1::Digest;
 use std::cmp::min;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+
+/// Represents a piece rarity entry in the priority queue.
+/// A binary heap containing this type will order entries such that pieces with the fewest peers are popped first.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct PieceRarity {
+    pub peer_count: usize,
+    pub piece_index: u32,
+}
+
+impl Ord for PieceRarity {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // We want a min-heap on peer_count, then piece_index
+        other.peer_count.cmp(&self.peer_count)
+            .then_with(|| other.piece_index.cmp(&self.piece_index))
+    }
+}
+
+impl PartialOrd for PieceRarity {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// Placeholder structure representing a tracker client.
 #[derive(Debug, Clone)]
@@ -83,6 +105,8 @@ pub struct TorrentContext {
     pub info_dict_bytes: Option<Vec<u8>>,
     pub download_speed_tracker: Mutex<(std::time::Instant, u64, i64)>,
     pub upload_speed_tracker: Mutex<(std::time::Instant, u64, i64)>,
+    pub piece_priority_queue: Mutex<std::collections::BinaryHeap<PieceRarity>>,
+    pub unchoked_peers_count: AtomicUsize,
 }
 
 impl TorrentContext {
@@ -167,6 +191,14 @@ impl TorrentContext {
             info_dict_bytes: None,
             download_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
             upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
+            piece_priority_queue: Mutex::new({
+                let mut pq = std::collections::BinaryHeap::new();
+                for piece_index in 0..number_of_pieces as u32 {
+                    pq.push(PieceRarity { peer_count: 0, piece_index });
+                }
+                pq
+            }),
+            unchoked_peers_count: AtomicUsize::new(0),
         };
         Ok(context)
     }
@@ -224,6 +256,8 @@ impl TorrentContext {
             info_dict_bytes: None,
             download_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
             upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
+            piece_priority_queue: Mutex::new(std::collections::BinaryHeap::new()),
+            unchoked_peers_count: AtomicUsize::new(0),
         };
         Ok(context)
     }
@@ -302,6 +336,14 @@ impl TorrentContext {
         
         self.info_dict_bytes = Some(info_dict_bytes.to_vec());
         
+        {
+            let mut pq = self.piece_priority_queue.lock().unwrap();
+            pq.clear();
+            for piece_index in 0..number_of_pieces as u32 {
+                pq.push(PieceRarity { peer_count: 0, piece_index });
+            }
+        }
+
         Ok(())
     }
 
@@ -470,6 +512,7 @@ impl TorrentContext {
 
     fn update_piece_peer_counts(&mut self, remote_peer: &Peer, increment: bool) {
         let mut piece_number = 0u32;
+        let mut pq = self.piece_priority_queue.lock().unwrap();
         for byte in &remote_peer.remote_piece_bitfield {
             for bit in &[0x80u8, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01] {
                 if piece_number as usize >= self.number_of_pieces {
@@ -482,6 +525,10 @@ impl TorrentContext {
                     } else {
                         self.piece_data[idx].peer_count = self.piece_data[idx].peer_count.saturating_sub(1);
                     }
+                    pq.push(PieceRarity {
+                        peer_count: self.piece_data[idx].peer_count,
+                        piece_index: piece_number,
+                    });
                 }
                 piece_number += 1;
             }
@@ -634,12 +681,9 @@ impl TorrentContext {
             .entry(piece_number)
             .or_insert_with(|| Arc::new(Mutex::new(PieceBuffer::new(piece_number, piece_length))))
             .clone();
-        drop(piece_buffers);
 
-        let piece_buffer_arc2 = piece_buffer_arc.clone();
-        let mut piece_buffer = piece_buffer_arc2.lock().unwrap();
-
-        let already_present = piece_buffer.blocks_present()[block_index as usize];
+        let mut piece_buffer = piece_buffer_arc.lock().unwrap();
+        let already_present = piece_buffer.is_block_present(block_index);
         if !already_present {
             #[cfg(feature = "v2")]
             {
@@ -659,7 +703,11 @@ impl TorrentContext {
         } else {
             Vec::new()
         };
+        if piece_complete {
+            piece_buffers.remove(&piece_number);
+        }
         drop(piece_buffer);
+        drop(piece_buffers);
 
         if piece_complete {
             if self.check_piece_hash_streaming(storage, piece_number, piece_length) {
@@ -684,20 +732,10 @@ impl TorrentContext {
                 }
                 self.try_complete_download();
                 self.clear_piece_requests(piece_number);
-                self.assembler
-                    .piece_buffers
-                    .lock()
-                    .unwrap()
-                    .remove(&piece_number);
                 return Ok(true);
             } else {
                 crate::log_debug!("[piece] {} failed hash verification", piece_number);
                 self.clear_piece_requests(piece_number);
-                self.assembler
-                    .piece_buffers
-                    .lock()
-                    .unwrap()
-                    .remove(&piece_number);
 
                 // Report all peers that contributed blocks to this piece
                 for source_ip_opt in block_sources {
@@ -747,10 +785,9 @@ impl TorrentContext {
             .entry(piece_number)
             .or_insert_with(|| Arc::new(Mutex::new(PieceBuffer::new(piece_number, piece_length))))
             .clone();
-        drop(piece_buffers);
 
         let mut piece_buffer = piece_buffer_arc.lock().unwrap();
-        let already_present = piece_buffer.blocks_present()[block_index as usize];
+        let already_present = piece_buffer.is_block_present(block_index);
         if !already_present {
             let block_offset = (block_index as u64) * BLOCK_SIZE as u64;
             let global_offset = (piece_number as u64) * self.piece_length as u64 + block_offset;
@@ -759,7 +796,11 @@ impl TorrentContext {
         }
 
         let piece_complete = piece_buffer.all_blocks_there();
+        if piece_complete {
+            piece_buffers.remove(&piece_number);
+        }
         drop(piece_buffer);
+        drop(piece_buffers);
 
         if piece_complete {
             self.update_bitfield_status(piece_number, true, piece_length);
@@ -773,7 +814,6 @@ impl TorrentContext {
             }
             self.try_complete_download();
             self.clear_piece_requests(piece_number);
-            self.assembler.piece_buffers.lock().unwrap().remove(&piece_number);
             return Ok(true);
         }
         Ok(false)
@@ -797,6 +837,9 @@ impl TorrentContext {
         let peer_opt = self.peer_swarm.write().unwrap().remove(ip);
         if let Some(peer_arc) = peer_opt {
             if let Ok(mut peer_guard) = peer_arc.lock() {
+                if peer_guard.peer_choking.wait_one(0) {
+                    self.unchoked_peers_count.fetch_sub(1, Ordering::Relaxed);
+                }
                 self.unmerge_piece_bitfield(&peer_guard);
                 peer_guard.close();
             }
@@ -830,6 +873,9 @@ impl TorrentContext {
             let peer_opt = self.peer_swarm.write().unwrap().remove(ip);
             if let Some(peer_arc) = peer_opt {
                 if let Ok(mut peer_guard) = peer_arc.lock() {
+                    if peer_guard.peer_choking.wait_one(0) {
+                        self.unchoked_peers_count.fetch_sub(1, Ordering::Relaxed);
+                    }
                     peer_guard.close();
                 }
             }
@@ -949,7 +995,10 @@ impl TorrentContext {
 
             let piece_buffers = self.assembler.piece_buffers.lock().unwrap();
             let present_blocks = piece_buffers.get(&piece_number)
-                .map(|pb| pb.lock().unwrap().blocks_present().to_vec())
+                .map(|pb| {
+                    let guard = pb.lock().unwrap();
+                    (0..block_count).map(|bi| guard.is_block_present(bi)).collect::<Vec<bool>>()
+                })
                 .unwrap_or_else(|| vec![false; block_count as usize]);
             drop(piece_buffers);
 
@@ -987,6 +1036,11 @@ impl TorrentContext {
     /// Increments the local peer availability count for a given piece.
     pub fn increment_peer_count(&mut self, piece_number: u32) {
         self.piece_data[piece_number as usize].peer_count += 1;
+        let new_count = self.piece_data[piece_number as usize].peer_count;
+        self.piece_priority_queue.lock().unwrap().push(PieceRarity {
+            peer_count: new_count,
+            piece_index: piece_number,
+        });
     }
 
     /// Walks piece availability vectors to identify the next missing piece starting search from `start_piece`.
@@ -1008,39 +1062,57 @@ impl TorrentContext {
 
     /// Estimates the current download transfer rate in bytes per second.
     pub fn bytes_per_second(&self) -> i64 {
-        if let Ok(mut guard) = self.download_speed_tracker.lock() {
-            let now = std::time::Instant::now();
-            let elapsed = now.duration_since(guard.0);
-            let current_bytes = self.total_bytes_downloaded.load(Ordering::Relaxed);
-            if elapsed.as_millis() >= 500 {
-                let delta_bytes = current_bytes.saturating_sub(guard.1);
-                let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
-                *guard = (now, current_bytes, bps);
-                bps
+        let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
+            if let Ok(guard) = self.download_speed_tracker.lock() {
+                let now = std::time::Instant::now();
+                let elapsed = now.duration_since(guard.0);
+                let current_bytes = self.total_bytes_downloaded.load(Ordering::Relaxed);
+                if elapsed.as_millis() >= 500 {
+                    (elapsed, current_bytes.saturating_sub(guard.1), true, now, current_bytes, guard.2)
+                } else {
+                    (elapsed, 0, false, now, current_bytes, guard.2)
+                }
             } else {
-                guard.2
+                return 0;
             }
+        };
+
+        if needs_update {
+            let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+            if let Ok(mut guard) = self.download_speed_tracker.lock() {
+                *guard = (now, current_bytes, bps);
+            }
+            bps
         } else {
-            0
+            old_bps
         }
     }
 
     /// Estimates the current upload transfer rate in bytes per second.
     pub fn upload_bytes_per_second(&self) -> i64 {
-        if let Ok(mut guard) = self.upload_speed_tracker.lock() {
-            let now = std::time::Instant::now();
-            let elapsed = now.duration_since(guard.0);
-            let current_bytes = self.total_bytes_uploaded.load(Ordering::Relaxed);
-            if elapsed.as_millis() >= 500 {
-                let delta_bytes = current_bytes.saturating_sub(guard.1);
-                let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
-                *guard = (now, current_bytes, bps);
-                bps
+        let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
+            if let Ok(guard) = self.upload_speed_tracker.lock() {
+                let now = std::time::Instant::now();
+                let elapsed = now.duration_since(guard.0);
+                let current_bytes = self.total_bytes_uploaded.load(Ordering::Relaxed);
+                if elapsed.as_millis() >= 500 {
+                    (elapsed, current_bytes.saturating_sub(guard.1), true, now, current_bytes, guard.2)
+                } else {
+                    (elapsed, 0, false, now, current_bytes, guard.2)
+                }
             } else {
-                guard.2
+                return 0;
             }
+        };
+
+        if needs_update {
+            let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+            if let Ok(mut guard) = self.upload_speed_tracker.lock() {
+                *guard = (now, current_bytes, bps);
+            }
+            bps
         } else {
-            0
+            old_bps
         }
     }
 
@@ -1051,16 +1123,7 @@ impl TorrentContext {
 
     /// Counts how many peers in the swarm have unchoked us.
     pub fn number_of_unchoked_peers(&self) -> usize {
-        self.peer_swarm
-            .read()
-            .unwrap()
-            .values()
-            .filter(|peer| {
-                peer.try_lock()
-                    .map(|p| p.peer_choking.wait_one(0))
-                    .unwrap_or(false)
-            })
-            .count()
+        self.unchoked_peers_count.load(Ordering::Relaxed)
     }
 
     /// Checks if the session is currently paused.

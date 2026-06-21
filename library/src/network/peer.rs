@@ -338,6 +338,9 @@ impl Peer {
                     "[peer {}:{}] CHOKED by remote",
                     self.ip, self.port
                 );
+                if self.peer_choking.wait_one(0) {
+                    tc.unchoked_peers_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.peer_choking.reset();
             }
             PeerMessage::Unchoke => {
@@ -345,6 +348,9 @@ impl Peer {
                     "[peer {}:{}] UNCHOKED by remote",
                     self.ip, self.port
                 );
+                if !self.peer_choking.wait_one(0) {
+                    tc.unchoked_peers_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.peer_choking.set();
             }
             PeerMessage::Interested => {
