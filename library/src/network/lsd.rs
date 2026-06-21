@@ -26,13 +26,13 @@ impl LsdListener {
             let socket = match UdpSocket::bind(("0.0.0.0", port)) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("LSD failed to bind UDP port 6771: {}", e);
+                    crate::log_debug!("LSD failed to bind UDP port 6771: {}", e);
                     return;
                 }
             };
 
             if let Err(e) = socket.join_multicast_v4(&multicast_ip, &Ipv4Addr::new(0, 0, 0, 0)) {
-                eprintln!("LSD failed to join multicast group: {}", e);
+                crate::log_debug!("LSD failed to join multicast group: {}", e);
                 return;
             }
 

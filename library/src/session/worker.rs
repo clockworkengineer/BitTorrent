@@ -17,9 +17,17 @@ pub fn mark_peer_dead(manager: &Option<Arc<Manager>>, ip: &str) {
 
 /// Helper task to cooperatively delay thread execution.
 pub async fn delay(duration: Duration) {
-    let start = Instant::now();
-    while start.elapsed() < duration {
-        std::thread::sleep(std::time::Duration::from_millis(5));
+    #[cfg(feature = "std")]
+    {
+        let start = Instant::now();
+        while start.elapsed() < duration {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            crate::util::yield_now().await;
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let _ = duration;
         crate::util::yield_now().await;
     }
 }

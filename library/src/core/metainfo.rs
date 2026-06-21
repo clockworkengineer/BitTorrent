@@ -631,6 +631,16 @@ impl MetaInfoFile {
             }
         }
 
+        #[cfg(not(feature = "std"))]
+        {
+            let tracker = self.get_tracker()?;
+            if !tracker.starts_with("http://") && !tracker.starts_with("https://") && !tracker.starts_with("udp://") {
+                return Err(BitTorrentError::Parse(
+                    "Tracker URL has an invalid scheme.".into(),
+                ));
+            }
+        }
+
         Ok(())
     }
 
