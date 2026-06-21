@@ -3,10 +3,9 @@
 //! Defines client-side state representations, settings storage structures,
 //! sidebar status filtering, config loading/saving, and asynchronous torrent session creation.
 
-use bittorrent_rs::{TorrentSession, Tracker};
+use bittorrent_rs::TorrentSession;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
-use std::time::Duration;
 use torrent_client_shared::{SessionState, PendingSession};
 
 /// Sidebar filters for sorting active torrent sessions by status.

@@ -81,7 +81,9 @@ pub struct TorrentContext {
     pub status: TorrentStatus,
     pub file_name: String,
     pub main_tracker: Option<Tracker>,
+    #[allow(dead_code)]
     callback_data: Option<String>,
+    #[allow(dead_code)]
     call_back: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     paused: ManualResetEvent,
     pub download_finished: Arc<ManualResetEvent>,

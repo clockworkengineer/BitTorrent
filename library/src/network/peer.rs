@@ -30,7 +30,7 @@
 //! ```
 
 use crate::average::Average;
-use crate::io_traits::{AsyncSocket, Socket};
+use crate::io_traits::Socket;
 use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;

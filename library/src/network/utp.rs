@@ -17,8 +17,6 @@ use crate::error::BitTorrentError;
 use crate::io_traits::AsyncSocket;
 use std::sync::{Arc, Mutex};
 use std::net::UdpSocket;
-use core::pin::Pin;
-use core::future::Future;
 
 /// The five packet types defined by the uTP protocol (BEP 29).
 ///

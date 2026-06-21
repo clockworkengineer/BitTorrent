@@ -1,9 +1,7 @@
-use core::pin::Pin;
-use core::future::Future;
-use alloc::boxed::Box;
 use crate::error::BitTorrentError;
 
 /// A hardware-agnostic asynchronous socket trait.
+#[allow(async_fn_in_trait)]
 pub trait AsyncSocket: Send + Sync {
     /// Reads up to `buf.len()` bytes asynchronously from the socket.
     async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError>;

@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 #![cfg(test_real_files)]
 
 use bittorrent_rs::{PeerDetails, PeerMessage, TorrentSession, TorrentStatus, HttpClient, session::SessionConfig};

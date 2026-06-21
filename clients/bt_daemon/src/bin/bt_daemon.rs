@@ -3,11 +3,10 @@
 //! A background daemon that hosts a bittorrent session manager, persists active torrent state,
 //! and listens on a local Unix socket or Named Pipe for command-line instructions.
 
-use bittorrent_rs::{TorrentSession, Tracker, TorrentStatus};
+use bittorrent_rs::TorrentSession;
 use torrent_client_shared::{SessionState, TorrentStatusInfo, IpcMessage, IpcReply};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Default)]

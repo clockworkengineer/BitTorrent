@@ -15,10 +15,6 @@ use std::net::TcpStream;
 use std::sync::Mutex;
 #[cfg(feature = "std")]
 use std::io::{Read, Write};
-#[cfg(feature = "std")]
-use core::pin::Pin;
-#[cfg(feature = "std")]
-use core::future::Future;
 
 /// A socket communication helper for sending and receiving raw BitTorrent peer messages.
 pub struct PeerNetwork {

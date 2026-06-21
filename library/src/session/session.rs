@@ -11,7 +11,7 @@ use crate::error::BitTorrentError;
 use crate::manager::Manager;
 use crate::metainfo::MetaInfoFile;
 use crate::peer::Peer;
-use crate::selector::{PieceSelector, RarestFirstSelector};
+use crate::selector::PieceSelector;
 use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::{PeerDetails, Tracker};
 use crate::magnet::MagnetLink;

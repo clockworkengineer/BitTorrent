@@ -1,12 +1,12 @@
 use bittorrent_rs::{
-    Peer, TorrentSession, SessionConfig, BNode, Bencode, PeerMessage, Socket, MockSocket, RarestFirstSelector
+    Peer, SessionConfig, BNode, Bencode, PeerMessage, Socket, MockSocket, RarestFirstSelector
 };
 use bittorrent_rs::internals::TorrentContext;
 use std::sync::{Arc, Mutex};
 
 #[test]
 fn test_mock_peer_handshake_and_choke_flow() {
-    let (socket, in_tx, out_rx) = MockSocket::new();
+    let (socket, in_tx, _out_rx) = MockSocket::new();
     let socket = Arc::new(Socket::Mock(socket));
     let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, socket.clone());
 
