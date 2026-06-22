@@ -2,6 +2,13 @@
 name = "bittorrent-rs"
 version = "0.1.0"
 edition = "2024"
+description = "A pure-Rust BitTorrent protocol library supporting Magnet links, DHT, uTP, and NAT-PMP."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/clockworkengineer/BitTorrent"
+readme = "../README.md"
+keywords = ["bittorrent", "torrent", "peer-to-peer", "dht", "utp"]
+categories = ["network-programming", "asynchronous"]
+
 
 [features]
 default = ["std", "http-tracker", "dht", "lsd", "utp", "nat-pmp", "mse", "webseed", "v2"]
