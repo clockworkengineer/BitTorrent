@@ -257,10 +257,16 @@ mod ipc {
 
             for stream in listener.incoming() {
                 match stream {
-                    Ok(mut stream) => {
+                    Ok(stream) => {
                         let handler_clone = handler.clone();
                         std::thread::spawn(move || {
-                            let mut reader = BufReader::new(&stream);
+                            // Clone the stream so the reader and writer operate on distinct
+                            // owned handles, avoiding borrow checker errors (E0502).
+                            let mut writer = match stream.try_clone() {
+                                Ok(w) => w,
+                                Err(_) => return,
+                            };
+                            let mut reader = BufReader::new(stream);
                             let mut line = String::new();
                             while reader.read_line(&mut line).unwrap_or(0) > 0 {
                                 let trimmed = line.trim();
@@ -268,10 +274,10 @@ mod ipc {
                                     let reply = handler_clone(trimmed.to_string());
                                     let mut reply_bytes = reply.into_bytes();
                                     reply_bytes.push(b'\n');
-                                    if stream.write_all(&reply_bytes).is_err() {
+                                    if writer.write_all(&reply_bytes).is_err() {
                                         break;
                                     }
-                                    let _ = stream.flush();
+                                    let _ = writer.flush();
                                 }
                                 line.clear();
                             }

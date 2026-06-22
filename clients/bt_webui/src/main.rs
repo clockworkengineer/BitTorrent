@@ -30,11 +30,12 @@ fn execute_ipc(msg: IpcMessage) -> Result<IpcReply, String> {
         let mut stream = UnixStream::connect("/tmp/bt-daemon.sock").map_err(|e| e.to_string())?;
         let mut msg_bytes = serialized.into_bytes();
         msg_bytes.push(b'\n');
-        stream.write_all(&msg_bytes)?;
-        stream.flush()?;
+        // Map io::Error to String since execute_ipc returns Result<_, String>
+        stream.write_all(&msg_bytes).map_err(|e| e.to_string())?;
+        stream.flush().map_err(|e| e.to_string())?;
         let mut reader = BufReader::new(stream);
         let mut reply = String::new();
-        reader.read_line(&mut reply)?;
+        reader.read_line(&mut reply).map_err(|e| e.to_string())?;
         reply
     };
 
