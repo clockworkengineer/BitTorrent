@@ -63,6 +63,17 @@ Replace `[torrent-file]` with the path to a `.torrent` file and `[download-dir]`
 - [`docs/sync-hub.md`](docs/sync-hub.md) — local-first encrypted file-syncing hub user guide
 - [`docs/solid-refactor-plan.md`](docs/solid-refactor-plan.md) — concrete plan to refactor library and clients to adhere strictly to SOLID principles
 
+---
+
+## Support
+
+If you find this BitTorrent library or client useful and would like to support ongoing development, consider buying me a coffee!
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-orange?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/roberttizz1)
+
+☕ [Buy Me a Coffee](https://buymeacoffee.com/roberttizz1)
+
+
 
 
 
