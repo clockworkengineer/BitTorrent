@@ -272,7 +272,7 @@ impl TorrentClientApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(4.0);
                     ui.heading(egui::RichText::new("📥 BitTorrent Client").strong().size(20.0));
-                    ui.label(egui::RichText::new("Version 0.1.0 (Rust Edition)").small().color(ui.visuals().weak_text_color()));
+                    ui.label(egui::RichText::new("Version 0.1.1 (Rust Edition)").small().color(ui.visuals().weak_text_color()));
                     ui.add_space(4.0);
                 });
 
