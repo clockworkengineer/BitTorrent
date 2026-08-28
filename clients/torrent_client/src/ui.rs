@@ -252,4 +252,66 @@ impl TorrentClientApp {
                 }
             });
     }
+
+    /// Renders an interactive About dialog window with version info, feature list, and support links.
+    pub fn draw_about_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_about_dialog {
+            return;
+        }
+
+        let mut close_clicked = false;
+        let mut is_open = self.show_about_dialog;
+
+        egui::Window::new("ℹ About BitTorrent Client")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut is_open)
+            .show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.vertical_centered(|ui| {
+                    ui.add_space(4.0);
+                    ui.heading(egui::RichText::new("📥 BitTorrent Client").strong().size(20.0));
+                    ui.label(egui::RichText::new("Version 0.1.0 (Rust Edition)").small().color(ui.visuals().weak_text_color()));
+                    ui.add_space(4.0);
+                });
+
+                ui.separator();
+                ui.add_space(6.0);
+
+                ui.label("A high-performance, modular BitTorrent client library and desktop application implemented in pure Rust.");
+                ui.add_space(8.0);
+
+                ui.strong("Protocol & Architecture Features:");
+                ui.label(" • BitTorrent v1 (SHA-1) & v2 (SHA-256) Metainfo");
+                ui.label(" • Kademlia DHT (BEP 5) & LSD Multicast (BEP 14)");
+                ui.label(" • Peer Exchange (PEX — BEP 11) with IPv6");
+                ui.label(" • Message Stream Encryption (MSE/PE) via RC4");
+                ui.label(" • uTorrent Transport Protocol (uTP — BEP 29)");
+                ui.label(" • NAT-PMP Auto Port Mapping (BEP 27 / BEP 52)");
+                ui.label(" • WebSeed HTTP Mirroring (BEP 17 / BEP 19)");
+                ui.label(" • Clean SOLID Principles System Architecture");
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Support Development:");
+                    ui.hyperlink_to("☕ Buy Me a Coffee", "https://buymeacoffee.com/roberttizz1");
+                });
+
+                ui.add_space(12.0);
+                ui.vertical_centered(|ui| {
+                    if ui.button("  Close  ").clicked() {
+                        close_clicked = true;
+                    }
+                });
+                ui.add_space(4.0);
+            });
+
+        if close_clicked || !is_open {
+            self.show_about_dialog = false;
+        }
+    }
 }

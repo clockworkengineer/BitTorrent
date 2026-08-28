@@ -35,6 +35,8 @@ pub struct TorrentClientApp {
     pub active_detail_tab: DetailTab,
     /// Search query string used to filter logs.
     pub log_search_query: String,
+    /// Visibility state of the About modal dialog.
+    pub show_about_dialog: bool,
 }
 
 impl TorrentClientApp {
@@ -52,6 +54,7 @@ impl TorrentClientApp {
             active_filter: SidebarFilter::All,
             active_detail_tab: DetailTab::Overview,
             log_search_query: String::new(),
+            show_about_dialog: false,
         }
     }
 
@@ -111,10 +114,17 @@ impl eframe::App for TorrentClientApp {
                     if ui.checkbox(&mut is_dark, "Dark Mode").changed() {
                         ctx.set_visuals(if is_dark { egui::Visuals::dark() } else { egui::Visuals::light() });
                     }
+                    ui.add_space(8.0);
+                    if ui.button("ℹ About").clicked() {
+                        self.show_about_dialog = true;
+                    }
                 });
             });
             ui.add_space(8.0);
         });
+
+        // About Dialog Window
+        self.draw_about_dialog(ctx);
 
         // Bottom Status Bar
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
