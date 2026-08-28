@@ -56,7 +56,7 @@
 //! In-memory storage is provided by `MemStorage`, and simulated peer connections can be modeled using `MockSocket`:
 //!
 //! ```no_run
-//! use bittorrent_rs::{BlockStorage, MemStorage, MockSocket, AsyncSocket};
+//! use bittorrent_rs::{BlockStorage, BlockWriter, MemStorage, MockSocket, AsyncSocket};
 //! use std::sync::Arc;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -145,7 +145,7 @@ pub use utils::average::Average;
 pub use utils::bencode::{BNode, Bencode};
 pub use utils::bencode_tokenizer::{BencodeToken, BencodeTokenizer};
 pub use utils::error::{BitTorrentError, BencodeError};
-pub use utils::io_traits::{AsyncSocket, BlockStorage, MemStorage, MockSocket, MockSender, MockReceiver, Socket};
+pub use utils::io_traits::{AsyncSocket, BlockStorage, BlockReader, BlockWriter, MemStorage, MockSocket, MockSender, MockReceiver, Socket};
 #[cfg(feature = "std")]
 pub use utils::io_traits::SocketFactory;
 #[cfg(all(feature = "std", feature = "http-tracker"))]

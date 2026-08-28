@@ -1138,3 +1138,65 @@ impl TorrentContext {
         self.assembler.requested_blocks.read().map(|r| r.len()).unwrap_or(0)
     }
 }
+
+/// Interface Segregation Principle: Swarm read/query interface.
+pub trait SwarmReadAccess: Send + Sync {
+    fn connected_peer_count(&self) -> usize;
+    fn contains_peer(&self, ip: &str) -> bool;
+    fn is_peer_blacklisted(&self, ip: &str) -> bool;
+}
+
+/// Interface Segregation Principle: Piece progress write/mutation interface.
+pub trait PieceWriteAccess: Send + Sync {
+    fn is_piece_needed(&self, index: u32) -> bool;
+    fn mark_piece_completed(&mut self, index: u32, piece_length: u32);
+}
+
+/// Interface Segregation Principle: Status and stats query view.
+pub trait SessionStatusQuery: Send + Sync {
+    fn status(&self) -> TorrentStatus;
+    fn progress(&self) -> f32;
+    fn bytes_downloaded(&self) -> u64;
+    fn bytes_uploaded(&self) -> u64;
+}
+
+impl SwarmReadAccess for TorrentContext {
+    fn connected_peer_count(&self) -> usize {
+        self.peer_swarm.read().unwrap().len()
+    }
+    fn contains_peer(&self, ip: &str) -> bool {
+        self.peer_swarm.read().unwrap().contains_key(ip)
+    }
+    fn is_peer_blacklisted(&self, ip: &str) -> bool {
+        self.is_peer_blacklisted(ip)
+    }
+}
+
+impl PieceWriteAccess for TorrentContext {
+    fn is_piece_needed(&self, index: u32) -> bool {
+        self.is_piece_missing(index)
+    }
+    fn mark_piece_completed(&mut self, index: u32, piece_length: u32) {
+        self.mark_piece_local(index, true);
+        self.update_bitfield_status(index, true, piece_length);
+    }
+}
+
+impl SessionStatusQuery for TorrentContext {
+    fn status(&self) -> TorrentStatus {
+        self.status
+    }
+    fn progress(&self) -> f32 {
+        if self.total_bytes_to_download == 0 {
+            0.0
+        } else {
+            (self.total_bytes_downloaded.load(Ordering::Relaxed) as f32) / (self.total_bytes_to_download as f32)
+        }
+    }
+    fn bytes_downloaded(&self) -> u64 {
+        self.total_bytes_downloaded.load(Ordering::Relaxed)
+    }
+    fn bytes_uploaded(&self) -> u64 {
+        self.total_bytes_uploaded.load(Ordering::Relaxed)
+    }
+}

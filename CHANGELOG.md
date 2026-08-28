@@ -8,7 +8,8 @@ All notable changes to this project will be documented in this file.
 - Created `docs/api-stability.md` to document the stable public API versus internal API surfaces.
 - Comprehensive inline Rustdoc comments across `TorrentSession`, `TorrentSessionBuilder`, `TorrentContext`, and `Tracker`, including `# Examples`, `# Errors`, and `# Panics` sections.
 
-### Changed
-- Added a `5`-second connection and read timeout to `UreqHttpClient` to prevent indefinite blocking/hangs on offline trackers.
-- Refactored `session_tests.rs` to mock the HTTP tracker announcer (`DummyHttpClient`), eliminating external network calls in unit tests and accelerating test execution.
-- Conserved consistency by replacing standard `println!` logging in `Tracker::log_announce` with `log_debug!`.
+### Refactored
+- Added segregated `BlockReader` and `BlockWriter` traits to `io_traits.rs` to adhere to the Interface Segregation Principle (ISP).
+- Introduced `SwarmReadAccess`, `PieceWriteAccess`, and `SessionStatusQuery` trait views on `TorrentContext`.
+- Extracted `Announcer` trait to support extensible tracker announcer implementations (OCP).
+- Added comprehensive SOLID refactoring plan in `docs/solid-refactor-plan.md`.

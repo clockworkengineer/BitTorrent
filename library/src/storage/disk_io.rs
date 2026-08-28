@@ -5,7 +5,7 @@
 
 use crate::error::BitTorrentError;
 use crate::core::torrent_context::TorrentContext;
-use crate::io_traits::BlockStorage;
+use crate::io_traits::{BlockReader, BlockWriter};
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -100,7 +100,7 @@ impl DiskIO {
     }
 }
 
-impl BlockStorage for DiskIO {
+impl BlockWriter for DiskIO {
     fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
         let ranges = resolve_file_ranges_internal(&self.files_to_download, offset, data.len());
 
@@ -122,7 +122,9 @@ impl BlockStorage for DiskIO {
 
         Ok(())
     }
+}
 
+impl BlockReader for DiskIO {
     fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError> {
         let ranges = resolve_file_ranges_internal(&self.files_to_download, offset, buffer.len());
 

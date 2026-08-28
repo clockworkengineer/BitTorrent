@@ -1,4 +1,4 @@
-use bittorrent_rs::{AsyncSocket, BlockStorage, MemStorage, MockSocket, SocketFactory, BitTorrentError, Socket};
+use bittorrent_rs::{AsyncSocket, BlockStorage, BlockReader, BlockWriter, MemStorage, MockSocket, SocketFactory, BitTorrentError, Socket};
 #[cfg(feature = "http-tracker")]
 use bittorrent_rs::HttpClient;
 use std::sync::Arc;

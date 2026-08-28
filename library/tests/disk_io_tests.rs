@@ -150,7 +150,7 @@ fn test_write_piece_across_multiple_files() {
     let file_two = download_path.join("downloads").join("part2.bin");
 
     let piece_bytes = piece_data;
-    use bittorrent_rs::BlockStorage;
+    use bittorrent_rs::{BlockReader, BlockWriter};
     disk_io.write_block(0, &piece_bytes).unwrap();
 
     let mut first = Vec::new();
@@ -250,7 +250,7 @@ fn test_disk_io_bounds_error_handling() {
     );
     disk_io.create_local_torrent_structure().unwrap();
 
-    use bittorrent_rs::BlockStorage;
+    use bittorrent_rs::{BlockReader, BlockWriter};
 
     // Out of bounds write (offset 1000 + length 50 = 1050, which is > 1024)
     let err_write = disk_io.write_block(1000, &[0; 50]);

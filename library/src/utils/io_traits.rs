@@ -13,14 +13,22 @@ pub trait AsyncSocket: Send + Sync {
     fn close(&self);
 }
 
-/// A hardware-agnostic block storage trait.
-pub trait BlockStorage: Send + Sync {
-    /// Writes a data block at the specified absolute byte offset.
-    fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError>;
-
+/// Interface Segregation Principle: Read-only block storage view.
+pub trait BlockReader: Send + Sync {
     /// Reads up to `buffer.len()` bytes from the specified absolute byte offset.
     fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError>;
 }
+
+/// Interface Segregation Principle: Write-only block storage view.
+pub trait BlockWriter: Send + Sync {
+    /// Writes a data block at the specified absolute byte offset.
+    fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError>;
+}
+
+/// A hardware-agnostic block storage trait combining reading and writing views.
+pub trait BlockStorage: BlockReader + BlockWriter {}
+
+impl<T: BlockReader + BlockWriter + ?Sized> BlockStorage for T {}
 
 /// A lightweight spinlock implementation for no_std environments.
 #[derive(Debug)]
@@ -211,24 +219,7 @@ impl MemStorage {
     }
 }
 
-impl BlockStorage for MemStorage {
-    fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
-        let start = offset as usize;
-        let end = start + data.len();
-        let mut guard = self.data.lock();
-        if end > guard.len() {
-            #[cfg(feature = "std")]
-            return Err(BitTorrentError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "write offset + length exceeds storage capacity",
-            )));
-            #[cfg(not(feature = "std"))]
-            return Err(BitTorrentError::Protocol("write offset + length exceeds storage capacity".into()));
-        }
-        guard[start..end].copy_from_slice(data);
-        Ok(())
-    }
-
+impl BlockReader for MemStorage {
     fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError> {
         let start = offset as usize;
         let end = start + buffer.len();
@@ -244,6 +235,25 @@ impl BlockStorage for MemStorage {
         }
         buffer.copy_from_slice(&guard[start..end]);
         Ok(buffer.len())
+    }
+}
+
+impl BlockWriter for MemStorage {
+    fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
+        let start = offset as usize;
+        let end = start + data.len();
+        let mut guard = self.data.lock();
+        if end > guard.len() {
+            #[cfg(feature = "std")]
+            return Err(BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "write offset + length exceeds storage capacity",
+            )));
+            #[cfg(not(feature = "std"))]
+            return Err(BitTorrentError::Protocol("write offset + length exceeds storage capacity".into()));
+        }
+        guard[start..end].copy_from_slice(data);
+        Ok(())
     }
 }
 
