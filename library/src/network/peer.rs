@@ -67,6 +67,11 @@ pub enum PeerAction {
         ext_id: u8,
         payload: Vec<u8>,
     },
+    SendHave(u32),
+    SendHaveToPeer {
+        target_ip: String,
+        piece: u32,
+    },
     DiscoverPeers(Vec<PeerDetails>),
 }
 
@@ -280,13 +285,19 @@ impl Peer {
     /// Checks if the remote peer's bitfield indicates they have the specified piece.
     pub fn is_piece_on_remote_peer(&self, piece_number: u32) -> bool {
         let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
-        if let Some(_) = self.tc {
-            if byte_index < self.remote_piece_bitfield.len() {
-                return (self.remote_piece_bitfield[byte_index] & bit_mask) != 0;
-            }
+        if byte_index < self.remote_piece_bitfield.len() {
+            (self.remote_piece_bitfield[byte_index] & bit_mask) != 0
+        } else {
+            false
+        }
+    }
+
+    /// Checks if the remote peer has all pieces in the torrent (is a complete seed).
+    pub fn is_seed(&self, total_pieces: usize) -> bool {
+        if total_pieces == 0 {
             return false;
         }
-        false
+        (0..total_pieces as u32).all(|p| self.is_piece_on_remote_peer(p))
     }
 
     /// Marks the specified piece as complete on the remote peer and updates missing piece counts.
@@ -355,6 +366,11 @@ impl Peer {
             }
             PeerMessage::Interested => {
                 self.peer_interested = true;
+                if tc.is_super_seeding() {
+                    if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
+                        actions.push(PeerAction::SendHave(piece));
+                    }
+                }
             }
             PeerMessage::NotInterested => {
                 self.peer_interested = false;
@@ -365,10 +381,36 @@ impl Peer {
                 if was_new {
                     tc.increment_peer_count(index);
                 }
+                if tc.is_super_seeding() {
+                    if self.is_seed(tc.number_of_pieces) {
+                        tc.set_super_seeding(false);
+                    } else {
+                        if let Some((target_ip, next_piece)) = tc.on_peer_have(&self.ip, index) {
+                            if target_ip == self.ip {
+                                actions.push(PeerAction::SendHave(next_piece));
+                            } else {
+                                actions.push(PeerAction::SendHaveToPeer {
+                                    target_ip,
+                                    piece: next_piece,
+                                });
+                            }
+                        }
+                        if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
+                            actions.push(PeerAction::SendHave(piece));
+                        }
+                    }
+                }
             }
             PeerMessage::Bitfield(bitfield) => {
                 self.set_remote_bitfield(bitfield.to_vec());
                 tc.merge_piece_bitfield(self);
+                if tc.is_super_seeding() {
+                    if self.is_seed(tc.number_of_pieces) {
+                        tc.set_super_seeding(false);
+                    } else if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
+                        actions.push(PeerAction::SendHave(piece));
+                    }
+                }
             }
             PeerMessage::Piece {
                 index,
@@ -420,8 +462,9 @@ impl Peer {
                 begin,
                 length,
             } => {
-                // Serve the block if we have the piece and are not choking the remote peer.
-                if !self.am_choking && tc.is_piece_local(index) {
+                // Serve the block if we have the piece, are not choking the remote peer,
+                // and if super-seeding, this piece was offered to this peer.
+                if !self.am_choking && tc.is_piece_local(index) && tc.can_upload_piece_to_peer(&self.ip, index) {
                     let offset = index as u64 * tc.piece_length as u64 + begin as u64;
                     let mut block = vec![0u8; length as usize];
                     match tc.storage.read_block(offset, &mut block) {
@@ -625,6 +668,22 @@ impl Peer {
                     let msg = PeerMessage::Extended { ext_id, payload: &payload };
                     net.write_message(msg).await?;
                     peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendHave(piece) => {
+                    net.write_message(PeerMessage::Have(piece)).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendHaveToPeer { target_ip, piece } => {
+                    let target_net = {
+                        let ctx_guard = context.lock().unwrap();
+                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        swarm.get(&target_ip)
+                            .and_then(|p| p.lock().ok())
+                            .and_then(|p| p.network.clone())
+                    };
+                    if let Some(target_net) = target_net {
+                        let _ = target_net.write_message(PeerMessage::Have(piece)).await;
+                    }
                 }
                 PeerAction::BroadcastCancel { index, begin, length, block_index } => {
                     let peers: Vec<(String, Arc<Mutex<Peer>>)> = {

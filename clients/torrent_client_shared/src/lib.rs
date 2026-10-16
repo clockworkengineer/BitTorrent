@@ -91,6 +91,8 @@ pub struct TorrentStatusInfo {
     pub uploaded: u64,
     pub download_dir: String,
     pub total_size: u64,
+    #[serde(default)]
+    pub is_super_seeding: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -223,6 +225,10 @@ pub enum IpcMessage {
         file_index: usize,
         priority: String,
     },
+    SetSuperSeeding {
+        info_hash: String,
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -304,6 +310,17 @@ mod tests {
         match decoded_pieces {
             IpcMessage::Pieces { info_hash } => assert_eq!(info_hash, "fedcba0987654321fedc"),
             _ => panic!("Expected IpcMessage::Pieces"),
+        }
+
+        let msg_ss = IpcMessage::SetSuperSeeding { info_hash: "abcdef1234567890abcdef12".to_string(), enabled: true };
+        let json_ss = serde_json::to_string(&msg_ss).unwrap();
+        let decoded_ss: IpcMessage = serde_json::from_str(&json_ss).unwrap();
+        match decoded_ss {
+            IpcMessage::SetSuperSeeding { info_hash, enabled } => {
+                assert_eq!(info_hash, "abcdef1234567890abcdef12");
+                assert_eq!(enabled, true);
+            }
+            _ => panic!("Expected IpcMessage::SetSuperSeeding"),
         }
     }
 

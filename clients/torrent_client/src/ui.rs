@@ -117,6 +117,17 @@ impl TorrentClientApp {
                     ui.label("Share Ratio:");
                     ui.label(format!("{:.3}", ratio));
                     ui.end_row();
+
+                    ui.label("Super-Seeding (BEP 16):");
+                    let mut is_ss = ctx.is_super_seeding();
+                    let label = if is_ss { "Enabled (Initial Seeding)" } else { "Disabled" };
+                    if ui.checkbox(&mut is_ss, label).clicked() {
+                        drop(ctx);
+                        if let Ok(mut ctx_mut) = context.lock() {
+                            ctx_mut.set_super_seeding(is_ss);
+                        }
+                    }
+                    ui.end_row();
                 });
         } else {
             ui.label("Unable to lock session context.");

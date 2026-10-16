@@ -221,6 +221,7 @@ impl Engine {
                 uploaded: session_state.last_uploaded,
                 download_dir: session_state.session.download_path().display().to_string(),
                 total_size: session_state.last_total,
+                is_super_seeding: session_state.session.is_super_seeding(),
             });
         }
         torrent_infos
@@ -872,6 +873,15 @@ fn main() {
                             Ok(()) => IpcReply::Success { message: format!("Set file {} priority to {}", file_index, prio.as_str()) },
                             Err(err) => IpcReply::Error { reason: err.to_string() },
                         }
+                    } else {
+                        IpcReply::Error { reason: "Torrent not found".to_string() }
+                    }
+                }
+                IpcMessage::SetSuperSeeding { info_hash, enabled } => {
+                    let mut e = engine_ipc.lock().unwrap();
+                    if let Some(s) = e.sessions.iter_mut().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
+                        s.session.set_super_seeding(enabled);
+                        IpcReply::Success { message: format!("Super-seeding set to {} for {}", enabled, info_hash) }
                     } else {
                         IpcReply::Error { reason: "Torrent not found".to_string() }
                     }

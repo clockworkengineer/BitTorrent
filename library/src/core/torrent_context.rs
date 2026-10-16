@@ -52,6 +52,19 @@ pub struct PieceInfo {
     pub piece_length: u32,
 }
 
+/// Tracks the super-seeding (initial seeding / BEP 16) distribution state.
+#[derive(Debug, Clone, Default)]
+pub struct SuperSeedingState {
+    /// Whether super-seeding mode is actively enabled.
+    pub enabled: bool,
+    /// Maps piece index to the peer IP it was exclusively offered to.
+    pub piece_offered_to: HashMap<u32, String>,
+    /// Maps each peer IP to the piece index currently offered to them pending swarm validation.
+    pub peer_pending_piece: HashMap<String, u32>,
+    /// Counts how many times each piece has been witnessed in the swarm (from peers other than the one it was offered to).
+    pub piece_swarm_count: HashMap<u32, usize>,
+}
+
 // Removed AssemblerData definition (now in assembler.rs)
 
 /// Enumeration of states a torrent transfer session can be in.
@@ -109,6 +122,7 @@ pub struct TorrentContext {
     pub upload_speed_tracker: Mutex<(std::time::Instant, u64, i64)>,
     pub piece_priority_queue: Mutex<std::collections::BinaryHeap<PieceRarity>>,
     pub unchoked_peers_count: AtomicUsize,
+    pub super_seeding: SuperSeedingState,
     #[cfg(feature = "v2")]
     pub file_merkle_trees: Mutex<HashMap<usize, crate::core::merkle::MerkleTree>>,
 }
@@ -185,6 +199,10 @@ impl TorrentContext {
             piece_data,
             bad_peer_scores: Mutex::new(HashMap::new()),
             storage,
+            super_seeding: SuperSeedingState {
+                enabled: config.super_seeding,
+                ..Default::default()
+            },
             config,
             download_path: download_path.to_path_buf(),
             web_seeds,
@@ -254,6 +272,10 @@ impl TorrentContext {
             piece_data: Vec::new(),
             bad_peer_scores: Mutex::new(HashMap::new()),
             storage,
+            super_seeding: SuperSeedingState {
+                enabled: config.super_seeding,
+                ..Default::default()
+            },
             config,
             download_path: download_path.to_path_buf(),
             metadata_size: None,
@@ -737,6 +759,133 @@ impl TorrentContext {
         }
 
         Ok(())
+    }
+
+    /// Returns true if super-seeding mode (BEP 16) is actively running.
+    pub fn is_super_seeding(&self) -> bool {
+        self.super_seeding.enabled && (self.status == TorrentStatus::Seeding || self.is_download_complete())
+    }
+
+    /// Enables or disables super-seeding mode.
+    pub fn set_super_seeding(&mut self, enabled: bool) {
+        self.super_seeding.enabled = enabled;
+        if !enabled {
+            self.super_seeding.piece_offered_to.clear();
+            self.super_seeding.peer_pending_piece.clear();
+        }
+    }
+
+    /// Selects an unseeded/rarest piece to offer to a connected peer in super-seeding mode.
+    ///
+    /// Adheres to BEP 16:
+    /// - Only offers a piece if this peer does not already have a pending piece waiting for swarm validation.
+    /// - Picks a piece that the peer does NOT have.
+    /// - Prioritizes pieces that have not yet been offered to anyone in the swarm.
+    /// - Breaks ties by lowest piece swarm count (least witnessed copies).
+    pub fn offer_super_seed_piece(&mut self, peer_ip: &str, peer_bitfield: &[u8]) -> Option<u32> {
+        if !self.is_super_seeding() {
+            return None;
+        }
+
+        // Do not offer another piece if this peer is already holding a pending piece awaiting validation
+        if self.super_seeding.peer_pending_piece.contains_key(peer_ip) {
+            return None;
+        }
+
+        let total_pieces = self.number_of_pieces as u32;
+        if total_pieces == 0 {
+            return None;
+        }
+
+        let mut candidate_pieces: Vec<u32> = (0..total_pieces)
+            .filter(|&piece| {
+                if !self.is_piece_local(piece) {
+                    return false;
+                }
+                let (b_idx, mask) = get_bitfield_index_and_mask(piece);
+                if b_idx < peer_bitfield.len() && (peer_bitfield[b_idx] & mask) != 0 {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        if candidate_pieces.is_empty() {
+            return None;
+        }
+
+        candidate_pieces.sort_by_key(|&p| {
+            let is_currently_offered = self.super_seeding.piece_offered_to.contains_key(&p);
+            let swarm_count = self.super_seeding.piece_swarm_count.get(&p).copied().unwrap_or(0);
+            (is_currently_offered, swarm_count, p)
+        });
+
+        let chosen_piece = candidate_pieces[0];
+        self.super_seeding.piece_offered_to.insert(chosen_piece, peer_ip.to_string());
+        self.super_seeding.peer_pending_piece.insert(peer_ip.to_string(), chosen_piece);
+
+        Some(chosen_piece)
+    }
+
+    /// Evaluates incoming `Have` announcements from peers to validate piece propagation in super-seeding mode.
+    ///
+    /// If `reporting_peer_ip` received a piece from another peer to whom it was originally offered,
+    /// the original peer is freed up and credited, and a new piece is selected for them.
+    /// Returns `Some((offered_peer_ip, next_piece_for_offered_peer))` if a new piece should be sent to that peer.
+    pub fn on_peer_have(&mut self, reporting_peer_ip: &str, piece_index: u32) -> Option<(String, u32)> {
+        if !self.is_super_seeding() {
+            return None;
+        }
+
+        // Record that this piece was seen in the swarm
+        *self.super_seeding.piece_swarm_count.entry(piece_index).or_insert(0) += 1;
+
+        // Check if this piece was offered to someone
+        if let Some(offered_peer_ip) = self.super_seeding.piece_offered_to.get(&piece_index).cloned() {
+            if offered_peer_ip != reporting_peer_ip {
+                // The piece was successfully uploaded by offered_peer to another peer!
+                if self.super_seeding.peer_pending_piece.get(&offered_peer_ip) == Some(&piece_index) {
+                    self.super_seeding.peer_pending_piece.remove(&offered_peer_ip);
+
+                    // Fetch offered_peer's bitfield to find their next piece
+                    let remote_bitfield = {
+                        if let Ok(swarm) = self.peer_swarm.read() {
+                            swarm.get(&offered_peer_ip)
+                                .and_then(|p| p.lock().ok())
+                                .map(|p| p.remote_piece_bitfield.clone())
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(bitfield) = remote_bitfield {
+                        if let Some(next_piece) = self.offer_super_seed_piece(&offered_peer_ip, &bitfield) {
+                            return Some((offered_peer_ip, next_piece));
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Cleans up state when a peer disconnects in super-seeding mode.
+    pub fn on_peer_disconnect(&mut self, peer_ip: &str) {
+        if let Some(piece) = self.super_seeding.peer_pending_piece.remove(peer_ip) {
+            if self.super_seeding.piece_offered_to.get(&piece).map(|ip| ip == peer_ip).unwrap_or(false) {
+                self.super_seeding.piece_offered_to.remove(&piece);
+            }
+        }
+    }
+
+    /// Checks if a piece request from a peer is permissible in super-seeding mode.
+    pub fn can_upload_piece_to_peer(&self, peer_ip: &str, piece_index: u32) -> bool {
+        if !self.is_super_seeding() {
+            return true;
+        }
+        self.super_seeding.peer_pending_piece.get(peer_ip) == Some(&piece_index)
+            || self.super_seeding.piece_offered_to.get(&piece_index).map(|ip| ip == peer_ip).unwrap_or(false)
     }
 
     /// Checks if the session download is complete (all wanted pieces downloaded).

@@ -77,6 +77,12 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Sets whether super-seeding mode (BEP 16) is enabled when seeding.
+    pub fn super_seeding(mut self, super_seeding: bool) -> Self {
+        self.config.super_seeding = super_seeding;
+        self
+    }
+
     /// Attaches a peer manager registry for dead-peer tracking across sessions.
     pub fn manager(mut self, manager: Arc<Manager>) -> Self {
         self.manager = Some(manager);
@@ -87,6 +93,11 @@ impl TorrentSessionBuilder {
     pub fn config(mut self, config: SessionConfig) -> Self {
         self.config = config;
         self
+    }
+
+    /// Returns a reference to the configured SessionConfig.
+    pub fn get_config(&self) -> &SessionConfig {
+        &self.config
     }
 
     /// Sets a custom piece-selection strategy (default: `RarestFirstSelector`).

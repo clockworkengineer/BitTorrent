@@ -82,6 +82,13 @@ function renderTorrents(torrents) {
             ? `<button class="secondary-btn" onclick="resumeTorrent('${t.info_hash}')">Resume</button>`
             : `<button class="secondary-btn" onclick="pauseTorrent('${t.info_hash}')">Pause</button>`;
 
+        const ssBadge = t.is_super_seeding
+            ? `<span class="status-pill" style="background: rgba(139, 92, 246, 0.2); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4); margin-left: 4px;">Super-Seed</span>`
+            : '';
+        const ssBtn = t.is_super_seeding
+            ? `<button class="secondary-btn" style="color: #a78bfa; border-color: rgba(139, 92, 246, 0.4);" onclick="toggleSuperSeed('${t.info_hash}', false)" title="Disable Super-Seeding">⚡ SS On</button>`
+            : `<button class="secondary-btn" onclick="toggleSuperSeed('${t.info_hash}', true)" title="Enable Super-Seeding (BEP 16)">⚡ SS Off</button>`;
+
         html += `
             <tr>
                 <td class="torrent-name" title="${t.name || 'Resolving...'}"><strong>${t.name || 'Resolving...'}</strong></td>
@@ -93,7 +100,7 @@ function renderTorrents(torrents) {
                         <span class="progress-text">${progressPercent}%</span>
                     </div>
                 </td>
-                <td><span class="status-pill ${statusClass}">${t.status}</span></td>
+                <td><span class="status-pill ${statusClass}">${t.status}</span>${ssBadge}</td>
                 <td>${peersText}</td>
                 <td>${speedText}</td>
                 <td>${sizeText}</td>
@@ -103,6 +110,7 @@ function renderTorrents(torrents) {
                         <button class="stream-btn" onclick="openStreamModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Stream')}')">▶ Stream</button>
                         <button class="secondary-btn" onclick="openFilesModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Files')}')">📁 Files</button>
                         <button class="secondary-btn" onclick="openSwarmModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Swarm')}')">👥 Swarm</button>
+                        ${ssBtn}
                         ${actionBtn}
                         <button class="danger-btn" onclick="removeTorrent('${t.info_hash}')">Remove</button>
                     </div>
@@ -152,6 +160,21 @@ window.removeTorrent = async (hash) => {
         else showToast(data.reason || "Failed to remove torrent", true);
     } catch (e) {
         showToast("Error removing torrent", true);
+    }
+};
+
+window.toggleSuperSeed = async (hash, enabled) => {
+    try {
+        const res = await fetch(`/api/torrents/${hash}/super-seeding`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        const data = await res.json();
+        if (res.ok) showToast(`Super-seeding ${enabled ? 'enabled' : 'disabled'}`);
+        else showToast(data.reason || "Failed to toggle super-seeding", true);
+    } catch (e) {
+        showToast("Error toggling super-seeding", true);
     }
 };
 

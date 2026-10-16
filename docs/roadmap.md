@@ -162,14 +162,36 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 
 ---
 
+### Phase 25: Super-Seeding Mode (BEP 16)
+
+Implemented complete BEP 16 Super-Seeding (Initial Seeding) mode across the core protocol library, daemon, CLI, WebUI, and Desktop GUI:
+- **Wire Protocol & Seeder Emulation**:
+  - In super-seeding mode, the seeder hides its complete bitfield on handshake and masquerades as an incomplete peer with no pieces.
+  - Offers unseeded pieces exclusively via `PeerMessage::Have(piece_index)` based on rarest swarm distribution and piece offering history.
+- **Swarm Validation & Propagation Enforcement**:
+  - The seeder enforces a single-piece-at-a-time offer per peer until another peer in the swarm announces a `Have` message for that piece, validating that the recipient successfully shared it with the swarm.
+  - Upload gatekeeper (`TorrentContext::can_upload_piece_to_peer`): Only blocks belonging to pieces offered to that specific peer are served, preventing greedy peers from leeching unauthorized pieces.
+  - Automatic peer disconnect recovery: If a peer drops before the swarm validates the offered piece, the piece is immediately unreserved and recycled to other connected peers.
+- **Automatic Exit Condition**:
+  - Automatically detects when another complete seed joins or appears in the swarm (via `Bitfield` or `Have` messages covering all pieces), exiting super-seeding mode and reverting to standard seeding behavior.
+- **Full Client Ecosystem & Management**:
+  - **Core & Session**: Configurable via `SessionConfig.super_seeding`, `TorrentSessionBuilder::super_seeding(bool)`, `TorrentSession::is_super_seeding()`, and `TorrentSession::set_super_seeding(bool)`.
+  - **IPC & Daemon**: Added `IpcMessage::SetSuperSeeding { info_hash, enabled }` and added `is_super_seeding` boolean to `TorrentStatusInfo`.
+  - **CLI (`bt-cli`)**: Added `bt-cli super-seed <hash> <on|off>` command and `[SS]` indicator in the status table.
+  - **WebUI (`bt_webui`)**: Added `POST /api/torrents/:info_hash/super-seeding` API endpoint, glowing `Super-Seed` badge, and one-click `⚡ SS On / SS Off` toggle button in the torrent list.
+  - **Desktop GUI (`torrent_client`)**: Added interactive `Super-Seeding (BEP 16)` checkbox toggle in the `Overview` detail tab.
+  - **Test Suite**: Dedicated integration tests in `library/tests/super_seeding_tests.rs` verifying piece distribution, swarm have validation, upload filtering, disconnect recovery, and auto-exit upon detecting a second seed.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Super-Seeding Mode (BEP 16)**: Algorithm to optimize initial seeding bandwidth by advertising pieces only after existing peers have uploaded them to others.
+1. **WebRTC / WebTorrent Peer Transport**: Integrate WebRTC data channels enabling browser clients to exchange torrent pieces directly with the client.
 
-2. **WebRTC / WebTorrent Peer Transport**: Integrate WebRTC data channels enabling browser clients to exchange torrent pieces directly with the client.
+2. **Fast Resume File Serialization (BEP 47)**: Native binary / bencode serialization and loading of `.resume` state files to avoid re-checking complete files across restarts.
 
-3. **Fast Resume File Serialization (BEP 47)**: Native binary / bencode serialization and loading of `.resume` state files to avoid re-checking complete files across restarts.
+3. **IPv6 Compact Tracker & Peer Wire Enhancements**: Comprehensive multi-homed IPv6 announcing and transport tuning across dual-stack swarms.
 
 

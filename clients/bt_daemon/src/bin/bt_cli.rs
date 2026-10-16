@@ -59,6 +59,7 @@ fn print_usage() {
     println!("  bt-cli remove <info-hash> [--purge]");
     println!("  bt-cli files <info-hash>");
     println!("  bt-cli set-priority <info-hash> <file-index> <skip|low|normal|high>");
+    println!("  bt-cli super-seed <info-hash> <on|off>");
     println!("  bt-cli peers <info-hash>");
     println!("  bt-cli pieces <info-hash>");
     println!("  bt-cli shutdown");
@@ -85,8 +86,14 @@ fn print_status_table(torrents: &[TorrentStatusInfo]) {
             t.name.clone()
         };
 
+        let status_str = if t.is_super_seeding {
+            format!("{} [SS]", t.status)
+        } else {
+            t.status.clone()
+        };
+
         println!("{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20} | {:<20}",
-                 truncated_name, t.info_hash, progress_str, t.status, peers_str, speed_str, downloaded_str, t.download_dir);
+                 truncated_name, t.info_hash, progress_str, status_str, peers_str, speed_str, downloaded_str, t.download_dir);
     }
 }
 
@@ -161,6 +168,22 @@ fn main() {
             };
             let priority = args[4].clone();
             IpcMessage::SetFilePriority { info_hash, file_index, priority }
+        }
+        "super-seed" | "superseed" => {
+            if args.len() < 4 {
+                eprintln!("Error: 'super-seed' requires <info-hash> <on|off>");
+                return;
+            }
+            let info_hash = args[2].clone();
+            let enabled = match args[3].to_lowercase().as_str() {
+                "on" | "true" | "1" | "enable" | "enabled" => true,
+                "off" | "false" | "0" | "disable" | "disabled" => false,
+                _ => {
+                    eprintln!("Error: Expected 'on' or 'off' for super-seed state.");
+                    return;
+                }
+            };
+            IpcMessage::SetSuperSeeding { info_hash, enabled }
         }
         "peers" => {
             if args.len() < 3 {

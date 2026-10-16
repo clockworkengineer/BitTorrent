@@ -50,6 +50,8 @@ pub struct SessionConfig {
     pub block_size: usize,
     /// Choking algorithm strategy.
     pub choking_strategy: Arc<dyn ChokingStrategy>,
+    /// Enable Super-Seeding mode (BEP 16) when seeding.
+    pub super_seeding: bool,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -79,6 +81,7 @@ impl std::fmt::Debug for SessionConfig {
           .field("handshake_timeout", &self.handshake_timeout)
           .field("connection_backoff", &self.connection_backoff)
           .field("block_size", &self.block_size)
+          .field("super_seeding", &self.super_seeding)
           .field("choking_strategy", &"Arc<dyn ChokingStrategy>");
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
@@ -115,6 +118,7 @@ impl Default for SessionConfig {
             connection_backoff: Duration::from_secs(30),
             block_size: crate::constants::BLOCK_SIZE,
             choking_strategy: Arc::new(StandardChoking),
+            super_seeding: false,
         }
     }
 }

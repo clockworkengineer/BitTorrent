@@ -218,9 +218,12 @@ pub async fn perform_handshake(
         peer.lock().unwrap().update_last_message_sent();
     }
 
-    // Send our current bitfield so the remote knows which pieces we have
-    let bitfield = context.lock().unwrap().bitfield.clone();
-    if !bitfield.is_empty() {
+    // Send our current bitfield so the remote knows which pieces we have (omitted in super-seeding mode)
+    let (bitfield, is_super_seeding) = {
+        let ctx = context.lock().unwrap();
+        (ctx.bitfield.clone(), ctx.is_super_seeding())
+    };
+    if !bitfield.is_empty() && !is_super_seeding {
         if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
             mark_peer_dead(manager, &peer_details.ip);
             return Err(());
@@ -670,6 +673,7 @@ pub async fn handle_peer_session(
                 ctx.release_block_request(pn, bi);
             }
         }
+        ctx.on_peer_disconnect(&peer_details.ip);
         ctx.remove_peer(&peer_details.ip);
     }
 }

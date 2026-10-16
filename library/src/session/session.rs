@@ -203,6 +203,16 @@ impl TorrentSession {
         self.context.clone()
     }
 
+    /// Returns true if super-seeding mode (BEP 16) is active.
+    pub fn is_super_seeding(&self) -> bool {
+        self.context.lock().unwrap().is_super_seeding()
+    }
+
+    /// Enables or disables super-seeding mode (BEP 16).
+    pub fn set_super_seeding(&mut self, enabled: bool) {
+        self.context.lock().unwrap().set_super_seeding(enabled);
+    }
+
     /// Creates a seekable streaming reader ([`TorrentStream`](crate::storage::stream::TorrentStream)) over the entire torrent.
     ///
     /// Automatically installs a [`StreamingPieceSelector`](crate::core::selector::StreamingPieceSelector) into the session context
