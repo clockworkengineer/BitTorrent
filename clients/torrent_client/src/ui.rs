@@ -51,7 +51,7 @@ impl TorrentClientApp {
             .show(ui, |ui| {
                 match self.active_detail_tab {
                     DetailTab::Overview => self.draw_overview_tab(ui, &context, &last_file_name, last_downloaded, last_uploaded, last_total),
-                    DetailTab::Files => self.draw_files_tab(ui, &context),
+                    DetailTab::Files => self.draw_files_tab(ui, &context, selected_idx),
                     DetailTab::Peers => self.draw_peers_tab(ui, &context),
                     DetailTab::Trackers => self.draw_trackers_tab(ui, &context),
                     DetailTab::Logs => self.draw_logs_tab(ui),
@@ -122,30 +122,45 @@ impl TorrentClientApp {
     }
 
     /// Renders a list of the relative paths, lengths, and file offsets of all files packaged inside the torrent.
-    pub fn draw_files_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>) {
+    pub fn draw_files_tab(&mut self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>, session_idx: usize) {
         if let Ok(ctx) = context.lock() {
             if ctx.files_to_download.is_empty() {
                 ui.label("No files list found (Magnet bootstrapping...)");
                 return;
             }
 
+            let mut stream_target: Option<usize> = None;
+
             egui::Grid::new("files_grid")
-                .num_columns(3)
+                .num_columns(4)
                 .spacing([12.0, 6.0])
                 .striped(true)
                 .show(ui, |ui| {
                     ui.strong("Relative Path");
                     ui.strong("Size");
                     ui.strong("Offset");
+                    ui.strong("Action");
                     ui.end_row();
 
-                    for file in &ctx.files_to_download {
+                    for (idx, file) in ctx.files_to_download.iter().enumerate() {
                         ui.label(&file.torrent_path);
                         ui.label(fmt_bytes(file.length));
                         ui.label(fmt_bytes(file.offset));
+
+                        if torrent_client_shared::is_media_filename(&file.torrent_path) {
+                            if ui.button("▶ Stream").clicked() {
+                                stream_target = Some(idx);
+                            }
+                        } else {
+                            ui.label("-");
+                        }
                         ui.end_row();
                     }
                 });
+
+            if let Some(idx) = stream_target {
+                self.start_streaming(session_idx, Some(idx));
+            }
         } else {
             ui.label("Unable to lock session context.");
         }

@@ -3996,6 +3996,7 @@ dependencies = [
  "serde",
  "serde_json",
  "torrent_client_shared",
+ "webbrowser",
 ]
 
 [[package]]

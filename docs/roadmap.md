@@ -115,6 +115,12 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 - **Metadata Integration**: Parsed and propagated per-file `pieces_root` in `FileDetails` from the metadata `file tree` dictionary.
 - **Immediate Block Assembly Rejection**: Verified blocks directly in `TorrentContext::add_block_to_storage`, immediately rejecting and discarding corrupt or poisoned blocks from bad peers.
 
+### Phase 21: Desktop GUI Video Streaming & In-App Player Launcher (Completed)
+- **Embedded Loopback `StreamServer`**: Embedded multi-threaded HTTP server in `torrent_client` bound to an ephemeral loopback port (`127.0.0.1:0`) supporting HTTP Range requests (`206 Partial Content`), seek operations, and MIME type autodetection.
+- **Dynamic Prioritization & Lookahead**: Integrates with `TorrentStream` and `StreamingPieceSelector`, dynamically prioritizing pieces around playback cursor and read positions.
+- **Dual UI Access**: Provides `▶ Stream` buttons in both the torrent list items (streaming the primary/largest media file) and individual media files in the `Files` detail tab.
+- **Active Streaming Top Banner**: Live playback banner with progress bar, `⏹ Stop`, `📋 Copy URL`, and `🚀 Open Player` to launch the stream directly in the default OS media player / browser via `webbrowser`.
+
 ---
 
 ## Future Roadmap
@@ -123,6 +129,4 @@ The following enhancements are proposed for future development:
 
 1. **uTP Selective Acknowledgement (SACK Extension Header — BEP 29)**: Support selective ACK extension headers in `UtpHeader` for efficient out-of-order delivery and selective retransmissions.
 
-2. **Desktop GUI Video Streaming & In-App Player**: Embed native video playback in `torrent_client` utilizing the seekable `TorrentStream` reader.
-
-3. **Peer Swarm Visualizer & Bitfield Canvas**: Visual real-time map of connected peers, availability piece grids, and country flags.
+2. **Peer Swarm Visualizer & Bitfield Canvas**: Visual real-time map of connected peers, availability piece grids, and country flags.

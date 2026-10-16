@@ -6,6 +6,7 @@
 
 mod app;
 mod state;
+mod stream_server;
 mod ui;
 
 use app::TorrentClientApp;

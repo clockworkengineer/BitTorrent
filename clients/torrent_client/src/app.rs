@@ -37,11 +37,14 @@ pub struct TorrentClientApp {
     pub log_search_query: String,
     /// Visibility state of the About modal dialog.
     pub show_about_dialog: bool,
+    /// In-app media streaming server for the desktop GUI.
+    pub stream_server: Option<std::sync::Arc<crate::stream_server::StreamServer>>,
 }
 
 impl TorrentClientApp {
     /// Creates a new, uninitialized `TorrentClientApp` instance using the log channels.
     pub fn new(log_rx: mpsc::Receiver<String>, log_tx: mpsc::Sender<String>) -> Self {
+        let stream_server = crate::stream_server::StreamServer::new().ok().map(std::sync::Arc::new);
         Self {
             torrent_path: String::new(),
             download_dir: String::new(),
@@ -55,12 +58,75 @@ impl TorrentClientApp {
             active_detail_tab: DetailTab::Overview,
             log_search_query: String::new(),
             show_about_dialog: false,
+            stream_server,
         }
     }
 
     /// Counts how many of the currently loaded sessions match a given status category filter.
     pub fn count_torrents_for_filter(&self, filter: SidebarFilter) -> usize {
         self.sessions.iter().filter(|s| matches_filter(s, filter)).count()
+    }
+
+    /// Starts streaming the selected torrent session or a specific file within it.
+    pub fn start_streaming(&mut self, session_idx: usize, file_idx: Option<usize>) {
+        let Some(session_state) = self.sessions.get(session_idx) else { return; };
+        let Some(server) = &self.stream_server else { return; };
+
+        let context = session_state.session.context.clone();
+        let (file_name, total_size, actual_file_idx) = {
+            if let Ok(ctx) = context.lock() {
+                if let Some(idx) = file_idx {
+                    if let Some(f) = ctx.files_to_download.get(idx) {
+                        (f.torrent_path.clone(), f.length, Some(idx))
+                    } else {
+                        (session_state.last_file_name.clone(), ctx.total_bytes_to_download, None)
+                    }
+                } else {
+                    // Automatically find the largest media file
+                    let mut best = None;
+                    let mut max_len = 0;
+                    for (i, f) in ctx.files_to_download.iter().enumerate() {
+                        if torrent_client_shared::is_media_filename(&f.torrent_path) && f.length > max_len {
+                            max_len = f.length;
+                            best = Some(i);
+                        }
+                    }
+                    if best.is_none() {
+                        for (i, f) in ctx.files_to_download.iter().enumerate() {
+                            if f.length > max_len {
+                                max_len = f.length;
+                                best = Some(i);
+                            }
+                        }
+                    }
+                    if let Some(idx) = best {
+                        let f = &ctx.files_to_download[idx];
+                        (f.torrent_path.clone(), f.length, Some(idx))
+                    } else {
+                        (session_state.last_file_name.clone(), ctx.total_bytes_to_download, None)
+                    }
+                }
+            } else {
+                (session_state.last_file_name.clone(), session_state.last_total, None)
+            }
+        };
+
+        server.set_active_stream(
+            session_state.last_file_name.clone(),
+            file_name,
+            context,
+            actual_file_idx,
+            total_size,
+        );
+
+        let _ = server.open_in_player();
+    }
+
+    /// Stops the currently active media stream.
+    pub fn stop_streaming(&mut self) {
+        if let Some(server) = &self.stream_server {
+            server.stop_active_stream();
+        }
     }
 }
 
@@ -70,6 +136,8 @@ impl eframe::App for TorrentClientApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Save final state before stopping sessions to capture the exact downloaded bitfields
         self.save_state();
+
+        self.stop_streaming();
 
         // Stop all active sessions so background threads don't outlive the process.
         for state in &mut self.sessions {
@@ -122,6 +190,43 @@ impl eframe::App for TorrentClientApp {
             });
             ui.add_space(8.0);
         });
+
+        // Active Streaming Banner
+        if let Some(server) = &self.stream_server {
+            if let Some(active) = server.active_stream() {
+                egui::TopBottomPanel::top("stream_banner").show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("🎬 Streaming:").strong().color(egui::Color32::from_rgb(52, 152, 219)));
+                        let stream_title = if active.file_name != active.torrent_name {
+                            format!("{}: {}", active.torrent_name, active.file_name)
+                        } else {
+                            active.file_name.clone()
+                        };
+                        ui.label(egui::RichText::new(stream_title).strong());
+
+                        let cur = active.current_position.load(std::sync::atomic::Ordering::Relaxed);
+                        let prog = if active.total_size > 0 { (cur as f32) / (active.total_size as f32) } else { 0.0 };
+                        ui.add_sized([120.0, 14.0], egui::ProgressBar::new(prog).text(format!("{:.1}%", prog * 100.0)));
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("⏹ Stop").clicked() {
+                                server.stop_active_stream();
+                            }
+                            ui.add_space(6.0);
+                            if ui.button("📋 Copy URL").clicked() {
+                                ui.output_mut(|o| o.copied_text = server.stream_url());
+                            }
+                            ui.add_space(6.0);
+                            if ui.button("🚀 Open Player").clicked() {
+                                let _ = server.open_in_player();
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                });
+            }
+        }
 
         // About Dialog Window
         self.draw_about_dialog(ctx);
@@ -243,6 +348,7 @@ impl eframe::App for TorrentClientApp {
                 .show(ui, |ui| {
                     let mut delete_indices = vec![];
                     let mut select_idx = None;
+                    let mut stream_torrent_idx = None;
 
                     // Display pending/loading sessions with a spinner for instant feedback
                     for pending in &self.pending_sessions {
@@ -312,6 +418,12 @@ impl eframe::App for TorrentClientApp {
                                             let _ = session_state.session.pause();
                                         }
                                     }
+                                    ui.add_space(6.0);
+                                    if session_state.last_status != "Ended" {
+                                        if ui.button("▶ Stream").clicked() {
+                                            stream_torrent_idx = Some(i);
+                                        }
+                                    }
                                 });
                             });
 
@@ -338,6 +450,10 @@ impl eframe::App for TorrentClientApp {
 
                     if let Some(idx) = select_idx {
                         self.selected_session_index = Some(idx);
+                    }
+
+                    if let Some(idx) = stream_torrent_idx {
+                        self.start_streaming(idx, None);
                     }
 
                     if !delete_indices.is_empty() {
