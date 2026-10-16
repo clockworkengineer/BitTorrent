@@ -96,16 +96,28 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 - **Configurable Polling & Timeouts**: `.with_read_timeout(Duration)` and `.with_poll_interval(Duration)` allow callers to configure blocking behavior when awaiting missing pieces, or return `WouldBlock` with `Duration::ZERO`.
 
 
+### Phase 18: HTTP Range Media Streaming Server & HTML5 WebUI Player (Completed)
+- **Embedded HTTP Streaming Server (`bt_daemon`)**: Multi-threaded embedded HTTP server on port 8081 serving `206 Partial Content`, byte ranges (`bytes=start-end`), MIME detection, and multi-file routing.
+- **IPC Protocol & CLI File Inspection**: Added `IpcMessage::Files` and `IpcReply::FileList` to query metadata and file lists, with `bt-cli files <hash>` command.
+- **Glassmorphic WebUI Video Player**: Interactive modal `#stream-modal` in WebUI with HTML5 `<video>`, live stream stats, file selector dropdown, and `▶ Stream` buttons.
+
+### Phase 19: uTP LEDBAT Congestion Control (RFC 6817 & BEP 29) (Completed)
+- **Sliding-Window `DelayTracker`**: 4 circular time buckets tracking base delays across 4 minutes to account for clock drift and route switching.
+- **`LedbatCongestionController`**: Linear congestion controller scaling `cwnd` based on normalized delay offset `(TARGET - queuing_delay) / TARGET` with default 100ms threshold.
+- **Packet Loss & Fast Retransmit**: Multiplicative decrease (`cwnd = max(cwnd / 2, MIN_CWND)`) triggered on timeout and 3 duplicate ACKs.
+- **Bidirectional Delay Measurement**: Accurately reflects remote timestamps in `timestamp_us` and `timestamp_difference_us` headers without requiring synchronized clocks.
+- **`UtpSocketAdapter`**: Enforces congestion window during transmission and dynamically adjusts window size upon packet acknowledgment.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **LEDBAT Congestion Control for uTP**: Implement the full Low Extra Delay Background Transport algorithm (RFC 6817) — one-way delay measurement, dynamic window sizing, and packet retransmission — in `UtpSocketAdapter`.
+1. **BEP 52 Merkle Tree Block Validation**: Extend the v2 implementation to verify individual blocks against per-file `pieces_root` Merkle tree hashes, enabling block-level verification without downloading an entire piece.
 
-2. **BEP 52 Merkle Tree Block Validation**: Extend the v2 implementation to verify individual blocks against per-file `pieces_root` Merkle tree hashes, enabling block-level verification without downloading an entire piece.
+2. **Tit-for-Tat Upload Choking (BEP 3)**: Optimize upload slot allocation by measuring rolling per-peer download/upload rates and preferentially unchoking the peers contributing the most data to us.
 
-4. **Tit-for-Tat Upload Choking**: Optimize upload slot allocation by measuring rolling per-peer upload rates and preferentially unchoking the peers contributing the most data to us.
+3. **Optimistic Unchoking (BEP 3)**: Periodically unchoke a randomly-selected interested peer every 30 seconds to discover unused upload capacity and give new peers a chance to contribute.
 
-5. **Optimistic Unchoking**: Periodically unchoke a randomly-selected interested peer to discover unused upload capacity and give new peers a chance to contribute.
+4. **uTP Selective Acknowledgement (SACK)**: Support selective ACK extension headers in `UtpHeader` for efficient out-of-order delivery and selective retransmissions.

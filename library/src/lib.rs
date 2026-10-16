@@ -171,7 +171,7 @@ pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector,
 #[cfg(all(feature = "std", feature = "dht"))]
 pub use network::dht::Dht;
 #[cfg(all(feature = "std", feature = "utp"))]
-pub use network::utp::UtpSocketAdapter;
+pub use network::utp::{DelayBucket, DelayTracker, LedbatCongestionController, UtpHeader, UtpPacketType, UtpSocketAdapter};
 #[cfg(all(feature = "std", feature = "mse"))]
 pub use network::peer_network::EncryptedSocket;
 #[cfg(feature = "std")]

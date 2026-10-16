@@ -109,15 +109,15 @@ pub struct UtpSocketAdapter {
 
 ---
 
-## Current Implementation Scope
+## LEDBAT Congestion Control (RFC 6817)
 
-> [!IMPORTANT]
-> The current `UtpSocketAdapter` implements **uTP framing and connection management** but does **not** implement the full **LEDBAT congestion control algorithm**. Specifically:
-> - There is no delay measurement or `timestamp_difference_us`-based congestion window adjustment.
-> - The `wnd_size` field is set to a fixed 1 MB and not dynamically adjusted.
-> - Retransmission on packet loss is not implemented.
-
-This means uTP connections will work for basic data transfer but will not self-throttle in congested network conditions. Full LEDBAT support is a planned future enhancement.
+The `UtpSocketAdapter` incorporates full **LEDBAT congestion control**:
+- **One-Way Delay Tracking**: Uses `timestamp_us` and `timestamp_difference_us` headers to estimate network queuing delay without requiring synchronized clocks.
+- **Sliding-Window Baseline**: `DelayTracker` maintains 4 time buckets of 60 seconds each (4 minutes total) to track `base_delay` and automatically expire obsolete baselines from route switches or clock drift.
+- **Linear Window Scaling**: `LedbatCongestionController` adjusts the congestion window (`cwnd`) on each acknowledged packet:
+  $$\Delta = \frac{\text{TARGET} - \text{queuing\_delay}}{\text{TARGET}} \times \frac{\text{bytes\_acked} \times \text{MSS}}{\text{cwnd}}$$
+- **Fast Retransmit & Loss Multiplicative Decrease**: On 3 duplicate ACKs or packet loss, `cwnd` is cut in half down to `MIN_CWND` (2 × MSS = 2920 bytes).
+- **Window Capacity Enforcement**: Outgoing transmissions via `write()` throttle when bytes in flight exceed the effective congestion window.
 
 ---
 
@@ -135,16 +135,11 @@ let config = SessionConfig {
 };
 ```
 
-> [!NOTE]
-> `UtpSocketFactory` is a convenience wrapper that creates `UtpSocketAdapter` instances on demand. It is a planned addition that will complement the existing `TcpSocketFactory`.
-
 ---
 
 ## Future Work
 
-- **LEDBAT congestion control**: Implement one-way delay measurement and dynamic window sizing to achieve true delay-based backoff.
 - **Selective Acknowledgement (SACK)**: Support selective ACK extension headers for efficient out-of-order delivery.
-- **Packet retransmission**: Detect lost packets via sequence number gaps and re-send.
 - **`UtpSocketFactory`**: A proper `SocketFactory` impl for injecting uTP as a first-class peer transport.
 
 ---

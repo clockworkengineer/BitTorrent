@@ -1,22 +1,27 @@
-//! uTorrent Transport Protocol (uTP — BEP 29)
+//! uTorrent Transport Protocol (uTP — BEP 29) & LEDBAT Congestion Control (RFC 6817)
 //!
-//! Provides uTP packet framing, 20-byte header encode/decode, and a
-//! [`UtpSocketAdapter`] that wraps a UDP socket as an [`AsyncSocket`]-compatible
-//! peer transport.
+//! Provides uTP packet framing, 20-byte header encode/decode, one-way delay tracking,
+//! dynamic congestion window (`cwnd`) scaling via LEDBAT, and a [`UtpSocketAdapter`]
+//! that wraps a UDP socket as an [`AsyncSocket`]-compatible peer transport.
 //!
-//! ## Current Scope
+//! ## Protocol Overview
 //!
-//! This module implements the **framing and connection state machine** (SYN → DATA → ACK → RESET)
-//! but does **not** implement the full LEDBAT congestion control algorithm.
-//! The receive window (`wnd_size`) is fixed at 1 MiB and is not dynamically adjusted.
-//!
-//! See [docs/utp.md](https://github.com/clockworkengineer/BitTorrent/blob/main/docs/utp.md)
-//! for the complete header layout and protocol state machine diagram.
+//! - **Framing**: Fixed 20-byte header (big-endian) carrying sequence numbers, ACKs,
+//!   receive window advertisement, and microsecond timestamps.
+//! - **Delay Measurement**: Measures one-way propagation delay via `timestamp_us` and
+//!   `timestamp_difference_us` headers without requiring synchronized clocks.
+//! - **LEDBAT Congestion Control**: Target queuing delay threshold (100 ms), linear
+//!   `cwnd` adjustment `(TARGET - queuing_delay) / TARGET`, and fast retransmit /
+//!   multiplicative decrease (`cwnd = max(cwnd / 2, MIN_CWND)`) on packet loss or
+//!   3 duplicate ACKs.
+//! - **Connection State Machine**: `ST_SYN` (initiate) → `ST_DATA` / `ST_STATE` (transfer)
+//!   → `ST_RESET` (abort) / `ST_FIN` (graceful close).
 
 use crate::error::BitTorrentError;
 use crate::io_traits::AsyncSocket;
-use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
 use std::net::UdpSocket;
+use std::sync::{Arc, Mutex};
 
 /// The five packet types defined by the uTP protocol (BEP 29).
 ///
@@ -64,7 +69,7 @@ impl UtpPacketType {
 /// | `wnd_size`               | 4 B  | Receive window advertised by the sender |
 /// | `seq_nr`                 | 2 B  | Sequence number of this packet |
 /// | `ack_nr`                 | 2 B  | Last sequence number acknowledged |
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UtpHeader {
     /// Packet type (upper 4 bits of byte 0).
     pub packet_type: UtpPacketType,
@@ -76,7 +81,7 @@ pub struct UtpHeader {
     pub connection_id: u16,
     /// Sender's current timestamp in microseconds (used for delay measurement).
     pub timestamp_us: u32,
-    /// Estimated one-way propagation delay: `sender_ts - last_received_ts`.
+    /// Estimated one-way propagation delay reflected back to remote peer.
     pub timestamp_difference_us: u32,
     /// Number of bytes the sender is willing to buffer (receive window).
     pub wnd_size: u32,
@@ -137,16 +142,299 @@ impl UtpHeader {
     }
 }
 
-/// Adapts a UDP socket to the [`AsyncSocket`] trait using the uTP framing protocol.
+/// Helper function to determine if sequence number `seq` is acknowledged by `ack`
+/// in 16-bit circular sequence space (`seq <= ack`).
+#[inline]
+pub fn seq_acked(seq: u16, ack: u16) -> bool {
+    ack.wrapping_sub(seq) < 32768
+}
+
+/// A single delay measurement bucket for tracking historical minimum propagation delays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DelayBucket {
+    /// Minimum one-way delay observed during this bucket's time window in microseconds.
+    pub min_delay: u32,
+    /// Start timestamp of this bucket in microseconds.
+    pub start_time_us: u64,
+}
+
+impl DelayBucket {
+    /// Creates a new empty bucket starting at `start_time_us`.
+    pub fn new(start_time_us: u64) -> Self {
+        Self {
+            min_delay: u32::MAX,
+            start_time_us,
+        }
+    }
+}
+
+/// Tracks minimum base delays across a circular sliding window of time buckets.
+///
+/// Implements the base delay filter recommended by RFC 6817 (LEDBAT) Section 4.2.
+/// Defaults to 4 buckets of 60 seconds each (4 minutes total history), ensuring
+/// obsolete minimums caused by route changes or clock drift expire automatically.
+#[derive(Debug, Clone)]
+pub struct DelayTracker {
+    buckets: [DelayBucket; 4],
+    current_idx: usize,
+    bucket_duration_us: u64,
+    last_sample_us: u32,
+}
+
+impl Default for DelayTracker {
+    fn default() -> Self {
+        Self::new(60_000_000) // 60 seconds per bucket = 4 minutes history
+    }
+}
+
+impl DelayTracker {
+    /// Creates a new `DelayTracker` with the specified bucket duration in microseconds.
+    pub fn new(bucket_duration_us: u64) -> Self {
+        Self {
+            buckets: [
+                DelayBucket::new(0),
+                DelayBucket::new(0),
+                DelayBucket::new(0),
+                DelayBucket::new(0),
+            ],
+            current_idx: 0,
+            bucket_duration_us,
+            last_sample_us: 0,
+        }
+    }
+
+    /// Records a new one-way delay sample at timestamp `now_us`.
+    pub fn add_sample(&mut self, delay_us: u32, now_us: u64) {
+        if delay_us == 0 {
+            return;
+        }
+        self.last_sample_us = delay_us;
+
+        let cur = &mut self.buckets[self.current_idx];
+        if cur.start_time_us == 0 {
+            cur.start_time_us = now_us;
+            cur.min_delay = delay_us;
+        } else if now_us.saturating_sub(cur.start_time_us) >= self.bucket_duration_us {
+            // Advance to the next bucket in the circular buffer
+            self.current_idx = (self.current_idx + 1) % self.buckets.len();
+            self.buckets[self.current_idx] = DelayBucket {
+                min_delay: delay_us,
+                start_time_us: now_us,
+            };
+        } else {
+            cur.min_delay = cur.min_delay.min(delay_us);
+        }
+    }
+
+    /// Computes the estimated base delay (minimum observed delay across non-expired buckets).
+    ///
+    /// If no valid samples have been recorded yet, returns `u32::MAX`.
+    pub fn base_delay(&self) -> u32 {
+        let mut min = u32::MAX;
+        for b in &self.buckets {
+            if b.start_time_us > 0 && b.min_delay < min {
+                min = b.min_delay;
+            }
+        }
+        min
+    }
+
+    /// Returns the latest delay sample received, or 0 if none has been received.
+    pub fn last_sample(&self) -> u32 {
+        self.last_sample_us
+    }
+
+    /// Returns the configured duration of a single bucket in microseconds.
+    pub fn bucket_duration_us(&self) -> u64 {
+        self.bucket_duration_us
+    }
+}
+
+/// LEDBAT (Low Extra Delay Background Transport — RFC 6817) Congestion Controller.
+///
+/// Implements delay-based congestion control:
+/// - Target queuing delay: 100 ms (100,000 µs).
+/// - Dynamic `cwnd` scaling proportional to `(TARGET - queuing_delay) / TARGET`.
+/// - Fast Retransmit / Multiplicative Decrease on 3 duplicate ACKs or packet loss (`cwnd = max(cwnd / 2, MIN_CWND)`).
+#[derive(Debug, Clone)]
+pub struct LedbatCongestionController {
+    target_delay_us: u32,
+    cwnd: u32,
+    cwnd_float: f64,
+    min_cwnd: u32,
+    max_cwnd: u32,
+    mss: u32,
+    delay_tracker: DelayTracker,
+    last_queuing_delay_us: u32,
+    last_ack_nr: u16,
+    duplicate_acks: u32,
+    remote_wnd_size: u32,
+}
+
+impl Default for LedbatCongestionController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LedbatCongestionController {
+    /// Default target queuing delay of 100 ms (100,000 microseconds) per RFC 6817 / BEP 29.
+    pub const DEFAULT_TARGET_DELAY_US: u32 = 100_000;
+    /// Maximum Segment Size (MSS) in bytes.
+    pub const DEFAULT_MSS: u32 = 1460;
+    /// Minimum congestion window (2 * MSS).
+    pub const DEFAULT_MIN_CWND: u32 = 2 * 1460;
+    /// Maximum allowable congestion window (1 MiB).
+    pub const DEFAULT_MAX_CWND: u32 = 1_048_576;
+
+    /// Creates a new `LedbatCongestionController` with default RFC 6817 parameters.
+    pub fn new() -> Self {
+        Self::with_target(Self::DEFAULT_TARGET_DELAY_US)
+    }
+
+    /// Creates a new `LedbatCongestionController` with a custom target queuing delay in microseconds.
+    pub fn with_target(target_delay_us: u32) -> Self {
+        Self {
+            target_delay_us,
+            cwnd: Self::DEFAULT_MIN_CWND,
+            cwnd_float: Self::DEFAULT_MIN_CWND as f64,
+            min_cwnd: Self::DEFAULT_MIN_CWND,
+            max_cwnd: Self::DEFAULT_MAX_CWND,
+            mss: Self::DEFAULT_MSS,
+            delay_tracker: DelayTracker::default(),
+            last_queuing_delay_us: 0,
+            last_ack_nr: 0,
+            duplicate_acks: 0,
+            remote_wnd_size: Self::DEFAULT_MAX_CWND,
+        }
+    }
+
+    /// Updates the remote peer's advertised receive window (`wnd_size`).
+    pub fn set_remote_window(&mut self, wnd_size: u32) {
+        if wnd_size > 0 {
+            self.remote_wnd_size = wnd_size;
+        }
+    }
+
+    /// Processes an incoming ACK and delay sample, updating the congestion window.
+    ///
+    /// Implements RFC 6817 linear window controller:
+    /// `off_target = (TARGET - queuing_delay) / TARGET`
+    /// `cwnd += (off_target * bytes_acked * MSS) / cwnd`
+    pub fn on_ack(&mut self, bytes_acked: u32, delay_sample_us: u32, now_us: u64) -> u32 {
+        if delay_sample_us > 0 {
+            self.delay_tracker.add_sample(delay_sample_us, now_us);
+            let base = self.delay_tracker.base_delay();
+            let queuing_delay = delay_sample_us.saturating_sub(base);
+            self.last_queuing_delay_us = queuing_delay;
+
+            // RFC 6817 linear controller
+            let off_target = (self.target_delay_us as f64 - queuing_delay as f64) / (self.target_delay_us as f64);
+            // Bound off_target to [-1.0, 1.0] to prevent extreme fluctuations
+            let off_target = off_target.clamp(-1.0, 1.0);
+
+            let delta = (off_target * (bytes_acked as f64) * (self.mss as f64)) / self.cwnd_float;
+            self.cwnd_float = (self.cwnd_float + delta).clamp(self.min_cwnd as f64, self.max_cwnd as f64);
+            self.cwnd = self.cwnd_float.round() as u32;
+        }
+
+        self.cwnd
+    }
+
+    /// Multiplicative decrease upon packet loss or timeout.
+    ///
+    /// Halves `cwnd`, bounded from below by `MIN_CWND`.
+    pub fn on_loss(&mut self) -> u32 {
+        self.cwnd_float = (self.cwnd_float / 2.0).max(self.min_cwnd as f64);
+        self.cwnd = self.cwnd_float.round() as u32;
+        self.cwnd
+    }
+
+    /// Alias for [`on_loss`].
+    pub fn on_packet_loss(&mut self) -> u32 {
+        self.on_loss()
+    }
+
+    /// Handles an incoming acknowledgement number, checking for duplicate ACKs.
+    ///
+    /// Returns `true` if Fast Retransmit was triggered (3 duplicate ACKs reached).
+    pub fn handle_ack(&mut self, ack_nr: u16, bytes_acked: u32, delay_sample_us: u32, now_us: u64) -> bool {
+        if bytes_acked > 0 {
+            self.duplicate_acks = 0;
+            self.last_ack_nr = ack_nr;
+            self.on_ack(bytes_acked, delay_sample_us, now_us);
+            false
+        } else if ack_nr == self.last_ack_nr {
+            self.duplicate_acks += 1;
+            if self.duplicate_acks == 3 {
+                self.on_loss();
+                return true;
+            }
+            false
+        } else {
+            self.duplicate_acks = 0;
+            self.last_ack_nr = ack_nr;
+            if delay_sample_us > 0 {
+                self.delay_tracker.add_sample(delay_sample_us, now_us);
+            }
+            false
+        }
+    }
+
+    /// Returns the current congestion window (`cwnd`) in bytes.
+    pub fn cwnd(&self) -> u32 {
+        self.cwnd
+    }
+
+    /// Returns the effective transmission window in bytes: `min(cwnd, remote_wnd_size)`.
+    pub fn effective_window(&self) -> u32 {
+        self.cwnd.min(self.remote_wnd_size)
+    }
+
+    /// Returns whether `bytes_in_flight` is within the effective congestion window.
+    pub fn can_send(&self, bytes_in_flight: u32) -> bool {
+        bytes_in_flight < self.effective_window()
+    }
+
+    /// Returns available window capacity in bytes.
+    pub fn available_window(&self, bytes_in_flight: u32) -> u32 {
+        self.effective_window().saturating_sub(bytes_in_flight)
+    }
+
+    /// Returns the base delay estimate in microseconds.
+    pub fn base_delay(&self) -> u32 {
+        self.delay_tracker.base_delay()
+    }
+
+    /// Returns the latest computed queuing delay in microseconds.
+    pub fn queuing_delay(&self) -> u32 {
+        self.last_queuing_delay_us
+    }
+
+    /// Returns the configured target queuing delay in microseconds.
+    pub fn target_delay(&self) -> u32 {
+        self.target_delay_us
+    }
+
+    /// Returns a reference to the internal [`DelayTracker`].
+    pub fn delay_tracker(&self) -> &DelayTracker {
+        &self.delay_tracker
+    }
+
+    /// Sets a manual congestion window for testing and initialization.
+    pub fn set_cwnd(&mut self, cwnd: u32) {
+        self.cwnd = cwnd.clamp(self.min_cwnd, self.max_cwnd);
+        self.cwnd_float = self.cwnd as f64;
+    }
+}
+
+/// Adapts a UDP socket to the [`AsyncSocket`] trait using the uTP framing protocol and LEDBAT.
 ///
 /// `UtpSocketAdapter` implements the uTP connection state machine:
 /// - **`connect()`** — sends a `ST_SYN` packet to initiate the handshake.
-/// - **`write()`** — wraps the payload in a `ST_DATA` packet with an incrementing sequence number.
-/// - **`read()`** — receives UDP datagrams, parses uTP headers, sends `ST_STATE` ACKs for data packets.
+/// - **`write()`** — wraps the payload in a `ST_DATA` packet with sequence tracking and LEDBAT window checks.
+/// - **`read()`** — receives UDP datagrams, measures one-way delay, updates LEDBAT `cwnd`, and sends `ST_STATE` ACKs.
 /// - **`close()`** — sends `ST_RESET` and marks the socket as closed.
-///
-/// > **Note**: The receive window (`wnd_size`) is currently fixed at 1 MiB.
-/// > LEDBAT-based dynamic window sizing is a planned future enhancement.
 #[derive(Debug)]
 pub struct UtpSocketAdapter {
     udp: Arc<UdpSocket>,
@@ -154,10 +442,11 @@ pub struct UtpSocketAdapter {
     seq_nr: Mutex<u16>,
     ack_nr: Mutex<u16>,
     closed: std::sync::atomic::AtomicBool,
-    // LEDBAT states
-    cwnd: Mutex<u32>,
-    base_delay: Mutex<u32>,
-    sent_packets: Mutex<std::collections::VecDeque<(u16, std::time::Instant, Vec<u8>)>>,
+    // LEDBAT Congestion Controller & delay tracking
+    controller: Mutex<LedbatCongestionController>,
+    last_remote_timestamp_us: Mutex<u32>,
+    last_remote_recv_us: Mutex<u32>,
+    sent_packets: Mutex<VecDeque<(u16, std::time::Instant, Vec<u8>)>>,
 }
 
 impl UtpSocketAdapter {
@@ -172,16 +461,7 @@ impl UtpSocketAdapter {
         udp.connect(format!("{}:{}", ip, port)).map_err(BitTorrentError::Io)?;
 
         let connection_id = rand::random::<u16>();
-        let adapter = UtpSocketAdapter {
-            udp: Arc::new(udp),
-            connection_id,
-            seq_nr: Mutex::new(1),
-            ack_nr: Mutex::new(0),
-            closed: std::sync::atomic::AtomicBool::new(false),
-            cwnd: Mutex::new(1460),
-            base_delay: Mutex::new(u32::MAX),
-            sent_packets: Mutex::new(std::collections::VecDeque::new()),
-        };
+        let adapter = Self::from_raw_socket(udp, connection_id);
 
         // Send ST_SYN handshake packet
         adapter.send_packet(UtpPacketType::Syn, &[])?;
@@ -189,27 +469,71 @@ impl UtpSocketAdapter {
         Ok(adapter)
     }
 
+    /// Wraps an already bound and connected `UdpSocket` into a `UtpSocketAdapter`.
+    pub fn from_raw_socket(udp: UdpSocket, connection_id: u16) -> Self {
+        let _ = udp.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+        UtpSocketAdapter {
+            udp: Arc::new(udp),
+            connection_id,
+            seq_nr: Mutex::new(1),
+            ack_nr: Mutex::new(0),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            controller: Mutex::new(LedbatCongestionController::new()),
+            last_remote_timestamp_us: Mutex::new(0),
+            last_remote_recv_us: Mutex::new(0),
+            sent_packets: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    /// Returns the current congestion window (`cwnd`) of the adapter in bytes.
+    pub fn cwnd(&self) -> u32 {
+        self.controller.lock().unwrap().cwnd()
+    }
+
+    /// Returns the estimated base delay in microseconds.
+    pub fn base_delay(&self) -> u32 {
+        self.controller.lock().unwrap().base_delay()
+    }
+
+    /// Returns the latest estimated queuing delay in microseconds.
+    pub fn queuing_delay(&self) -> u32 {
+        self.controller.lock().unwrap().queuing_delay()
+    }
+
+    /// Returns the number of bytes currently in flight.
+    pub fn bytes_in_flight(&self) -> u32 {
+        self.sent_packets.lock().unwrap().iter().map(|(_, _, p)| p.len() as u32).sum()
+    }
+
     /// Builds and sends a uTP packet of the given type with the supplied payload.
     ///
     /// Acquires the sequence and acknowledgement number locks, constructs the
-    /// 20-byte header, appends the payload, and sends the combined packet over UDP.
-    /// Increments the sequence number after a successful send.
-    fn send_packet(&self, packet_type: UtpPacketType, payload: &[u8]) -> Result<(), BitTorrentError> {
+    /// 20-byte header with current timestamps and reflected delay, appends the payload,
+    /// and sends the combined packet over UDP.
+    pub fn send_packet(&self, packet_type: UtpPacketType, payload: &[u8]) -> Result<(), BitTorrentError> {
         let mut seq = self.seq_nr.lock().unwrap();
         let ack = self.ack_nr.lock().unwrap();
 
-        let timestamp_us = (std::time::SystemTime::now()
+        let now_us = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() & 0xFFFFFFFF) as u32;
+
+        let last_ts = *self.last_remote_timestamp_us.lock().unwrap();
+        let last_recv = *self.last_remote_recv_us.lock().unwrap();
+        let timestamp_difference_us = if last_ts > 0 {
+            last_recv.wrapping_sub(last_ts)
+        } else {
+            0
+        };
 
         let header = UtpHeader {
             packet_type,
             version: 1,
             extension: 0,
             connection_id: self.connection_id,
-            timestamp_us,
-            timestamp_difference_us: 0,
+            timestamp_us: now_us,
+            timestamp_difference_us,
             wnd_size: 1_048_576,
             seq_nr: *seq,
             ack_nr: *ack,
@@ -223,7 +547,7 @@ impl UtpSocketAdapter {
         if packet_type == UtpPacketType::Data {
             let mut sent = self.sent_packets.lock().unwrap();
             sent.push_back((*seq, std::time::Instant::now(), payload.to_vec()));
-            if sent.len() > 128 {
+            if sent.len() > 256 {
                 sent.pop_front();
             }
         }
@@ -246,49 +570,63 @@ impl AsyncSocket for UtpSocketAdapter {
 
         let mut packet_buf = vec![0u8; 2048];
         loop {
-            let n = self.udp.recv(&mut packet_buf).map_err(BitTorrentError::Io)?;
+            if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(0);
+            }
+            let n = match self.udp.recv(&mut packet_buf) {
+                Ok(n) => n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                    continue;
+                }
+                Err(e) => return Err(BitTorrentError::Io(e)),
+            };
             if n < 20 {
                 continue;
             }
 
             if let Ok(header) = UtpHeader::decode(&packet_buf[..20]) {
+                let now_us = (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() & 0xFFFFFFFF) as u32;
+
                 // Track the remote peer's sequence number for our ACK field
                 {
                     let mut ack = self.ack_nr.lock().unwrap();
                     *ack = header.seq_nr;
                 }
 
-                // Compute dynamic delay for LEDBAT
-                let now_us = (std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_micros() & 0xFFFFFFFF) as u32;
-
+                // Track remote timestamps for our reflected timestamp_difference_us
                 if header.timestamp_us > 0 {
-                    let current_delay = now_us.saturating_sub(header.timestamp_us);
-                    let mut base = self.base_delay.lock().unwrap();
-                    if current_delay < *base {
-                        *base = current_delay;
-                    }
-                    let queuing_delay = current_delay.saturating_sub(*base);
-
-                    // LEDBAT adjustment: target delay is 100ms (100_000 microseconds)
-                    let target_delay = 100_000;
-                    let mut cwnd_val = self.cwnd.lock().unwrap();
-                    if queuing_delay < target_delay {
-                        *cwnd_val = cwnd_val.saturating_add(146);
-                    } else {
-                        *cwnd_val = (*cwnd_val).saturating_sub(146).max(1460);
-                    }
+                    *self.last_remote_timestamp_us.lock().unwrap() = header.timestamp_us;
+                    *self.last_remote_recv_us.lock().unwrap() = now_us;
                 }
 
-                // Acknowledge sent packets
+                // Acknowledge sent packets and calculate newly acked bytes
+                let mut bytes_acked: u32 = 0;
                 {
                     let mut sent = self.sent_packets.lock().unwrap();
-                    sent.retain(|&(seq, _, _)| {
-                        let diff = header.ack_nr.wrapping_sub(seq);
-                        diff > 32768
-                    });
+                    let mut unacked = VecDeque::new();
+                    while let Some((seq, ts, payload)) = sent.pop_front() {
+                        if seq_acked(seq, header.ack_nr) {
+                            bytes_acked = bytes_acked.saturating_add(payload.len() as u32);
+                        } else {
+                            unacked.push_back((seq, ts, payload));
+                        }
+                    }
+                    *sent = unacked;
+                }
+
+                // Update LEDBAT controller with ACK and delay sample
+                let now_us_u64 = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64;
+
+                {
+                    let mut ctrl = self.controller.lock().unwrap();
+                    ctrl.set_remote_window(header.wnd_size);
+                    ctrl.handle_ack(header.ack_nr, bytes_acked, header.timestamp_difference_us, now_us_u64);
                 }
 
                 if header.packet_type == UtpPacketType::Reset {
@@ -309,7 +647,7 @@ impl AsyncSocket for UtpSocketAdapter {
         }
     }
 
-    /// Wraps `buf` in a `ST_DATA` uTP packet and sends it over UDP.
+    /// Wraps `buf` in a `ST_DATA` uTP packet and sends it over UDP, respecting LEDBAT congestion window.
     ///
     /// Returns an error if the socket is already closed.
     async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
@@ -318,6 +656,17 @@ impl AsyncSocket for UtpSocketAdapter {
                 std::io::ErrorKind::ConnectionAborted,
                 "Socket closed",
             )));
+        }
+
+        // Check congestion window before sending
+        let start_wait = std::time::Instant::now();
+        loop {
+            let in_flight: u32 = self.sent_packets.lock().unwrap().iter().map(|(_, _, p)| p.len() as u32).sum();
+            let can_send = self.controller.lock().unwrap().can_send(in_flight);
+            if can_send || start_wait.elapsed() > std::time::Duration::from_millis(500) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
         self.send_packet(UtpPacketType::Data, buf)?;
