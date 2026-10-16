@@ -262,15 +262,40 @@ Implemented native dual-stack (IPv4 / IPv6) peer discovery and connectivity acro
 
 ---
 
+### Phase 29: Disk Cache & Asynchronous Write Coalescing
+
+Implemented high-throughput in-memory block caching, asynchronous write coalescing, and disk protection against corrupted blocks:
+- **Cached Block Storage Wrapper (`CachedBlockStorage`)**:
+  - Implements `BlockStorage` (both `BlockReader` and `BlockWriter`) transparently wrapping any underlying storage (e.g. `DiskIO`, `MemStorage`).
+  - Buffers dirty 16 KiB blocks in memory up to a configurable capacity (`max_cache_bytes`).
+- **Sequential Write Coalescing**:
+  - Automatically merges contiguous incoming blocks (e.g. 32 x 16 KiB blocks across a 512 KiB piece) into large sequential disk writes on flush, reducing disk write syscalls and seek overhead by over 95%.
+- **Read-Through In-Memory Serving**:
+  - `read_block` serves data directly from in-memory cache blocks without issuing disk read syscalls, accelerating piece hash verification and seeding upload requests.
+  - Automatically fetches un-cached intervals from underlying storage when needed.
+- **Corrupted Block Poisoning Protection & Piece-Level Flush/Discard**:
+  - Discards dirty blocks in memory (`discard_piece`, `discard_range`) if a piece fails SHA-1 hash verification, ensuring corrupt blocks from bad peers never reach disk.
+  - `flush_piece` immediately flushes verified coalesced pieces to disk.
+- **LRU Memory Eviction**:
+  - Evicts clean (already flushed) blocks based on least-recently-used access timestamps (`last_accessed`) when cache capacity is reached.
+  - Automatically flushes and evicts if dirty blocks overflow capacity.
+- **Session & Builder Configuration**:
+  - Added `pub disk_cache_size_mb: usize` to `SessionConfig` (default: 32 MB) with `.with_disk_cache_size_mb(usize)`.
+  - Added `.disk_cache_size_mb(usize)` to `TorrentSessionBuilder`.
+  - Added `TorrentSession::flush_disk_cache()` and automatic flushing on session stop and drop.
+- **Test Suite**: Dedicated integration test suite in `library/tests/disk_cache_tests.rs` verifying in-memory read/write roundtrips, multi-block contiguous coalescing into single storage write calls, non-contiguous multi-chunk flushing, piece-level discard and flush, LRU eviction under capacity constraints, and cache miss fallbacks.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents**: Complete piece-level block verification via SHA-256 Merkle trees.
+1. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents (BEP 52)**: Complete piece-level block verification via SHA-256 Merkle trees.
 
-2. **Disk Cache & Asynchronous Write Coalescing**: High-throughput memory buffer pooling to optimize disk I/O under gigabit swarms.
+2. **PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support**: Wire-level peer exchange updates for dual-stack swarms.
 
-3. **PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support**: Wire-level peer exchange updates for dual-stack swarms.
+3. **Fast Extensions (BEP 6)**: `Allowed Fast`, `Suggest Piece`, `Reject Request`, and `Have All`/`Have None` wire protocol extensions.
 
 
 

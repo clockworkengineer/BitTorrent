@@ -99,10 +99,18 @@ impl TorrentSession {
             files_to_download.clone(),
             piece_length,
         ));
+        let storage: Arc<dyn crate::io_traits::BlockStorage> = if config.disk_cache_size_mb > 0 {
+            Arc::new(crate::storage::disk_cache::CachedBlockStorage::new(
+                disk_io.clone(),
+                config.disk_cache_size_mb * 1024 * 1024,
+            ))
+        } else {
+            disk_io.clone()
+        };
         let context = Arc::new(Mutex::new(TorrentContext::new(
             &meta_info,
             selector,
-            disk_io.clone(),
+            storage,
             &download_path,
             seeding,
             config.clone(),
@@ -485,10 +493,17 @@ impl TorrentSession {
                 let _ = nat_clone.release_mapping(false, port);
             });
         }
+        let _ = self.flush_disk_cache();
         let context = self.context.lock().unwrap();
         context.disconnect_all_peers();
         drop(context);
         self.context.lock().unwrap().stop()
+    }
+
+    /// Flushes any pending dirty blocks in the in-memory write cache out to disk.
+    pub fn flush_disk_cache(&self) -> Result<(), BitTorrentError> {
+        let storage = self.context.lock().unwrap().storage.clone();
+        storage.flush()
     }
 
     /// Returns the current state (e.g. paused, downloading, seeding) of the torrent.

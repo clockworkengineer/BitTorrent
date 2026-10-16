@@ -362,6 +362,14 @@ impl TorrentContext {
         ));
         
         disk_io.create_local_torrent_structure()?;
+        let storage: Arc<dyn crate::io_traits::BlockStorage> = if self.config.disk_cache_size_mb > 0 {
+            Arc::new(crate::storage::disk_cache::CachedBlockStorage::new(
+                disk_io.clone(),
+                self.config.disk_cache_size_mb * 1024 * 1024,
+            ))
+        } else {
+            disk_io.clone()
+        };
         
         self.web_seeds = meta_info.get_web_seeds();
         self.is_private = meta_info.is_private();
@@ -373,7 +381,7 @@ impl TorrentContext {
         self.piece_data = piece_data;
         self.files_to_download = all_files_to_download;
         self.total_bytes_to_download = total_download_length;
-        self.storage = disk_io.clone();
+        self.storage = storage;
         
         #[cfg(feature = "std")]
         {
@@ -1024,6 +1032,7 @@ impl TorrentContext {
                     piece_number,
                     piece_length
                 );
+                let _ = storage.flush();
                 self.update_bitfield_status(
                     piece_number,
                     true,
@@ -1044,6 +1053,10 @@ impl TorrentContext {
             } else {
                 crate::log_debug!("[piece] {} failed hash verification", piece_number);
                 self.clear_piece_requests(piece_number);
+
+                // Discard failed piece dirty blocks from cache so corrupt data never touches disk
+                let piece_offset = (piece_number as u64) * (self.piece_length as u64);
+                storage.discard_range(piece_offset, piece_length as u64);
 
                 // Report all peers that contributed blocks to this piece
                 for source_ip_opt in block_sources {
@@ -1111,6 +1124,7 @@ impl TorrentContext {
         drop(piece_buffers);
 
         if piece_complete {
+            let _ = storage.flush();
             self.update_bitfield_status(piece_number, true, piece_length);
             {
                 let swarm = self.peer_swarm.read().unwrap();

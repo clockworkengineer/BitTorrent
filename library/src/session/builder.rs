@@ -115,6 +115,12 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Sets the in-memory block write cache size in megabytes (0 disables caching).
+    pub fn disk_cache_size_mb(mut self, size_mb: usize) -> Self {
+        self.config.disk_cache_size_mb = size_mb;
+        self
+    }
+
     /// Returns a reference to the configured SessionConfig.
     pub fn get_config(&self) -> &SessionConfig {
         &self.config

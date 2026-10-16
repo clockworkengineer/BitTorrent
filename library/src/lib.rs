@@ -167,6 +167,8 @@ pub use core::metainfo::{FileDetails, FilePriority, MetaInfoFile};
 #[cfg(feature = "std")]
 pub use storage::assembler::Assembler;
 #[cfg(feature = "std")]
+pub use storage::disk_cache::{CacheBlock, CacheMetrics, CachedBlockStorage};
+#[cfg(feature = "std")]
 pub use network::peer::Peer;
 #[cfg(feature = "std")]
 pub use network::peer_id::get as get_peer_id;

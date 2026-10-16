@@ -1,6 +1,8 @@
 #[cfg(feature = "std")]
 pub mod assembler;
 #[cfg(feature = "std")]
+pub mod disk_cache;
+#[cfg(feature = "std")]
 pub mod disk_io;
 #[cfg(feature = "std")]
 pub mod fast_resume;
@@ -10,4 +12,7 @@ pub mod piece_buffer;
 pub mod piece_request;
 #[cfg(feature = "std")]
 pub mod stream;
+
+#[cfg(feature = "std")]
+pub use disk_cache::{CacheBlock, CacheMetrics, CachedBlockStorage};
 

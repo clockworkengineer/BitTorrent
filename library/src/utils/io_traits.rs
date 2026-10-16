@@ -23,6 +23,14 @@ pub trait BlockReader: Send + Sync {
 pub trait BlockWriter: Send + Sync {
     /// Writes a data block at the specified absolute byte offset.
     fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError>;
+
+    /// Flushes any pending dirty or buffered data to underlying storage.
+    fn flush(&self) -> Result<(), BitTorrentError> {
+        Ok(())
+    }
+
+    /// Discards cached uncommitted data for the specified range without flushing (default: no-op).
+    fn discard_range(&self, _offset: u64, _length: u64) {}
 }
 
 /// A hardware-agnostic block storage trait combining reading and writing views.

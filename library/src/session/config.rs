@@ -56,6 +56,8 @@ pub struct SessionConfig {
     pub ipv6: Option<String>,
     /// Enable dual-stack IPv4/IPv6 peer connections and announcements (default: true).
     pub enable_ipv6: bool,
+    /// Size of the in-memory block write cache in megabytes (default: 32 MB, 0 = disabled).
+    pub disk_cache_size_mb: usize,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -86,6 +88,7 @@ impl std::fmt::Debug for SessionConfig {
           .field("connection_backoff", &self.connection_backoff)
           .field("block_size", &self.block_size)
           .field("super_seeding", &self.super_seeding)
+          .field("disk_cache_size_mb", &self.disk_cache_size_mb)
           .field("choking_strategy", &"Arc<dyn ChokingStrategy>");
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
@@ -125,6 +128,7 @@ impl Default for SessionConfig {
             super_seeding: false,
             ipv6: None,
             enable_ipv6: true,
+            disk_cache_size_mb: 32,
         }
     }
 }
@@ -146,6 +150,12 @@ impl SessionConfig {
     /// Enables or disables dual-stack IPv6 peer connections and announcements.
     pub fn with_enable_ipv6(mut self, enable: bool) -> Self {
         self.enable_ipv6 = enable;
+        self
+    }
+
+    /// Sets the in-memory block write cache size in megabytes (0 disables caching).
+    pub fn with_disk_cache_size_mb(mut self, size_mb: usize) -> Self {
+        self.disk_cache_size_mb = size_mb;
         self
     }
 }
