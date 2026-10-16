@@ -89,6 +89,13 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 - **uTorrent Transport Protocol (uTP — BEP 29)**: `UtpSocketAdapter` in `utp.rs` wraps a `UdpSocket` as an `AsyncSocket`-compatible peer transport with full uTP header framing (SYN/DATA/ACK/RESET state machine).
 - **NAT-PMP & UPnP (SSDP/IGD) Auto Port Forwarding**: `NatPmpClient` and `UpnpClient` in `nat.rs` automatically map TCP and UDP port 6881 on `start_download()` and release the mappings on `stop()`. UPnP uses SSDP multicast (`239.255.255.250:1900`) discovery and XML device description parsing to send SOAP requests to `WANIPConnection` / `WANPPPConnection`.
 
+### Phase 17: Seekable Streaming Reader API (Completed)
+- **`TorrentStream` (`std::io::Read + std::io::Seek`)**: Exposes active torrent transfers or specific files as standard Rust seekable streams in `storage::stream`.
+- **Dynamic `StreamingPieceSelector`**: Pluggable selector tracking an atomic playback cursor (`Arc<AtomicU32>`) and forward lookahead window. Requests prioritize pieces around the playback head, falling back smoothly to swarm health.
+- **Whole-Torrent & Per-File Streams**: `TorrentSession::create_stream()` and `TorrentSession::create_file_stream(index)` automatically wire the streaming piece selector and cursor into the session context.
+- **Configurable Polling & Timeouts**: `.with_read_timeout(Duration)` and `.with_poll_interval(Duration)` allow callers to configure blocking behavior when awaiting missing pieces, or return `WouldBlock` with `Duration::ZERO`.
+
+
 ---
 
 ## Future Roadmap

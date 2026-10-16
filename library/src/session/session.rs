@@ -203,6 +203,44 @@ impl TorrentSession {
         self.context.clone()
     }
 
+    /// Creates a seekable streaming reader ([`TorrentStream`](crate::storage::stream::TorrentStream)) over the entire torrent.
+    ///
+    /// Automatically installs a [`StreamingPieceSelector`](crate::core::selector::StreamingPieceSelector) into the session context
+    /// so that active peer downloads dynamically prioritize the streaming cursor piece and lookahead window.
+    pub fn create_stream(&self) -> Result<crate::storage::stream::TorrentStream, BitTorrentError> {
+        let (storage, total_len, cursor) = {
+            let mut ctx = self.context.lock().unwrap();
+            let storage = ctx.storage.clone();
+            let total_len = ctx.total_bytes_to_download;
+            let cursor = Arc::new(core::sync::atomic::AtomicU32::new(0));
+            ctx.selector = Arc::new(crate::core::selector::StreamingPieceSelector::new(cursor.clone(), 8));
+            (storage, total_len, cursor)
+        };
+
+        Ok(crate::storage::stream::TorrentStream::new(
+            self.context.clone(),
+            Arc::new(crate::storage::stream::StorageBlockReader(storage)),
+            0,
+            total_len,
+            Some(cursor),
+        ))
+    }
+
+    /// Creates a seekable streaming reader ([`TorrentStream`](crate::storage::stream::TorrentStream)) for a specific file within the torrent.
+    ///
+    /// Automatically installs a [`StreamingPieceSelector`](crate::core::selector::StreamingPieceSelector) into the session context
+    /// so that active peer downloads dynamically prioritize the streaming cursor piece and lookahead window.
+    pub fn create_file_stream(&self, file_index: usize) -> Result<crate::storage::stream::TorrentStream, BitTorrentError> {
+        let cursor = Arc::new(core::sync::atomic::AtomicU32::new(0));
+        {
+            let mut ctx = self.context.lock().unwrap();
+            ctx.selector = Arc::new(crate::core::selector::StreamingPieceSelector::new(cursor.clone(), 8));
+        }
+
+        crate::storage::stream::TorrentStream::for_file(self.context.clone(), file_index, Some(cursor))
+    }
+
+
     /// Transitions the session status to `Downloading`, commencing active peer-based downloading.
     ///
     /// # Errors

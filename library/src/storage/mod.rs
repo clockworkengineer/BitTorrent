@@ -6,3 +6,6 @@ pub mod disk_io;
 pub mod piece_buffer;
 #[cfg(feature = "std")]
 pub mod piece_request;
+#[cfg(feature = "std")]
+pub mod stream;
+

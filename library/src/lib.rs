@@ -127,6 +127,10 @@ pub use storage::disk_io;
 pub use storage::piece_buffer;
 #[cfg(feature = "std")]
 pub use storage::piece_request;
+#[cfg(feature = "std")]
+pub use storage::stream;
+#[cfg(feature = "std")]
+pub use storage::stream::{StorageBlockReader, TorrentStream};
 
 #[cfg(feature = "std")]
 pub use session::manager;
@@ -162,7 +166,8 @@ pub use network::peer::Peer;
 pub use network::peer_id::get as get_peer_id;
 pub use network::peer_message::PeerMessage;
 #[cfg(feature = "std")]
-pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector};
+pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector, StreamingPieceSelector};
+
 #[cfg(all(feature = "std", feature = "dht"))]
 pub use network::dht::Dht;
 #[cfg(all(feature = "std", feature = "utp"))]
