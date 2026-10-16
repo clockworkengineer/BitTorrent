@@ -184,14 +184,40 @@ Implemented complete BEP 16 Super-Seeding (Initial Seeding) mode across the core
 
 ---
 
+### Phase 26: WebRTC / WebTorrent Peer Transport
+
+Implemented complete WebTorrent and WebRTC Data Channel peer transport support across the library and client ecosystem:
+- **WebRTC Data Channel Socket Adapter (`WebRtcSocketAdapter`)**:
+  - Implemented `AsyncSocket` adapter for WebRTC Data Channels (e.g., standard `"webtorrent"` labeled channel).
+  - Handles message-oriented binary packet framing, thread-safe asynchronous buffering, channel lifecycle states (`Connecting`, `Open`, `Closing`, `Closed`), and data transfer metrics (`bytes_sent`, `bytes_received`, `messages_sent`, `messages_received`).
+  - Supports loopback pair creation (`create_pair`) for cross-peer protocol validation.
+- **WebTorrent WebSocket Tracker Signaling**:
+  - Dedicated `WebTorrentAnnouncer` supporting both `ws://` and `wss://` tracker protocols.
+  - Generates JSON announce requests containing WebRTC SDP offers (`offers`), peer identification, download statistics, and left byte counts.
+  - Parses incoming JSON announce responses routing SDP answers, peer contacts, and swarm statistics.
+  - Helper functions for standard WebRTC Session Description Protocol (SDP) offer and answer generation (`create_webtorrent_offer`, `create_webtorrent_answer`).
+  - Integrated into `AnnouncerFactory` and `AnnouncerEnum` with automatic protocol detection for WebSocket URLs.
+- **Wire Protocol & Swarm Visualizer Integration**:
+  - `Socket::WebRtc` variant in `bittorrent-rs::Socket` enum with full async read/write/close dispatch.
+  - `Peer::new_webrtc` constructor and dynamic `connection_type` tracking (`"WebRTC"`, `"uTP"`, or `"TCP"`).
+  - `extract_peer_infos` propagates connection transport to client shared models.
+  - **WebUI & Desktop Visualizer**: Added dedicated transport badges in the Swarm peers list:
+    - Glowing violet `<span class="status-pill">WebRTC</span>` badge for browser/WebTorrent peers.
+    - Blue `<span class="status-pill">uTP</span>` badge for Micro Transport Protocol peers.
+    - Emerald `<span class="status-pill">TCP</span>` badge for standard TCP peers.
+- **Test Suite**: Comprehensive test suite in `library/tests/webrtc_tests.rs` verifying adapter lifecycle, loopback bidirectional byte and message transfer, SDP offer/answer generation, JSON announce request and response handling, WebSocket tracker detection in `AnnouncerFactory`, and full BitTorrent wire message exchange over WebRTC Data Channels.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **WebRTC / WebTorrent Peer Transport**: Integrate WebRTC data channels enabling browser clients to exchange torrent pieces directly with the client.
+1. **Fast Resume File Serialization (BEP 47)**: Native binary / bencode serialization and loading of `.resume` state files to avoid re-checking complete files across restarts.
 
-2. **Fast Resume File Serialization (BEP 47)**: Native binary / bencode serialization and loading of `.resume` state files to avoid re-checking complete files across restarts.
+2. **IPv6 Compact Tracker & Peer Wire Enhancements**: Comprehensive multi-homed IPv6 announcing and transport tuning across dual-stack swarms.
 
-3. **IPv6 Compact Tracker & Peer Wire Enhancements**: Comprehensive multi-homed IPv6 announcing and transport tuning across dual-stack swarms.
+3. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents**: Complete piece-level block verification via SHA-256 Merkle trees.
+
 
 

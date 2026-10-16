@@ -522,9 +522,16 @@ function renderSwarmPeers(peers) {
         const downStr = p.down_rate > 0 ? `<span style="color:#10b981;font-weight:600">${fmtBytes(p.down_rate)}/s</span>` : '-';
         const upStr = p.up_rate > 0 ? `<span style="color:#38bdf8;font-weight:600">${fmtBytes(p.up_rate)}/s</span>` : '-';
 
+        const connType = p.connection_type || 'TCP';
+        const typeBadge = connType === 'WebRTC' 
+            ? '<span class="status-pill" style="background:rgba(168,85,247,0.2);color:#c084fc;border:1px solid rgba(168,85,247,0.4);font-size:10px;padding:2px 6px;margin-left:6px">WebRTC</span>'
+            : connType === 'uTP'
+            ? '<span class="status-pill" style="background:rgba(59,130,246,0.2);color:#60a5fa;border:1px solid rgba(59,130,246,0.4);font-size:10px;padding:2px 6px;margin-left:6px">uTP</span>'
+            : '<span class="status-pill" style="background:rgba(16,185,129,0.15);color:#34d399;border:1px solid rgba(16,185,129,0.3);font-size:10px;padding:2px 6px;margin-left:6px">TCP</span>';
+
         rowsHtml += `
             <tr>
-                <td><strong>${escapeHtml(p.client || 'Unknown')}</strong></td>
+                <td><strong>${escapeHtml(p.client || 'Unknown')}</strong>${typeBadge}</td>
                 <td class="code-font">${escapeHtml(p.ip)}:${p.port}</td>
                 <td>
                     <div class="progress-container">

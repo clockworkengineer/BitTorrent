@@ -11,7 +11,7 @@ categories = ["network-programming", "asynchronous"]
 
 
 [features]
-default = ["std", "http-tracker", "dht", "lsd", "utp", "nat-pmp", "mse", "webseed", "v2"]
+default = ["std", "http-tracker", "dht", "lsd", "utp", "nat-pmp", "mse", "webseed", "v2", "webrtc"]
 std = [
     "dep:rand",
     "dep:url",
@@ -34,6 +34,7 @@ nat-pmp = []
 mse = ["dep:crypto-bigint"]
 webseed = ["std", "ureq-http"]
 v2 = ["dep:sha2"]
+webrtc = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 sha1 = { version = "0.11.0", default-features = false }
@@ -44,3 +45,5 @@ ureq = { version = "2.7", optional = true }
 urlencoding = { version = "2.1", optional = true }
 url = { version = "2.4", optional = true }
 futures = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"], optional = true }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"], optional = true }

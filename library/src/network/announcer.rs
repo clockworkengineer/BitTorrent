@@ -515,6 +515,8 @@ pub enum AnnouncerEnum {
     #[cfg(feature = "http-tracker")]
     Http(HttpAnnouncer),
     Udp(UdpAnnouncer),
+    #[cfg(feature = "webrtc")]
+    WebTorrent(crate::network::webrtc::WebTorrentAnnouncer),
     Custom(Box<dyn Announcer>),
 }
 
@@ -527,6 +529,8 @@ impl Announcer for AnnouncerEnum {
             #[cfg(feature = "http-tracker")]
             AnnouncerEnum::Http(a) => a.announce(tracker),
             AnnouncerEnum::Udp(a) => a.announce(tracker),
+            #[cfg(feature = "webrtc")]
+            AnnouncerEnum::WebTorrent(a) => a.announce(tracker),
             AnnouncerEnum::Custom(a) => a.announce(tracker),
         }
     }
@@ -539,6 +543,8 @@ impl Announcer for AnnouncerEnum {
             #[cfg(feature = "http-tracker")]
             AnnouncerEnum::Http(a) => a.scrape(tracker),
             AnnouncerEnum::Udp(a) => a.scrape(tracker),
+            #[cfg(feature = "webrtc")]
+            AnnouncerEnum::WebTorrent(a) => a.scrape(tracker),
             AnnouncerEnum::Custom(a) => a.scrape(tracker),
         }
     }
@@ -561,6 +567,15 @@ impl AnnouncerFactory {
             }
         } else if url.starts_with("udp://") {
             Ok(Box::new(UdpAnnouncer::new(url)?))
+        } else if url.starts_with("wss://") || url.starts_with("ws://") {
+            #[cfg(feature = "webrtc")]
+            {
+                Ok(Box::new(crate::network::webrtc::WebTorrentAnnouncer::new(url)))
+            }
+            #[cfg(not(feature = "webrtc"))]
+            {
+                Err(BitTorrentError::Parse("WebTorrent WebSocket tracker support is disabled".into()))
+            }
         } else {
             Err(BitTorrentError::Parse("Invalid tracker URL".into()))
         }
@@ -579,6 +594,15 @@ impl AnnouncerFactory {
             }
         } else if url.starts_with("udp://") {
             Ok(AnnouncerEnum::Udp(UdpAnnouncer::new(url)?))
+        } else if url.starts_with("wss://") || url.starts_with("ws://") {
+            #[cfg(feature = "webrtc")]
+            {
+                Ok(AnnouncerEnum::WebTorrent(crate::network::webrtc::WebTorrentAnnouncer::new(url)))
+            }
+            #[cfg(not(feature = "webrtc"))]
+            {
+                Err(BitTorrentError::Parse("WebTorrent WebSocket tracker support is disabled".into()))
+            }
         } else {
             Err(BitTorrentError::Parse("Invalid tracker URL".into()))
         }

@@ -120,6 +120,8 @@ pub use network::peer_network;
 pub use network::tracker;
 #[cfg(all(feature = "std", feature = "utp"))]
 pub use network::utp;
+#[cfg(all(feature = "std", feature = "webrtc"))]
+pub use network::webrtc;
 
 #[cfg(feature = "std")]
 pub use storage::assembler;

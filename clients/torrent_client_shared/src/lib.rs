@@ -170,7 +170,7 @@ pub fn extract_peer_infos(ctx: &bittorrent_rs::internals::TorrentContext) -> Vec
                     down_rate: peer.rolling_download_rate as u64,
                     up_rate: peer.rolling_upload_rate as u64,
                     flags,
-                    connection_type: "TCP".to_string(),
+                    connection_type: peer.connection_type.clone(),
                 });
             }
         }

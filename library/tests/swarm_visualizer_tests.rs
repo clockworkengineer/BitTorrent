@@ -78,6 +78,7 @@ fn test_piece_availability_and_swarm_rarity() {
         supports_fast_extension: true,
         allowed_fast_pieces: Vec::new(),
         suggested_pieces: Vec::new(),
+        connection_type: "TCP".to_string(),
     }));
 
     // Peer 2 holds pieces 2, 3, 8, 9 (0b0011_0000, 0b1100_0000)
@@ -110,6 +111,7 @@ fn test_piece_availability_and_swarm_rarity() {
         supports_fast_extension: false,
         allowed_fast_pieces: Vec::new(),
         suggested_pieces: Vec::new(),
+        connection_type: "WebRTC".to_string(),
     }));
 
     let mut swarm = HashMap::new();

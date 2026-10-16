@@ -265,6 +265,8 @@ pub enum Socket {
     Utp(crate::network::utp::UtpSocketAdapter),
     #[cfg(all(feature = "std", feature = "mse"))]
     Encrypted(crate::network::peer_network::EncryptedSocket),
+    #[cfg(all(feature = "std", feature = "webrtc"))]
+    WebRtc(crate::network::webrtc::WebRtcSocketAdapter),
     Mock(MockSocket),
 }
 
@@ -277,6 +279,8 @@ impl AsyncSocket for Socket {
             Socket::Utp(s) => s.read(buf).await,
             #[cfg(all(feature = "std", feature = "mse"))]
             Socket::Encrypted(s) => s.read(buf).await,
+            #[cfg(all(feature = "std", feature = "webrtc"))]
+            Socket::WebRtc(s) => s.read(buf).await,
             Socket::Mock(s) => s.read(buf).await,
         }
     }
@@ -289,6 +293,8 @@ impl AsyncSocket for Socket {
             Socket::Utp(s) => s.write(buf).await,
             #[cfg(all(feature = "std", feature = "mse"))]
             Socket::Encrypted(s) => s.write(buf).await,
+            #[cfg(all(feature = "std", feature = "webrtc"))]
+            Socket::WebRtc(s) => s.write(buf).await,
             Socket::Mock(s) => s.write(buf).await,
         }
     }
@@ -301,6 +307,8 @@ impl AsyncSocket for Socket {
             Socket::Utp(s) => s.close(),
             #[cfg(all(feature = "std", feature = "mse"))]
             Socket::Encrypted(s) => s.close(),
+            #[cfg(all(feature = "std", feature = "webrtc"))]
+            Socket::WebRtc(s) => s.close(),
             Socket::Mock(s) => s.close(),
         }
     }

@@ -21,3 +21,5 @@ pub mod peer_network;
 pub mod tracker;
 #[cfg(all(feature = "std", feature = "utp"))]
 pub mod utp;
+#[cfg(all(feature = "std", feature = "webrtc"))]
+pub mod webrtc;

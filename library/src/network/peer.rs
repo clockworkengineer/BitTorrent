@@ -105,11 +105,24 @@ pub struct Peer {
     pub supports_fast_extension: bool,
     pub allowed_fast_pieces: Vec<u32>,
     pub suggested_pieces: Vec<u32>,
+    pub connection_type: String,
 }
 
 impl Peer {
     /// Creates a new `Peer` representing a remote client connected via the provided socket.
     pub fn new_with_socket(ip: String, port: u16, socket: Arc<Socket>) -> Self {
+        let connection_type = if ip.starts_with("webrtc:") {
+            "WebRTC".to_string()
+        } else {
+            match socket.as_ref() {
+                #[cfg(feature = "utp")]
+                Socket::Utp(_) => "uTP".to_string(),
+                #[cfg(feature = "webrtc")]
+                Socket::WebRtc(_) => "WebRTC".to_string(),
+                _ => "TCP".to_string(),
+            }
+        };
+
         Peer {
             network: Some(PeerNetwork::new(socket)),
             packet_response_timer: None,
@@ -139,7 +152,17 @@ impl Peer {
             supports_fast_extension: false,
             allowed_fast_pieces: Vec::new(),
             suggested_pieces: Vec::new(),
+            connection_type,
         }
+    }
+
+    /// Creates a new `Peer` representing a remote browser/client connected via WebRTC Data Channel.
+    #[cfg(feature = "webrtc")]
+    pub fn new_webrtc(peer_id: &str, adapter: crate::network::webrtc::WebRtcSocketAdapter) -> Self {
+        let socket = Arc::new(Socket::WebRtc(adapter));
+        let mut p = Self::new_with_socket(format!("webrtc:{}", peer_id), 0, socket);
+        p.connection_type = "WebRTC".to_string();
+        p
     }
 
     /// Creates a new `Peer` representing a remote client connected via the provided TCP stream.
