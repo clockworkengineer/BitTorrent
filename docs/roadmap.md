@@ -87,7 +87,7 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 
 ### Phase 16: uTP & NAT-PMP (Completed)
 - **uTorrent Transport Protocol (uTP — BEP 29)**: `UtpSocketAdapter` in `utp.rs` wraps a `UdpSocket` as an `AsyncSocket`-compatible peer transport with full uTP header framing (SYN/DATA/ACK/RESET state machine).
-- **NAT-PMP Auto Port Forwarding**: `NatPmpClient` in `nat.rs` automatically maps TCP and UDP port 6881 on `start_download()` and releases the mappings on `stop()`. Gateway discovery is performed via local IP heuristic.
+- **NAT-PMP & UPnP (SSDP/IGD) Auto Port Forwarding**: `NatPmpClient` and `UpnpClient` in `nat.rs` automatically map TCP and UDP port 6881 on `start_download()` and release the mappings on `stop()`. UPnP uses SSDP multicast (`239.255.255.250:1900`) discovery and XML device description parsing to send SOAP requests to `WANIPConnection` / `WANPPPConnection`.
 
 ---
 
@@ -97,9 +97,7 @@ The following enhancements are proposed for future development:
 
 1. **LEDBAT Congestion Control for uTP**: Implement the full Low Extra Delay Background Transport algorithm (RFC 6817) — one-way delay measurement, dynamic window sizing, and packet retransmission — in `UtpSocketAdapter`.
 
-2. **UPnP / SSDP Port Mapping**: Complement NAT-PMP with UPnP (SOAP over SSDP) for compatibility with older routers that do not support NAT-PMP. See [nat-pmp.md](file:///c:/Projects/BitTorrent/docs/nat-pmp.md) for current scope.
-
-3. **BEP 52 Merkle Tree Block Validation**: Extend the v2 implementation to verify individual blocks against per-file `pieces_root` Merkle tree hashes, enabling block-level verification without downloading an entire piece.
+2. **BEP 52 Merkle Tree Block Validation**: Extend the v2 implementation to verify individual blocks against per-file `pieces_root` Merkle tree hashes, enabling block-level verification without downloading an entire piece.
 
 4. **Tit-for-Tat Upload Choking**: Optimize upload slot allocation by measuring rolling per-peer upload rates and preferentially unchoking the peers contributing the most data to us.
 

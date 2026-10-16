@@ -460,6 +460,153 @@ fn test_upnp_client_payload_generation() {
     assert!(client.request_mapping(true, 6881, 6881, 3600).is_err(), "Should fail on connect as router is missing");
 }
 
+/// Verifies SSDP M-SEARCH discovery packet formatting.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
+#[test]
+fn test_upnp_ssdp_msearch_formatting() {
+    use bittorrent_rs::network::nat::build_ssdp_msearch;
+
+    let packet = build_ssdp_msearch("urn:schemas-upnp-org:device:InternetGatewayDevice:1");
+    assert!(packet.starts_with("M-SEARCH * HTTP/1.1\r\n"));
+    assert!(packet.contains("HOST: 239.255.255.250:1900\r\n"));
+    assert!(packet.contains("ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n"));
+    assert!(packet.contains("MAN: \"ssdp:discover\"\r\n"));
+    assert!(packet.ends_with("\r\n\r\n"));
+}
+
+/// Verifies parsing of LOCATION header from SSDP responses.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
+#[test]
+fn test_upnp_parse_ssdp_location() {
+    use bittorrent_rs::network::nat::parse_ssdp_location;
+
+    let raw_ssdp = "HTTP/1.1 200 OK\r\n\
+                    CACHE-CONTROL: max-age=1800\r\n\
+                    LOCATION: http://192.168.1.1:5000/rootDesc.xml\r\n\
+                    SERVER: Linux/2.6 UPnP/1.0 miniupnpd/1.0\r\n\
+                    ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n";
+
+    let loc = parse_ssdp_location(raw_ssdp).expect("Should extract LOCATION header");
+    assert_eq!(loc, "http://192.168.1.1:5000/rootDesc.xml");
+}
+
+/// Verifies URL component extraction for UPnP control endpoints.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
+#[test]
+fn test_upnp_parse_url_components() {
+    use bittorrent_rs::network::nat::parse_url_components;
+
+    let (host, port, path) = parse_url_components("http://192.168.1.1:5000/rootDesc.xml").unwrap();
+    assert_eq!(host, "192.168.1.1");
+    assert_eq!(port, 5000);
+    assert_eq!(path, "/rootDesc.xml");
+
+    let (host2, port2, path2) = parse_url_components("http://192.168.1.254/desc.xml").unwrap();
+    assert_eq!(host2, "192.168.1.254");
+    assert_eq!(port2, 80);
+    assert_eq!(path2, "/desc.xml");
+}
+
+/// Verifies XML tag extraction and namespace handling.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
+#[test]
+fn test_upnp_extract_xml_tag_content() {
+    use bittorrent_rs::network::nat::extract_xml_tag_content;
+
+    let xml = "<s:Envelope><s:Body><u:GetExternalIPAddressResponse xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\"><NewExternalIPAddress>203.0.113.42</NewExternalIPAddress></u:GetExternalIPAddressResponse></s:Body></s:Envelope>";
+    let ip = extract_xml_tag_content(xml, "NewExternalIPAddress").expect("Should extract IP");
+    assert_eq!(ip, "203.0.113.42");
+}
+
+/// Verifies parsing device description XML to discover WAN connection service type and control URL.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
+#[test]
+fn test_upnp_parse_device_description() {
+    use bittorrent_rs::network::nat::parse_device_description;
+
+    let xml = r#"<?xml version="1.0"?>
+    <root xmlns="urn:schemas-upnp-org:device-1-0">
+      <device>
+        <deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+        <serviceList>
+          <service>
+            <serviceType>urn:schemas-upnp-org:service:Layer3Forwarding:1</serviceType>
+            <controlURL>/ctl/L3F</controlURL>
+          </service>
+          <service>
+            <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>
+            <controlURL>/ctl/IPConn</controlURL>
+          </service>
+        </serviceList>
+      </device>
+    </root>"#;
+
+    let (service_type, control_path) = parse_device_description(xml).expect("Should discover WANIPConnection");
+    assert_eq!(service_type, "urn:schemas-upnp-org:service:WANIPConnection:1");
+    assert_eq!(control_path, "/ctl/IPConn");
+}
+
+/// Tests end-to-end UPnP port mapping, external IP resolution, and releasing against a mock HTTP/SOAP server.
+#[cfg(all(feature = "std", feature = "nat-pmp"))]
+#[test]
+fn test_upnp_mock_server_full_port_mapping_flow() {
+    use bittorrent_rs::nat::{PortMapper, UpnpClient, UpnpEndpoint};
+    use std::io::{Read, Write};
+    use std::net::{Ipv4Addr, TcpListener};
+    use std::thread;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind mock UPnP server");
+    let server_port = listener.local_addr().unwrap().port();
+
+    let server_handle = thread::spawn(move || {
+        // Handle 3 requests: AddPortMapping, GetExternalIPAddress, DeletePortMapping
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().expect("Accept failed");
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req_str = String::from_utf8_lossy(&buf[..n]);
+
+            if req_str.contains("AddPortMapping") {
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes());
+            } else if req_str.contains("GetExternalIPAddress") {
+                let body = "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:GetExternalIPAddressResponse xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\"><NewExternalIPAddress>198.51.100.42</NewExternalIPAddress></u:GetExternalIPAddressResponse></s:Body></s:Envelope>";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/xml\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            } else if req_str.contains("DeletePortMapping") {
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes());
+            }
+        }
+    });
+
+    let endpoint = UpnpEndpoint {
+        host: "127.0.0.1".to_string(),
+        port: server_port,
+        control_path: "/ctl/IPConn".to_string(),
+        service_type: "urn:schemas-upnp-org:service:WANIPConnection:1".to_string(),
+    };
+
+    let client = UpnpClient::with_endpoint(endpoint);
+
+    // 1. Add port mapping
+    let mapped_port = client.request_mapping(true, 6881, 6881, 3600).expect("AddPortMapping should succeed");
+    assert_eq!(mapped_port, 6881);
+
+    // 2. Query external IP
+    let ext_ip = client.get_external_ip().expect("GetExternalIPAddress should succeed");
+    assert_eq!(ext_ip, Ipv4Addr::new(198, 51, 100, 42));
+
+    // 3. Delete port mapping
+    client.release_mapping(true, 6881).expect("DeletePortMapping should succeed");
+
+    server_handle.join().expect("Mock UPnP server thread failed");
+}
+
 /// Verifies that skip_hash_check works correctly when loading a session.
 #[test]
 fn test_session_skip_hash_check_initialization() {

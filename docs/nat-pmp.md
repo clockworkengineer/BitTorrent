@@ -171,14 +171,23 @@ NAT-PMP failures are non-fatal. If the gateway does not respond within 2 seconds
 
 ---
 
+## UPnP (SSDP / IGD) Protocol Support
+
+In addition to NAT-PMP, the library includes a complete pure-Rust **UPnP IGD** client:
+- **SSDP Multicast Discovery**: Sends `M-SEARCH` queries to `239.255.255.250:1900` searching for `InternetGatewayDevice:1`, `WANIPConnection:1`, and `WANPPPConnection:1`.
+- **Device Description Parsing**: Retrieves the device description XML via HTTP GET from the router's `LOCATION` header and dynamically extracts the WAN `controlURL` and service URN (supporting both `WANIPConnection:1/2` and `WANPPPConnection:1`).
+- **SOAP Actions**: Executes `AddPortMapping`, `DeletePortMapping`, and `GetExternalIPAddress` to discover the external WAN IP.
+- **`FallbackPortMapper`**: Tries NAT-PMP first, seamlessly falling back to UPnP SSDP and SOAP port mapping.
+
+---
+
 ## Limitations & Future Work
 
 | Limitation | Notes |
 |---|---|
-| **UPnP / SSDP not implemented** | NAT-PMP works on most modern home routers. Older routers may only support UPnP (SOAP/HTTP). UPnP support is planned as a future enhancement. |
-| **Heuristic gateway discovery** | The `.1` subnet heuristic works for most home networks but not all. OS routing table query is a future improvement. |
-| **No mapping renewal** | Mappings expire after `lifetime_secs`. Long-running sessions should renew before expiry. A background renewal loop is a planned enhancement. |
-| **IPv6 not supported** | NAT-PMP is an IPv4-only protocol. Its successor, PCP (RFC 6887), supports IPv6 and is a future consideration. |
+| **PCP (Port Control Protocol)** | While NAT-PMP (RFC 6886) and UPnP are fully supported, PCP (RFC 6887) for native IPv6 pinholing is a planned future addition. |
+| **Heuristic gateway discovery** | When SSDP multicast is blocked by local firewall, the `.1` subnet heuristic is used as a fallback gateway probe. OS routing table query is a future improvement. |
+| **No mapping renewal** | Mappings expire after `lifetime_secs`. Long-running sessions automatically renew via the background loop in `TorrentSession`. |
 
 ---
 
