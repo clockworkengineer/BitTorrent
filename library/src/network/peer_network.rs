@@ -16,13 +16,66 @@ use std::sync::Mutex;
 #[cfg(feature = "std")]
 use std::io::{Read, Write};
 
+/// An `AsyncSocket` decorator that transparently encrypts outgoing bytes and decrypts incoming bytes using RC4 (MSE/PE).
+#[cfg(all(feature = "std", feature = "mse"))]
+pub struct EncryptedSocket {
+    inner: Arc<Socket>,
+    rc4_encrypt: Mutex<crate::mse::Rc4>,
+    rc4_decrypt: Mutex<crate::mse::Rc4>,
+}
+
+#[cfg(all(feature = "std", feature = "mse"))]
+impl core::fmt::Debug for EncryptedSocket {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EncryptedSocket").finish()
+    }
+}
+
+#[cfg(all(feature = "std", feature = "mse"))]
+impl EncryptedSocket {
+    /// Wraps an existing socket with RC4 encryption and decryption streams.
+    pub fn new(inner: Arc<Socket>, encrypt: crate::mse::Rc4, decrypt: crate::mse::Rc4) -> Self {
+        Self {
+            inner,
+            rc4_encrypt: Mutex::new(encrypt),
+            rc4_decrypt: Mutex::new(decrypt),
+        }
+    }
+
+    /// Access the underlying socket being decorated.
+    pub fn inner(&self) -> &Arc<Socket> {
+        &self.inner
+    }
+}
+
+#[cfg(all(feature = "std", feature = "mse"))]
+impl AsyncSocket for EncryptedSocket {
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError> {
+        let n = Box::pin(self.inner.read(buf)).await?;
+        if n > 0 {
+            let mut dec_guard = self.rc4_decrypt.lock().unwrap();
+            dec_guard.encrypt(&mut buf[..n]);
+        }
+        Ok(n)
+    }
+
+    async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
+        let mut encrypted = buf.to_vec();
+        {
+            let mut enc_guard = self.rc4_encrypt.lock().unwrap();
+            enc_guard.encrypt(&mut encrypted);
+        }
+        Box::pin(self.inner.write(&encrypted)).await
+    }
+
+    fn close(&self) {
+        self.inner.close();
+    }
+}
+
 /// A socket communication helper for sending and receiving raw BitTorrent peer messages.
 pub struct PeerNetwork {
     socket: Arc<Socket>,
-    #[cfg(feature = "mse")]
-    rc4_encrypt: Option<Arc<Mutex<crate::mse::Rc4>>>,
-    #[cfg(feature = "mse")]
-    rc4_decrypt: Option<Arc<Mutex<crate::mse::Rc4>>>,
 }
 
 impl core::fmt::Debug for PeerNetwork {
@@ -35,10 +88,6 @@ impl Clone for PeerNetwork {
     fn clone(&self) -> Self {
         PeerNetwork {
             socket: self.socket.clone(),
-            #[cfg(feature = "mse")]
-            rc4_encrypt: self.rc4_encrypt.clone(),
-            #[cfg(feature = "mse")]
-            rc4_decrypt: self.rc4_decrypt.clone(),
         }
     }
 }
@@ -46,52 +95,29 @@ impl Clone for PeerNetwork {
 impl PeerNetwork {
     /// Creates a new `PeerNetwork` instance wrapping the given `AsyncSocket` implementation.
     pub fn new(socket: Arc<Socket>) -> Self {
-        PeerNetwork {
-            socket,
-            #[cfg(feature = "mse")]
-            rc4_encrypt: None,
-            #[cfg(feature = "mse")]
-            rc4_decrypt: None,
-        }
+        PeerNetwork { socket }
     }
 
-    /// Configures the RC4 encryption and decryption ciphers used for Message Stream Encryption (MSE).
+    /// Retrieves a clone of the underlying socket.
+    pub fn socket(&self) -> Arc<Socket> {
+        self.socket.clone()
+    }
+
+    /// Configures the RC4 encryption and decryption ciphers using the `EncryptedSocket` decorator.
     #[cfg(feature = "mse")]
     pub fn set_mse_ciphers(&mut self, encrypt: crate::mse::Rc4, decrypt: crate::mse::Rc4) {
-        self.rc4_encrypt = Some(Arc::new(Mutex::new(encrypt)));
-        self.rc4_decrypt = Some(Arc::new(Mutex::new(decrypt)));
+        let encrypted_sock = EncryptedSocket::new(self.socket.clone(), encrypt, decrypt);
+        self.socket = Arc::new(Socket::Encrypted(encrypted_sock));
     }
 
     /// Writes raw bytes to the underlying socket.
     pub async fn write(&self, buffer: &[u8]) -> Result<usize, BitTorrentError> {
-        #[cfg(feature = "mse")]
-        {
-            if let Some(ref enc) = self.rc4_encrypt {
-                let encrypted = {
-                    let mut enc_guard = enc.lock().unwrap();
-                    let mut encrypted = buffer.to_vec();
-                    enc_guard.encrypt(&mut encrypted);
-                    encrypted
-                };
-                return self.socket.write(&encrypted).await;
-            }
-        }
         self.socket.write(buffer).await
     }
 
     /// Reads up to `length` bytes from the socket into the provided buffer.
     pub async fn read(&self, buffer: &mut [u8], length: usize) -> Result<usize, BitTorrentError> {
-        let n = self.socket.read(&mut buffer[..length]).await?;
-        #[cfg(feature = "mse")]
-        {
-            if n > 0 {
-                if let Some(ref dec) = self.rc4_decrypt {
-                    let mut dec_guard = dec.lock().unwrap();
-                    dec_guard.encrypt(&mut buffer[..n]);
-                }
-            }
-        }
-        Ok(n)
+        self.socket.read(&mut buffer[..length]).await
     }
 
     /// Reads exactly enough bytes from the socket to fill the provided buffer.

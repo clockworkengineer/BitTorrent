@@ -184,3 +184,56 @@ fn test_tracker_can_use_manager_queue() {
 
     let _ = fs::remove_dir_all(&download_path);
 }
+
+/// Verifies that any custom struct implementing Announcer can be dynamically injected into Tracker.
+#[test]
+fn test_tracker_dynamic_announcer_injection() {
+    use bittorrent_rs::announcer::Announcer;
+    use bittorrent_rs::BitTorrentError;
+    use bittorrent_rs::tracker::{AnnounceResponse, ScrapeResponse, TrackerAnnounceContext};
+
+    struct DynamicCustomAnnouncer {
+        invoked: bool,
+    }
+
+    impl Announcer for DynamicCustomAnnouncer {
+        fn announce(&mut self, _tracker: &TrackerAnnounceContext) -> Result<AnnounceResponse, BitTorrentError> {
+            self.invoked = true;
+            let mut resp = AnnounceResponse::default();
+            resp.status_message = "custom_announcer_success".into();
+            Ok(resp)
+        }
+
+        fn scrape(&mut self, _tracker: &TrackerAnnounceContext) -> Result<ScrapeResponse, BitTorrentError> {
+            Ok(ScrapeResponse::default())
+        }
+    }
+
+    let download_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("dynamic_announcer_test");
+    let _ = fs::remove_dir_all(&download_path);
+
+    let mut meta = MetaInfoFile::new(sample_file("singlefile.torrent")).expect("Failed to load torrent");
+    meta.parse().expect("Failed to parse torrent");
+    let piece_length = meta.get_piece_length().expect("Failed to get piece length");
+    let (_, files_to_download) = meta.local_files_to_download_list(&download_path).expect("Failed to get files list");
+    let disk_io = Arc::new(DiskIO::new(&download_path, files_to_download, piece_length));
+    disk_io.create_local_torrent_structure().expect("Failed to create file structure");
+    let selector = Arc::new(RarestFirstSelector);
+    let mut context = TorrentContext::new(&meta, selector, disk_io.clone(), &download_path, false, SessionConfig::default())
+        .expect("Failed to create torrent context");
+    disk_io.create_torrent_bitfield(&mut context).expect("Failed to create torrent bitfield");
+    let context = Arc::new(Mutex::new(context));
+
+    let mut tracker = Tracker::new(context.clone()).expect("Failed to create tracker");
+
+    // Inject custom announcer at runtime
+    tracker.set_announcer(Box::new(DynamicCustomAnnouncer { invoked: false }));
+
+    context.lock().unwrap().status = TorrentStatus::Downloading;
+    let resp = tracker.announce_once().expect("Announce with custom announcer should succeed");
+    assert_eq!(resp.status_message, "custom_announcer_success");
+
+    let _ = fs::remove_dir_all(&download_path);
+}

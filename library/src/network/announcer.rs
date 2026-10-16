@@ -518,8 +518,8 @@ pub enum AnnouncerEnum {
     Custom(Box<dyn Announcer>),
 }
 
-impl AnnouncerEnum {
-    pub fn announce(
+impl Announcer for AnnouncerEnum {
+    fn announce(
         &mut self,
         tracker: &TrackerAnnounceContext,
     ) -> Result<AnnounceResponse, BitTorrentError> {
@@ -531,7 +531,7 @@ impl AnnouncerEnum {
         }
     }
 
-    pub fn scrape(
+    fn scrape(
         &mut self,
         tracker: &TrackerAnnounceContext,
     ) -> Result<ScrapeResponse, BitTorrentError> {
@@ -544,10 +544,28 @@ impl AnnouncerEnum {
     }
 }
 
-/// Factory helper to build `AnnouncerEnum` variants based on the tracker URL protocol schema.
+/// Factory helper to build `Announcer` instances or `AnnouncerEnum` variants based on the tracker URL protocol schema.
 pub struct AnnouncerFactory;
 
 impl AnnouncerFactory {
+    /// Instantiates the appropriate `Announcer` trait object for a given URL.
+    pub fn create_announcer(url: &str) -> Result<Box<dyn Announcer>, BitTorrentError> {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            #[cfg(feature = "http-tracker")]
+            {
+                Ok(Box::new(HttpAnnouncer::new()))
+            }
+            #[cfg(not(feature = "http-tracker"))]
+            {
+                Err(BitTorrentError::Parse("HTTP tracker support is disabled".into()))
+            }
+        } else if url.starts_with("udp://") {
+            Ok(Box::new(UdpAnnouncer::new(url)?))
+        } else {
+            Err(BitTorrentError::Parse("Invalid tracker URL".into()))
+        }
+    }
+
     /// Instantiates the appropriate `AnnouncerEnum` variant for a given URL.
     pub fn create(url: &str) -> Result<AnnouncerEnum, BitTorrentError> {
         if url.starts_with("http://") || url.starts_with("https://") {

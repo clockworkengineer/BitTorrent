@@ -1177,7 +1177,6 @@ impl PieceWriteAccess for TorrentContext {
         self.is_piece_missing(index)
     }
     fn mark_piece_completed(&mut self, index: u32, piece_length: u32) {
-        self.mark_piece_local(index, true);
         self.update_bitfield_status(index, true, piece_length);
     }
 }

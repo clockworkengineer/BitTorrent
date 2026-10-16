@@ -1,4 +1,4 @@
-use bittorrent_rs::{AsyncSocket, BlockStorage, BlockReader, BlockWriter, MemStorage, MockSocket, SocketFactory, BitTorrentError, Socket};
+use bittorrent_rs::{AsyncSocket, BlockReader, BlockWriter, MemStorage, MockSocket, SocketFactory, BitTorrentError, Socket};
 #[cfg(feature = "http-tracker")]
 use bittorrent_rs::HttpClient;
 use std::sync::Arc;
@@ -144,5 +144,71 @@ fn test_mock_socket_closed() {
         let write_res = socket.write(b"data").await;
         assert!(write_res.is_err());
     });
+}
+
+#[test]
+fn test_role_based_segregated_traits() {
+    use bittorrent_rs::{
+        Bencode, BNode, MetaInfoFile, PieceWriteAccess, RarestFirstSelector, SessionConfig,
+        SessionStatusQuery, SwarmReadAccess, TorrentStatus,
+    };
+    use bittorrent_rs::internals::TorrentContext;
+    use std::path::PathBuf;
+
+    let info_dict = BNode::Dictionary(vec![
+        (b"name" as &[u8], BNode::String(b"segregated-test")),
+        (b"piece length" as &[u8], BNode::Number(b"16384")),
+        (b"pieces" as &[u8], BNode::String(&[0u8; 40])), // 2 pieces
+        (b"length" as &[u8], BNode::Number(b"32768")),
+    ]);
+    let root_dict = BNode::Dictionary(vec![
+        (b"announce" as &[u8], BNode::String(b"http://tracker.example.com/announce")),
+        (b"info" as &[u8], info_dict),
+    ]);
+    let meta_bytes = Bencode::encode(&root_dict);
+    let mut meta = MetaInfoFile::from_bytes(&meta_bytes);
+    meta.parse().unwrap();
+
+    let storage = Arc::new(bittorrent_rs::MemStorage::new(32768));
+    let selector = Arc::new(RarestFirstSelector);
+    let download_path = PathBuf::from("temp_download");
+
+    let mut context = TorrentContext::new(
+        &meta,
+        selector,
+        storage,
+        &download_path,
+        false,
+        SessionConfig::default(),
+    )
+    .unwrap();
+
+    context.mark_piece_missing(0, true);
+    context.mark_piece_missing(1, true);
+
+    // 1. SwarmReadAccess view
+    fn inspect_swarm(swarm: &dyn SwarmReadAccess) {
+        assert_eq!(swarm.connected_peer_count(), 0);
+        assert!(!swarm.contains_peer("192.168.1.50"));
+        assert!(!swarm.is_peer_blacklisted("192.168.1.50"));
+    }
+    inspect_swarm(&context);
+
+    // 2. PieceWriteAccess view
+    fn mutate_pieces(pieces: &mut dyn PieceWriteAccess) {
+        assert!(pieces.is_piece_needed(0));
+        pieces.mark_piece_completed(0, 16384);
+        assert!(!pieces.is_piece_needed(0));
+    }
+    mutate_pieces(&mut context);
+
+    // 3. SessionStatusQuery view
+    fn query_status(query: &dyn SessionStatusQuery) {
+        assert_eq!(query.status(), TorrentStatus::Initialised);
+        assert!(query.progress() > 0.0);
+        assert_eq!(query.bytes_downloaded(), 16384);
+        assert_eq!(query.bytes_uploaded(), 0);
+    }
+    query_status(&context);
 }
 

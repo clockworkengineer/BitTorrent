@@ -153,12 +153,12 @@ While the library currently features high performance and extensive protocol sup
 
 ## Implementation Roadmap & Verification
 
-| Phase | Target Components | Major Refactoring | Verification Strategy |
+| Phase | Target Components | Major Refactoring | Status |
 | :--- | :--- | :--- | :--- |
-| **Phase 1** | `io_traits.rs`, `peer_network.rs` | ISP & DIP: Segregate `BlockStorage` & implement `EncryptedSocket` decorator. | Run `cargo test` unit test suite for transport & storage layer. |
-| **Phase 2** | `announcer.rs`, `tracker.rs` | OCP: Introduce `Announcer` trait & eliminate `AnnouncerEnum` static dispatch. | Integration tests with HTTP and UDP mock tracker servers. |
-| **Phase 3** | `torrent_context.rs` | SRP & ISP: Decompose into `SwarmManager`, `PieceProgressTracker`, `DownloadStatsCounter`, `TransferControlState`. | Unit tests for piece selection and state transition correctness. |
-| **Phase 4** | `metainfo.rs`, `worker.rs` | SRP: Extract `BencodeParser`, `InfoHashCalculator`, `PeerHandshakeHandler`, `BlockRequestHandler`. | Protocol test suites and benchmarks for bencode parsing. |
-| **Phase 5** | `session.rs`, `builder.rs` | DIP & OCP: Dependency injection for `PeerDiscovery`, `PortMapper`, `BlockStorage`. | End-to-end integration test (`cargo run -p torrent_session_example`). |
+| **Phase 1** | `io_traits.rs`, `peer_network.rs` | ISP & DIP: Segregate `BlockStorage` & implement `EncryptedSocket` decorator. | **Completed** (`EncryptedSocket` decorator + `Socket::Encrypted`) |
+| **Phase 2** | `announcer.rs`, `tracker.rs` | OCP: Introduce `Announcer` trait, `set_announcer`, & dynamic injection. | **Completed** (`AnnouncerFactory::create_announcer` + `Tracker::set_announcer`) |
+| **Phase 3** | `torrent_context.rs` | SRP & ISP: Decompose into `SwarmManager`, `PieceProgressTracker`, `DownloadStatsCounter`, `TransferControlState`. Role-based traits (`SwarmReadAccess`, `PieceWriteAccess`, `SessionStatusQuery`) implemented. | In Progress |
+| **Phase 4** | `metainfo.rs`, `worker.rs` | SRP: Extract `BencodeParser`, `InfoHashCalculator`, `PeerHandshakeHandler`, `BlockRequestHandler`. | Planned |
+| **Phase 5** | `session.rs`, `builder.rs` | DIP & OCP: Dependency injection for `PeerDiscovery`, `PortMapper`, `BlockStorage`. | Planned |
 
 ---

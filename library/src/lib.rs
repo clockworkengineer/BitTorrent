@@ -93,7 +93,7 @@ pub use core::metainfo;
 #[cfg(feature = "std")]
 pub use core::selector;
 #[cfg(feature = "std")]
-pub use core::torrent_context::TorrentStatus;
+pub use core::torrent_context::{PieceWriteAccess, SessionStatusQuery, SwarmReadAccess, TorrentStatus};
 
 #[cfg(feature = "std")]
 pub use network::announcer;
@@ -167,6 +167,8 @@ pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector}
 pub use network::dht::Dht;
 #[cfg(all(feature = "std", feature = "utp"))]
 pub use network::utp::UtpSocketAdapter;
+#[cfg(all(feature = "std", feature = "mse"))]
+pub use network::peer_network::EncryptedSocket;
 #[cfg(feature = "std")]
 pub use session::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]

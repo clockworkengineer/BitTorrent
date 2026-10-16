@@ -20,7 +20,7 @@
 //! # }
 //! ```
 
-use crate::announcer::{Announcer, AnnouncerEnum, AnnouncerFactory};
+use crate::announcer::{Announcer, AnnouncerFactory};
 use crate::error::BitTorrentError;
 use crate::host;
 use crate::manager::Manager;
@@ -148,7 +148,7 @@ impl TrackerAnnounceContext {
 /// Manages periodic communication with the tracker to announce status and retrieve peer swarms.
 pub struct Tracker {
     tc: Arc<Mutex<TorrentContext>>,
-    announcer: AnnouncerEnum,
+    announcer: Box<dyn Announcer>,
     pub total_bytes_downloaded: Arc<std::sync::atomic::AtomicU64>,
     pub total_bytes_uploaded: Arc<std::sync::atomic::AtomicU64>,
     pub initial_bytes_downloaded: u64,
@@ -205,13 +205,13 @@ impl Tracker {
         let tracker_urls = guard.tracker_urls.clone();
         let (announcer, active_url) = {
             let mut result =
-                AnnouncerFactory::create(&tracker_url).map(|a| (a, tracker_url.clone()));
+                AnnouncerFactory::create_announcer(&tracker_url).map(|a| (a, tracker_url.clone()));
             if result.is_err() {
                 for url in &tracker_urls {
                     if url == &tracker_url {
                         continue;
                     }
-                    if let Ok(a) = AnnouncerFactory::create(url) {
+                    if let Ok(a) = AnnouncerFactory::create_announcer(url) {
                         result = Ok((a, url.clone()));
                         break;
                     }
@@ -266,7 +266,7 @@ impl Tracker {
         let total_bytes_to_download = guard.total_bytes_to_download;
         Ok(Tracker {
             tc: tc.clone(),
-            announcer: AnnouncerEnum::Custom(announcer),
+            announcer,
             total_bytes_downloaded,
             total_bytes_uploaded,
             initial_bytes_downloaded,
@@ -290,6 +290,11 @@ impl Tracker {
             peer_manager: None,
             last_response: AnnounceResponse::default(),
         })
+    }
+
+    /// Injects a custom announcer implementation conforming to the `Announcer` trait.
+    pub fn set_announcer(&mut self, announcer: Box<dyn Announcer>) {
+        self.announcer = announcer;
     }
 
     /// Sets the target sender channel for newly discovered peer details blocks.
@@ -359,7 +364,7 @@ impl Tracker {
         for tracker_url in &self.tracker_urls.clone() {
             self.tracker_url = tracker_url.clone();
             if tracker_url != &original_tracker_url {
-                match AnnouncerFactory::create(tracker_url) {
+                match AnnouncerFactory::create_announcer(tracker_url) {
                     Ok(a) => self.announcer = a,
                     Err(_) => continue,
                 }
@@ -538,7 +543,7 @@ impl Tracker {
         for tracker_url in &self.tracker_urls.clone() {
             self.tracker_url = tracker_url.clone();
             if tracker_url != &original_tracker_url {
-                match AnnouncerFactory::create(tracker_url) {
+                match AnnouncerFactory::create_announcer(tracker_url) {
                     Ok(a) => self.announcer = a,
                     Err(_) => continue,
                 }

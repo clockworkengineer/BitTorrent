@@ -263,6 +263,8 @@ pub enum Socket {
     Tcp(crate::network::peer_network::TcpSocket),
     #[cfg(feature = "utp")]
     Utp(crate::network::utp::UtpSocketAdapter),
+    #[cfg(all(feature = "std", feature = "mse"))]
+    Encrypted(crate::network::peer_network::EncryptedSocket),
     Mock(MockSocket),
 }
 
@@ -273,6 +275,8 @@ impl AsyncSocket for Socket {
             Socket::Tcp(s) => s.read(buf).await,
             #[cfg(feature = "utp")]
             Socket::Utp(s) => s.read(buf).await,
+            #[cfg(all(feature = "std", feature = "mse"))]
+            Socket::Encrypted(s) => s.read(buf).await,
             Socket::Mock(s) => s.read(buf).await,
         }
     }
@@ -283,6 +287,8 @@ impl AsyncSocket for Socket {
             Socket::Tcp(s) => s.write(buf).await,
             #[cfg(feature = "utp")]
             Socket::Utp(s) => s.write(buf).await,
+            #[cfg(all(feature = "std", feature = "mse"))]
+            Socket::Encrypted(s) => s.write(buf).await,
             Socket::Mock(s) => s.write(buf).await,
         }
     }
@@ -293,6 +299,8 @@ impl AsyncSocket for Socket {
             Socket::Tcp(s) => s.close(),
             #[cfg(feature = "utp")]
             Socket::Utp(s) => s.close(),
+            #[cfg(all(feature = "std", feature = "mse"))]
+            Socket::Encrypted(s) => s.close(),
             Socket::Mock(s) => s.close(),
         }
     }

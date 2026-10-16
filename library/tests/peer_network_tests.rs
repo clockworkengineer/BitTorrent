@@ -139,3 +139,42 @@ fn test_peer_network_mse_integration() {
         assert_eq!(msg, PeerMessage::Choke);
     });
 }
+
+/// Verifies that EncryptedSocket decorator can be used directly as an AsyncSocket implementation.
+#[cfg(all(feature = "std", feature = "mse"))]
+#[test]
+fn test_encrypted_socket_decorator_direct() {
+    use bittorrent_rs::mse::Rc4;
+    use bittorrent_rs::{AsyncSocket, EncryptedSocket};
+
+    let (socket, in_tx, out_rx) = MockSocket::new();
+    let socket = Arc::new(bittorrent_rs::Socket::Mock(socket));
+
+    let key = b"my_secret_key";
+    let enc = Rc4::new(key);
+    let dec = Rc4::new(key);
+
+    let decorated = EncryptedSocket::new(socket, enc, dec);
+
+    futures::executor::block_on(async {
+        // Write through decorator
+        let written = decorated.write(b"plaintext_block").await.unwrap();
+        assert_eq!(written, 15);
+    });
+
+    let raw_out = out_rx.recv().unwrap();
+    assert_eq!(raw_out.len(), 15);
+    assert_ne!(raw_out, b"plaintext_block".to_vec());
+
+    // Send encrypted back
+    in_tx.send(raw_out).unwrap();
+
+    futures::executor::block_on(async {
+        let mut buf = vec![0u8; 15];
+        let n = decorated.read(&mut buf).await.unwrap();
+        assert_eq!(n, 15);
+        assert_eq!(&buf, b"plaintext_block");
+    });
+
+    decorated.close();
+}
