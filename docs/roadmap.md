@@ -234,15 +234,43 @@ Implemented native binary / bencode serialization, on-disk file verification, an
 
 ---
 
+### Phase 28: IPv6 Compact Tracker & Dual-Stack Peer Wire Enhancements (BEP 7 & BEP 15)
+
+Implemented native dual-stack (IPv4 / IPv6) peer discovery and connectivity across HTTP trackers, UDP trackers, DHT, and peer connections:
+- **BEP 7 IPv6 Compact Tracker Encoding & Decoding**:
+  - Implemented `decode_compact_ipv6_peers` and `encode_compact_ipv6_peers` parsing 18-byte peer records (16-byte IPv6 address + 2-byte big-endian port).
+  - Handles incomplete slices and arbitrary buffer offsets without panics.
+- **Dual-Stack HTTP Tracker Announce Support**:
+  - `HttpAnnouncer::decode_announce_response`: Concurrently decodes both `peers` (IPv4) and `peers6` (IPv6) compact lists, seamlessly merging discovered peers into `peer_list`.
+  - Added support for dictionary peer lists with IPv6 addresses and bracketed strings (`[2001:db8::1]`), correctly preserving colons in IPv6 addresses while stripping IPv4-mapped prefixes (`::ffff:`).
+  - `HttpAnnouncer::build_announce_url`: Appends `&ipv6=...` URL parameter to announce requests when an IPv6 address is configured in `TrackerAnnounceContext`.
+- **BEP 15 UDP Tracker IPv6 Support**:
+  - `UdpAnnouncer::announce`: Detects 18-byte compact peer records (or explicit IPv6 socket connections) and routes parsing to `get_compact_ipv6_peer_list`.
+  - Automatically binds to `[::]:0` when connecting to IPv6 remote tracker endpoints.
+- **Wire Protocol & Socket Formatting**:
+  - Added `format_socket_addr(ip, port)` to format socket addresses as `[ipv6]:port` or `ipv4:port`, ensuring standard `SocketAddr` parsing succeeds across `peer_network`, `utp`, and `dht`.
+  - Updated `PeerDetails` with `endpoint()`, `is_ipv6()`, and `is_ipv4()` helpers.
+  - `TrackerAnnounceContext::get_compact_ipv6_peer_list` filters out both client IPv4 and IPv6 addresses to prevent self-connection swarms.
+- **DHT (BEP 32) IPv6 Integration**:
+  - Parsed 18-byte compact IPv6 peer entries from `values` list in `get_peers` DHT query responses.
+  - Parsed 38-byte compact IPv6 node records (`nodes6`) in DHT node discovery.
+  - `encode_compact_peers` encodes both IPv4 (6-byte) and IPv6 (18-byte) compact peer records.
+- **Session & Builder Configuration**:
+  - Extended `SessionConfig` with `pub ipv6: Option<String>` and `pub enable_ipv6: bool`, along with `.with_ipv6(...)` and `.with_enable_ipv6(...)`.
+  - Added `.ipv6(...)` and `.enable_ipv6(...)` configuration methods to `TorrentSessionBuilder`.
+- **Test Suite**: Dedicated integration tests in `library/tests/ipv6_tracker_tests.rs` verifying IPv6 socket address formatting, roundtrip compact encoding/decoding, dual-stack `peers` + `peers6` HTTP announce responses, dictionary-based IPv6 parsing, URL parameter generation, and session builder configuration.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **IPv6 Compact Tracker & Peer Wire Enhancements**: Comprehensive multi-homed IPv6 announcing and transport tuning across dual-stack swarms.
+1. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents**: Complete piece-level block verification via SHA-256 Merkle trees.
 
-2. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents**: Complete piece-level block verification via SHA-256 Merkle trees.
+2. **Disk Cache & Asynchronous Write Coalescing**: High-throughput memory buffer pooling to optimize disk I/O under gigabit swarms.
 
-3. **Disk Cache & Asynchronous Write Coalescing**: High-throughput memory buffer pooling to optimize disk I/O under gigabit swarms.
+3. **PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support**: Wire-level peer exchange updates for dual-stack swarms.
 
 
 

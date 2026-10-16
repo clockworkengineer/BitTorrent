@@ -76,6 +76,7 @@ fn test_udp_tracker_announce() {
         downloaded: 0,
         uploaded: 0,
         left: 1000,
+        ipv6: None,
         #[cfg(feature = "http-tracker")]
         http_client: std::sync::Arc::new(bittorrent_rs::UreqHttpClient),
     };

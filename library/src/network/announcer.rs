@@ -48,7 +48,7 @@ impl HttpAnnouncer {
     }
 
     /// Parses and decodes the HTTP Bencoded tracker announce response.
-    fn decode_announce_response(
+    pub fn decode_announce_response(
         tracker: &TrackerAnnounceContext,
         announce_response: &[u8],
     ) -> Result<AnnounceResponse, BitTorrentError> {
@@ -98,8 +98,17 @@ impl HttpAnnouncer {
                                         peer.ip = String::from_utf8_lossy(ip_bytes).to_string();
                                     }
                                 }
-                                if peer.ip.contains(":") {
-                                    if let Some((_, tail)) = peer.ip.rsplit_once(":") {
+                                let clean_ip = peer.ip.trim().trim_matches('[').trim_matches(']');
+                                if let Ok(v6) = clean_ip.parse::<std::net::Ipv6Addr>() {
+                                    if let Some(v4) = v6.to_ipv4_mapped() {
+                                        peer.ip = v4.to_string();
+                                    } else {
+                                        peer.ip = clean_ip.to_string();
+                                    }
+                                } else if clean_ip.parse::<std::net::Ipv4Addr>().is_ok() {
+                                    peer.ip = clean_ip.to_string();
+                                } else if peer.ip.contains(':') {
+                                    if let Some((_, tail)) = peer.ip.rsplit_once(':') {
                                         peer.ip = tail.to_string();
                                     }
                                 }
@@ -115,13 +124,21 @@ impl HttpAnnouncer {
                                             .unwrap_or(0);
                                     }
                                 }
-                                if peer.ip != tracker.ip {
+                                if peer.ip != tracker.ip && tracker.ipv6.as_deref() != Some(&peer.ip) {
                                     response.peer_list.push(peer);
                                 }
                             }
                         }
                     }
                     _ => {}
+                }
+            }
+            if let Some(field) =
+                crate::bencode::Bencode::get_dictionary_entry(&decoded, "peers6".as_bytes())
+            {
+                if let crate::bencode::BNode::String(bytes) = field {
+                    let mut peers6 = tracker.get_compact_ipv6_peer_list(bytes, 0);
+                    response.peer_list.append(&mut peers6);
                 }
             }
             response.interval =
@@ -145,7 +162,7 @@ impl HttpAnnouncer {
     }
 
     /// Constructs the full HTTP request URL including the query parameters for the tracker announce.
-    fn build_announce_url(&self, tracker: &TrackerAnnounceContext) -> String {
+    pub fn build_announce_url(&self, tracker: &TrackerAnnounceContext) -> String {
         let info_hash = encode_binary(&tracker.info_hash);
         let peer_id = encode(&tracker.peer_id);
         let mut announce_url = format!(
@@ -169,6 +186,11 @@ impl HttpAnnouncer {
         if let Some(tracker_id) = &tracker.tracker_id {
             if !tracker_id.is_empty() {
                 announce_url.push_str(&format!("&trackerid={}", encode(tracker_id)));
+            }
+        }
+        if let Some(ipv6) = &tracker.ipv6 {
+            if !ipv6.is_empty() {
+                announce_url.push_str(&format!("&ipv6={}", encode(ipv6)));
             }
         }
         announce_url
@@ -264,7 +286,7 @@ impl UdpAnnouncer {
             .port_or_known_default()
             .ok_or_else(|| BitTorrentError::Parse("UDP tracker port missing".to_string()))?;
         Ok(UdpAnnouncer {
-            host_port: format!("{}:{}", host, port),
+            host_port: crate::util::format_socket_addr(host, port),
             socket: None,
             connected: false,
             connected_at: None,
@@ -440,7 +462,19 @@ impl Announcer for UdpAnnouncer {
             response.interval = unpack_u32(&reply, 8) as usize;
             response.incomplete = unpack_u32(&reply, 12) as usize;
             response.complete = unpack_u32(&reply, 16) as usize;
-            response.peer_list = tracker.get_compact_peer_list(&reply, 20);
+            let peers_bytes_len = reply.len().saturating_sub(20);
+            let is_ipv6_socket = self
+                .socket
+                .as_ref()
+                .map(|s| s.peer_addr().map(|a| a.is_ipv6()).unwrap_or(false))
+                .unwrap_or(false);
+            if (is_ipv6_socket && peers_bytes_len % 18 == 0)
+                || (peers_bytes_len > 0 && peers_bytes_len % 18 == 0 && peers_bytes_len % 6 != 0)
+            {
+                response.peer_list = tracker.get_compact_ipv6_peer_list(&reply, 20);
+            } else {
+                response.peer_list = tracker.get_compact_peer_list(&reply, 20);
+            }
         } else if action == 3 {
             response.failure = true;
             response.status_message = String::from_utf8_lossy(&reply[8..]).into_owned();

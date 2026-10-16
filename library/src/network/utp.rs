@@ -684,8 +684,11 @@ impl UtpSocketAdapter {
     ///
     /// Returns an error if the UDP socket cannot be bound or the `ST_SYN` cannot be sent.
     pub fn connect(ip: &str, port: u16) -> Result<Self, BitTorrentError> {
-        let udp = UdpSocket::bind("0.0.0.0:0").map_err(BitTorrentError::Io)?;
-        udp.connect(format!("{}:{}", ip, port)).map_err(BitTorrentError::Io)?;
+        let is_ipv6 = ip.contains(':');
+        let bind_addr = if is_ipv6 { "[::]:0" } else { "0.0.0.0:0" };
+        let udp = UdpSocket::bind(bind_addr).map_err(BitTorrentError::Io)?;
+        let remote_addr = crate::util::format_socket_addr(ip, port);
+        udp.connect(remote_addr).map_err(BitTorrentError::Io)?;
 
         let connection_id = rand::random::<u16>();
         let adapter = Self::from_raw_socket(udp, connection_id);

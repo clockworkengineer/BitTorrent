@@ -184,6 +184,11 @@ impl Dht {
                 peer_bytes.extend_from_slice(&ip_addr.octets());
                 peer_bytes.extend_from_slice(&port.to_be_bytes());
                 result.push(peer_bytes);
+            } else if let Ok(ip_addr) = ip.parse::<std::net::Ipv6Addr>() {
+                let mut peer_bytes = Vec::new();
+                peer_bytes.extend_from_slice(&ip_addr.octets());
+                peer_bytes.extend_from_slice(&port.to_be_bytes());
+                result.push(peer_bytes);
             }
         }
         result
@@ -510,7 +515,7 @@ impl Dht {
                 let (tx, rx) = channel();
                 outstanding_queries.lock().unwrap().insert(tid.clone(), tx);
                 
-                let target_addr = format!("{}:{}", node.ip, node.port);
+                let target_addr = crate::util::format_socket_addr(&node.ip, node.port);
                 if let Ok(mut resolved) = target_addr.to_socket_addrs() {
                     if let Some(addr) = resolved.next() {
                         let _ = socket_clone.send_to(&out, addr);
@@ -541,6 +546,16 @@ impl Dht {
                                                 ip,
                                                 port,
                                             });
+                                        } else if peer_bytes.len() == 18 {
+                                            let decoded = crate::util::decode_compact_ipv6_peers(peer_bytes, 0);
+                                            for (ip, port) in decoded {
+                                                let _ = peer_sender.send(PeerDetails {
+                                                    info_hash: info_hash.to_vec(),
+                                                    peer_id: None,
+                                                    ip,
+                                                    port,
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -551,6 +566,17 @@ impl Dht {
                             if let Some(BNode::String(nodes_bytes)) = nodes {
                                 let closer = parse_compact_nodes_slice(nodes_bytes);
                                 for c_node in closer {
+                                    if !queried.contains(&c_node.id) && !candidates.iter().any(|c| c.id == c_node.id) {
+                                        candidates.push(c_node);
+                                    }
+                                }
+                            }
+
+                            // 3. Check closer IPv6 nodes (BEP 32)
+                            let nodes6 = r_node.dict_get(b"nodes6");
+                            if let Some(BNode::String(nodes6_bytes)) = nodes6 {
+                                let closer6 = parse_compact_ipv6_nodes_slice(nodes6_bytes);
+                                for c_node in closer6 {
                                     if !queried.contains(&c_node.id) && !candidates.iter().any(|c| c.id == c_node.id) {
                                         candidates.push(c_node);
                                     }
@@ -575,6 +601,23 @@ fn parse_compact_nodes_slice(bytes: &[u8]) -> Vec<DhtNode> {
         let port = bytes[offset+24..offset+26].try_into().map(u16::from_be_bytes).unwrap_or(0);
         nodes.push(DhtNode { id, ip, port });
         offset += 26;
+    }
+    nodes
+}
+
+/// Decodes compact IPv6 node representations into `DhtNode` objects (BEP 32).
+fn parse_compact_ipv6_nodes_slice(bytes: &[u8]) -> Vec<DhtNode> {
+    let mut nodes = Vec::new();
+    let mut offset = 0;
+    while offset + 38 <= bytes.len() {
+        let mut id = [0u8; 20];
+        id.copy_from_slice(&bytes[offset..offset+20]);
+        let mut ip_bytes = [0u8; 16];
+        ip_bytes.copy_from_slice(&bytes[offset+20..offset+36]);
+        let ip = std::net::Ipv6Addr::from(ip_bytes).to_string();
+        let port = bytes[offset+36..offset+38].try_into().map(u16::from_be_bytes).unwrap_or(0);
+        nodes.push(DhtNode { id, ip, port });
+        offset += 38;
     }
     nodes
 }

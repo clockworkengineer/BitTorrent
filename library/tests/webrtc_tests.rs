@@ -109,6 +109,7 @@ fn test_webtorrent_announce_request_payload_construction() {
         downloaded: 1048576,
         uploaded: 524288,
         left: 2097152,
+        ipv6: None,
         http_client: Arc::new(bittorrent_rs::io_traits::UreqHttpClient),
     };
 
@@ -180,6 +181,7 @@ fn test_announcer_factory_recognizes_websocket_trackers() {
         downloaded: 0,
         uploaded: 0,
         left: 5000,
+        ipv6: None,
         http_client: Arc::new(bittorrent_rs::io_traits::UreqHttpClient),
     };
 

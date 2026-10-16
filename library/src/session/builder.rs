@@ -91,6 +91,18 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Sets an explicit IPv6 address to announce to dual-stack trackers (BEP 7).
+    pub fn ipv6(mut self, ipv6: impl Into<String>) -> Self {
+        self.config.ipv6 = Some(ipv6.into());
+        self
+    }
+
+    /// Enables or disables dual-stack IPv6 peer connections and announcements.
+    pub fn enable_ipv6(mut self, enable: bool) -> Self {
+        self.config.enable_ipv6 = enable;
+        self
+    }
+
     /// Attaches a peer manager registry for dead-peer tracking across sessions.
     pub fn manager(mut self, manager: Arc<Manager>) -> Self {
         self.manager = Some(manager);
@@ -131,6 +143,7 @@ impl TorrentSessionBuilder {
         self.fast_resume_file = Some(path.as_ref().to_path_buf());
         self
     }
+
 
     /// Consumes the builder and constructs the `TorrentSession`.
     ///

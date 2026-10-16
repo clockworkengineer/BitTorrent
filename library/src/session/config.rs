@@ -52,6 +52,10 @@ pub struct SessionConfig {
     pub choking_strategy: Arc<dyn ChokingStrategy>,
     /// Enable Super-Seeding mode (BEP 16) when seeding.
     pub super_seeding: bool,
+    /// Optional explicit IPv6 address to announce to dual-stack trackers (BEP 7).
+    pub ipv6: Option<String>,
+    /// Enable dual-stack IPv4/IPv6 peer connections and announcements (default: true).
+    pub enable_ipv6: bool,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -119,6 +123,8 @@ impl Default for SessionConfig {
             block_size: crate::constants::BLOCK_SIZE,
             choking_strategy: Arc::new(StandardChoking),
             super_seeding: false,
+            ipv6: None,
+            enable_ipv6: true,
         }
     }
 }
@@ -128,6 +134,18 @@ impl SessionConfig {
     pub fn with_listen_port(mut self, port: u16) -> Self {
         self.listen_port = port;
         self.dht_port = port;
+        self
+    }
+
+    /// Sets an explicit IPv6 address to announce to dual-stack trackers (BEP 7).
+    pub fn with_ipv6(mut self, ipv6: impl Into<String>) -> Self {
+        self.ipv6 = Some(ipv6.into());
+        self
+    }
+
+    /// Enables or disables dual-stack IPv6 peer connections and announcements.
+    pub fn with_enable_ipv6(mut self, enable: bool) -> Self {
+        self.enable_ipv6 = enable;
         self
     }
 }

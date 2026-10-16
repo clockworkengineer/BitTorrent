@@ -56,6 +56,89 @@ pub fn decode_compact_ipv4_peers(peers: &[u8], offset: usize) -> alloc::vec::Vec
     list
 }
 
+/// Encodes an IPv4 peer list into compact 6-byte representation (4 bytes IPv4, 2 bytes port).
+pub fn encode_compact_ipv4_peers(peers: &[(String, u16)]) -> alloc::vec::Vec<u8> {
+    let mut bytes = alloc::vec::Vec::new();
+    for (ip, port) in peers {
+        let parts: alloc::vec::Vec<&str> = ip.split('.').collect();
+        if parts.len() == 4 {
+            if let (Ok(b0), Ok(b1), Ok(b2), Ok(b3)) = (
+                parts[0].parse::<u8>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u8>(),
+                parts[3].parse::<u8>(),
+            ) {
+                bytes.push(b0);
+                bytes.push(b1);
+                bytes.push(b2);
+                bytes.push(b3);
+                bytes.extend_from_slice(&port.to_be_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+/// Decodes a compact IPv6 peer list (18 bytes per peer: 16 bytes IPv6, 2 bytes port) starting from a given offset (BEP 7).
+pub fn decode_compact_ipv6_peers(peers: &[u8], offset: usize) -> alloc::vec::Vec<(String, u16)> {
+    let mut list = alloc::vec::Vec::new();
+    let mut num = offset;
+    while num + 18 <= peers.len() {
+        let mut octets = [0u8; 16];
+        octets.copy_from_slice(&peers[num..num + 16]);
+        #[cfg(feature = "std")]
+        let ip = std::net::Ipv6Addr::from(octets).to_string();
+        #[cfg(not(feature = "std"))]
+        let ip = format!(
+            "{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
+            u16::from_be_bytes([octets[0], octets[1]]),
+            u16::from_be_bytes([octets[2], octets[3]]),
+            u16::from_be_bytes([octets[4], octets[5]]),
+            u16::from_be_bytes([octets[6], octets[7]]),
+            u16::from_be_bytes([octets[8], octets[9]]),
+            u16::from_be_bytes([octets[10], octets[11]]),
+            u16::from_be_bytes([octets[12], octets[13]]),
+            u16::from_be_bytes([octets[14], octets[15]])
+        );
+        let port = ((peers[num + 16] as u16) << 8) | peers[num + 17] as u16;
+        list.push((ip, port));
+        num += 18;
+    }
+    list
+}
+
+/// Encodes an IPv6 peer list into compact 18-byte representation (16 bytes IPv6, 2 bytes port) (BEP 7).
+pub fn encode_compact_ipv6_peers(peers: &[(String, u16)]) -> alloc::vec::Vec<u8> {
+    let mut bytes = alloc::vec::Vec::new();
+    for (ip, port) in peers {
+        let clean_ip = ip.trim_start_matches('[').trim_end_matches(']');
+        #[cfg(feature = "std")]
+        {
+            if let Ok(addr) = clean_ip.parse::<std::net::Ipv6Addr>() {
+                bytes.extend_from_slice(&addr.octets());
+                bytes.extend_from_slice(&port.to_be_bytes());
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (clean_ip, port);
+        }
+    }
+    bytes
+}
+
+/// Formats an IP address and port into a standard socket address string.
+///
+/// If `ip` is an IPv6 address containing `:` and not already enclosed in square brackets,
+/// it is formatted as `[ip]:port`. Otherwise, it is formatted as `ip:port`.
+pub fn format_socket_addr(ip: &str, port: u16) -> String {
+    if ip.contains(':') && !ip.starts_with('[') {
+        format!("[{}]:{}", ip, port)
+    } else {
+        format!("{}:{}", ip, port)
+    }
+}
+
 /// Formats a 20-byte info hash byte slice into its hexadecimal string representation.
 pub fn info_hash_to_string(info_hash: &[u8]) -> String {
     info_hash.iter().map(|b| format!("{:02x}", b)).collect()

@@ -318,7 +318,7 @@ pub struct TcpSocketFactory {
 #[cfg(feature = "std")]
 impl crate::io_traits::SocketFactory for TcpSocketFactory {
     fn connect(&self, ip: &str, port: u16) -> Result<Arc<Socket>, BitTorrentError> {
-        let address = format!("{}:{}", ip, port);
+        let address = crate::util::format_socket_addr(ip, port);
         let addr = address
             .parse::<std::net::SocketAddr>()
             .map_err(|err| BitTorrentError::Parse(err.to_string()))?;

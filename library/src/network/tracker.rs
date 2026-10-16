@@ -59,12 +59,29 @@ pub enum TrackerStatus {
 }
 
 /// Contains contact information and identifiers for a remote peer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PeerDetails {
     pub info_hash: Vec<u8>,
     pub peer_id: Option<String>,
     pub ip: String,
     pub port: u16,
+}
+
+impl PeerDetails {
+    /// Formats the peer IP address and port into a standard socket address string (e.g. `1.2.3.4:6881` or `[2001:db8::1]:6881`).
+    pub fn endpoint(&self) -> String {
+        crate::util::format_socket_addr(&self.ip, self.port)
+    }
+
+    /// Returns `true` if this peer represents an IPv6 endpoint.
+    pub fn is_ipv6(&self) -> bool {
+        self.ip.contains(':') && !self.ip.starts_with("webrtc:")
+    }
+
+    /// Returns `true` if this peer represents an IPv4 endpoint.
+    pub fn is_ipv4(&self) -> bool {
+        !self.is_ipv6() && !self.ip.starts_with("webrtc:")
+    }
 }
 
 /// Structured response received from a tracker announce request.
@@ -124,6 +141,7 @@ pub struct TrackerAnnounceContext {
     pub downloaded: u64,
     pub uploaded: u64,
     pub left: u64,
+    pub ipv6: Option<String>,
     #[cfg(feature = "http-tracker")]
     pub http_client: std::sync::Arc<dyn crate::io_traits::HttpClient>,
 }
@@ -135,6 +153,21 @@ impl TrackerAnnounceContext {
         decoded
             .into_iter()
             .filter(|(ip, _)| ip != &self.ip)
+            .map(|(ip, port)| PeerDetails {
+                info_hash: self.info_hash.clone(),
+                peer_id: None,
+                ip,
+                port,
+            })
+            .collect()
+    }
+
+    /// Extracts IPv6 peer details from a BEP 7 compact-format peer byte list (18 bytes per peer).
+    pub fn get_compact_ipv6_peer_list(&self, peers: &[u8], offset: usize) -> Vec<PeerDetails> {
+        let decoded = crate::util::decode_compact_ipv6_peers(peers, offset);
+        decoded
+            .into_iter()
+            .filter(|(ip, _)| ip != &self.ip && self.ipv6.as_deref() != Some(ip))
             .map(|(ip, port)| PeerDetails {
                 info_hash: self.info_hash.clone(),
                 peer_id: None,
@@ -156,6 +189,7 @@ pub struct Tracker {
     pub peer_id: String,
     pub port: u16,
     pub ip: String,
+    pub ipv6: Option<String>,
     pub compact: bool,
     pub no_peer_id: bool,
     pub key: Option<String>,
@@ -223,6 +257,7 @@ impl Tracker {
         let total_bytes_uploaded = guard.total_bytes_uploaded.clone();
         let initial_bytes_downloaded = guard.initial_bytes_downloaded;
         let total_bytes_to_download = guard.total_bytes_to_download;
+        let ipv6 = guard.config.ipv6.clone();
         Ok(Tracker {
             tc: tc.clone(),
             announcer,
@@ -233,6 +268,7 @@ impl Tracker {
             peer_id: peer_id::get(),
             port: 6881,
             ip: host::get_ip(),
+            ipv6,
             compact: true,
             no_peer_id: false,
             key: None,
@@ -264,6 +300,7 @@ impl Tracker {
         let total_bytes_uploaded = guard.total_bytes_uploaded.clone();
         let initial_bytes_downloaded = guard.initial_bytes_downloaded;
         let total_bytes_to_download = guard.total_bytes_to_download;
+        let ipv6 = guard.config.ipv6.clone();
         Ok(Tracker {
             tc: tc.clone(),
             announcer,
@@ -274,6 +311,7 @@ impl Tracker {
             peer_id: peer_id::get(),
             port: 6881,
             ip: host::get_ip(),
+            ipv6,
             compact: true,
             no_peer_id: false,
             key: None,
@@ -352,6 +390,7 @@ impl Tracker {
             downloaded: self.downloaded(),
             uploaded: self.uploaded(),
             left: self.left(),
+            ipv6: self.ipv6.clone(),
             #[cfg(feature = "http-tracker")]
             http_client,
         }
