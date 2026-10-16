@@ -209,15 +209,40 @@ Implemented complete WebTorrent and WebRTC Data Channel peer transport support a
 
 ---
 
+### Phase 27: Fast Resume File Serialization (BEP 47)
+
+Implemented native binary / bencode serialization, on-disk file verification, and session restoration adhering to BEP 47 and libtorrent `.fastresume` conventions:
+- **Fast Resume Data Structure (`FastResumeData`)**:
+  - Encapsulates 20-byte info-hash, target save path, piece count, piece length, packed bitfield, byte-per-piece array (`pieces`), total uploaded and downloaded bytes, active/seeding durations, seeding state, file entry array (`FastResumeFileEntry`), and known peer addresses (`"ip:port"`).
+  - Piece helper utilities: `has_piece`, `set_piece`, `pieces_have_count`, and `progress`.
+- **BEP 47 / libtorrent Bencode Serialization**:
+  - `to_bencode`: Serializes dictionary keys in strict lexicographical canonical Bencode order (`"file-format"`, `"file-version"`, `"info-hash"`, `"save_path"`, `"num_pieces"`, `"piece_length"`, `"bitfield"`, `"pieces"`, `"total_uploaded"`, `"total_downloaded"`, `"active_time"`, `"seeding_time"`, `"is_seeding"`, `"file sizes"`, `"file_paths"`, `"file_priorities"`, `"peers"`).
+  - `from_bencode`: Robust decoding with backward and cross-client compatibility: supports both packed `"bitfield"` and byte-per-piece `"pieces"` strings, multi-format `[size, mtime]` pairs or single sizes, and compact or string peer representations.
+  - Disk persistence: `save_to_file` and `load_from_file` for native `.fastresume` or `.resume` files.
+- **Fast On-Disk Validation (`verify_on_disk`)**:
+  - Instant disk verification without rehashing every block from disk: verifies file existence and exact byte length matching across all torrent files.
+  - Strict timestamp verification (`verify_on_disk_strict`): verifies filesystem modification timestamps (`mtime`) with tolerance for FAT32 / filesystem clock precision.
+- **Session & Builder Integration**:
+  - `TorrentSessionBuilder::fast_resume(data)`, `TorrentSessionBuilder::fast_resume_data(data)`, and `TorrentSessionBuilder::fast_resume_file(path)`.
+  - In `build()`, verified fast-resume data restores piece bitfields, recalculates piece lengths, sets download metrics, applies file priorities, and marks completion directly without disk re-hashing. If verification fails (e.g. truncated or missing file), safely falls back to standard hash verification.
+  - `TorrentSession::generate_fast_resume()` and `TorrentSession::save_fast_resume(path)` for saving state on exit or periodically.
+- **Daemon & CLI Companion Tools**:
+  - `bt_daemon`: Saves `.fastresume` files in the data directory upon daemon state save, restoring sessions instantly upon restart using `.fast_resume_file(...)`.
+  - `bt_cli`: Added `bt-cli resume-info <path>` command to inspect and validate `.fastresume` files directly from the command line.
+  - `torrent_fast_resume_example`: Updated example demonstrating standard session creation, `.fastresume` export, and instant resumption.
+- **Test Suite**: Dedicated integration test suite in `library/tests/fast_resume_tests.rs` verifying bencode roundtripping, piece progress calculations, on-disk verification passes and rejections, context restoration, file I/O, and session builder roundtrips with real `.torrent` files.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Fast Resume File Serialization (BEP 47)**: Native binary / bencode serialization and loading of `.resume` state files to avoid re-checking complete files across restarts.
+1. **IPv6 Compact Tracker & Peer Wire Enhancements**: Comprehensive multi-homed IPv6 announcing and transport tuning across dual-stack swarms.
 
-2. **IPv6 Compact Tracker & Peer Wire Enhancements**: Comprehensive multi-homed IPv6 announcing and transport tuning across dual-stack swarms.
+2. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents**: Complete piece-level block verification via SHA-256 Merkle trees.
 
-3. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents**: Complete piece-level block verification via SHA-256 Merkle trees.
+3. **Disk Cache & Asynchronous Write Coalescing**: High-throughput memory buffer pooling to optimize disk I/O under gigabit swarms.
 
 
 

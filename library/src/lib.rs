@@ -128,6 +128,8 @@ pub use storage::assembler;
 #[cfg(feature = "std")]
 pub use storage::disk_io;
 #[cfg(feature = "std")]
+pub use storage::fast_resume::{FastResumeData, FastResumeFileEntry};
+#[cfg(feature = "std")]
 pub use storage::piece_buffer;
 #[cfg(feature = "std")]
 pub use storage::piece_request;

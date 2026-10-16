@@ -58,4 +58,9 @@ impl ManualResetEvent {
             *guard
         }
     }
+
+    /// Returns `true` if the event is currently signaled, without blocking.
+    pub fn is_set(&self) -> bool {
+        self.wait_one(0)
+    }
 }

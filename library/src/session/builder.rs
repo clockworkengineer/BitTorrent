@@ -10,6 +10,8 @@ use crate::error::BitTorrentError;
 use crate::manager::Manager;
 use crate::selector::{PieceSelector, RarestFirstSelector};
 
+use crate::storage::fast_resume::FastResumeData;
+
 use super::config::SessionConfig;
 use super::session::TorrentSession;
 
@@ -44,6 +46,8 @@ pub struct TorrentSessionBuilder {
     pub(super) manager: Option<Arc<Manager>>,
     pub(super) config: SessionConfig,
     pub(super) selector: Arc<dyn PieceSelector>,
+    pub(super) fast_resume: Option<FastResumeData>,
+    pub(super) fast_resume_file: Option<PathBuf>,
 }
 
 impl TorrentSessionBuilder {
@@ -56,6 +60,8 @@ impl TorrentSessionBuilder {
             manager: None,
             config: SessionConfig::default(),
             selector: Arc::new(RarestFirstSelector),
+            fast_resume: None,
+            fast_resume_file: None,
         }
     }
 
@@ -68,6 +74,8 @@ impl TorrentSessionBuilder {
             manager: None,
             config: SessionConfig::default(),
             selector: Arc::new(RarestFirstSelector),
+            fast_resume: None,
+            fast_resume_file: None,
         }
     }
 
@@ -106,12 +114,38 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Attaches pre-parsed BEP 47 fast-resume data for instant verification and resume.
+    pub fn fast_resume(mut self, data: FastResumeData) -> Self {
+        self.fast_resume = Some(data);
+        self
+    }
+
+    /// Attaches pre-parsed BEP 47 fast-resume data for instant verification and resume.
+    pub fn fast_resume_data(mut self, data: FastResumeData) -> Self {
+        self.fast_resume = Some(data);
+        self
+    }
+
+    /// Attaches a path to a `.resume` or `.fastresume` file for instant verification and resume.
+    pub fn fast_resume_file(mut self, path: impl AsRef<Path>) -> Self {
+        self.fast_resume_file = Some(path.as_ref().to_path_buf());
+        self
+    }
+
     /// Consumes the builder and constructs the `TorrentSession`.
     ///
     /// # Errors
     /// Returns [`BitTorrentError`] if the torrent file or magnet link cannot be parsed,
     /// or if the download directory cannot be created.
     pub fn build(self) -> Result<TorrentSession, BitTorrentError> {
+        let fast_resume = if let Some(data) = self.fast_resume {
+            Some(data)
+        } else if let Some(ref file_path) = self.fast_resume_file {
+            FastResumeData::load_from_file(file_path).ok()
+        } else {
+            None
+        };
+
         let mut session = match &self.source {
             TorrentSource::File(path) => {
                 TorrentSession::new_with_options_internal(
@@ -120,6 +154,7 @@ impl TorrentSessionBuilder {
                     self.seeding,
                     self.config,
                     self.selector,
+                    fast_resume,
                 )?
             }
             TorrentSource::Magnet(link) => {

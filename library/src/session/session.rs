@@ -13,6 +13,7 @@ use crate::metainfo::{FilePriority, MetaInfoFile};
 use crate::peer::Peer;
 use crate::selector::PieceSelector;
 use crate::core::torrent_context::{TorrentContext, TorrentStatus};
+use crate::storage::fast_resume::FastResumeData;
 use crate::tracker::{PeerDetails, Tracker};
 use crate::magnet::MagnetLink;
 use std::fs;
@@ -81,6 +82,7 @@ impl TorrentSession {
         seeding: bool,
         config: SessionConfig,
         selector: Arc<dyn PieceSelector>,
+        fast_resume: Option<FastResumeData>,
     ) -> Result<Self, BitTorrentError> {
         let torrent_path = torrent_path.as_ref();
         let download_path = download_path.as_ref().to_path_buf();
@@ -94,7 +96,7 @@ impl TorrentSession {
         let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path)?;
         let disk_io = Arc::new(DiskIO::new(
             &download_path,
-            files_to_download,
+            files_to_download.clone(),
             piece_length,
         ));
         let context = Arc::new(Mutex::new(TorrentContext::new(
@@ -107,31 +109,50 @@ impl TorrentSession {
         )?));
 
         disk_io.create_local_torrent_structure()?;
-        if seeding {
-            disk_io.fully_downloaded_torrent_bitfield(&mut context.lock().unwrap())?;
-            let total = context.lock().unwrap().total_bytes_to_download;
-            context.lock().unwrap().total_bytes_downloaded.store(total, std::sync::atomic::Ordering::Relaxed);
-            context.lock().unwrap().initial_bytes_downloaded = total;
-        } else {
-            if !config.skip_hash_check {
-                disk_io.create_torrent_bitfield(&mut context.lock().unwrap())?;
-            } else {
-                let mut ctx = context.lock().unwrap();
-                let number_of_pieces = ctx.number_of_pieces;
-                let piece_length = ctx.piece_length;
-                let mut total_bytes_left = ctx.total_bytes_to_download as i64;
-                for i in 0..number_of_pieces as u32 {
-                    ctx.mark_piece_missing(i, true);
-                    if total_bytes_left / piece_length as i64 != 0 {
-                        ctx.set_piece_length(i, piece_length);
-                    } else {
-                        ctx.set_piece_length(i, total_bytes_left as u32);
+
+        let mut resumed = false;
+        if let Some(mut resume) = fast_resume {
+            if resume.files.len() == files_to_download.len() {
+                for (entry, file) in resume.files.iter_mut().zip(&files_to_download) {
+                    if entry.path.as_os_str().is_empty() {
+                        entry.path = PathBuf::from(&file.name);
                     }
-                    total_bytes_left -= piece_length as i64;
                 }
             }
-            let downloaded = context.lock().unwrap().total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
-            context.lock().unwrap().initial_bytes_downloaded = downloaded;
+            if resume.verify_on_disk(&download_path).unwrap_or(false) {
+                if resume.apply_to_context(&mut context.lock().unwrap()).is_ok() {
+                    resumed = true;
+                }
+            }
+        }
+
+        if !resumed {
+            if seeding {
+                disk_io.fully_downloaded_torrent_bitfield(&mut context.lock().unwrap())?;
+                let total = context.lock().unwrap().total_bytes_to_download;
+                context.lock().unwrap().total_bytes_downloaded.store(total, std::sync::atomic::Ordering::Relaxed);
+                context.lock().unwrap().initial_bytes_downloaded = total;
+            } else {
+                if !config.skip_hash_check {
+                    disk_io.create_torrent_bitfield(&mut context.lock().unwrap())?;
+                } else {
+                    let mut ctx = context.lock().unwrap();
+                    let number_of_pieces = ctx.number_of_pieces;
+                    let piece_length = ctx.piece_length;
+                    let mut total_bytes_left = ctx.total_bytes_to_download as i64;
+                    for i in 0..number_of_pieces as u32 {
+                        ctx.mark_piece_missing(i, true);
+                        if total_bytes_left / piece_length as i64 != 0 {
+                            ctx.set_piece_length(i, piece_length);
+                        } else {
+                            ctx.set_piece_length(i, total_bytes_left as u32);
+                        }
+                        total_bytes_left -= piece_length as i64;
+                    }
+                }
+                let downloaded = context.lock().unwrap().total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+                context.lock().unwrap().initial_bytes_downloaded = downloaded;
+            }
         }
 
         let (task_tx, task_rx) = std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
@@ -250,6 +271,19 @@ impl TorrentSession {
         crate::storage::stream::TorrentStream::for_file(self.context.clone(), file_index, Some(cursor))
     }
 
+    /// Generates BEP 47 fast-resume data capturing current completion state and on-disk file metadata.
+    pub fn generate_fast_resume(&self) -> Result<FastResumeData, BitTorrentError> {
+        let ctx = self.context.lock().map_err(|_| {
+            BitTorrentError::Parse("Failed to acquire torrent context lock for fast resume".into())
+        })?;
+        FastResumeData::from_context(&ctx, &self.download_path)
+    }
+
+    /// Saves BEP 47 fast-resume data directly to the specified file path on disk.
+    pub fn save_fast_resume(&self, path: impl AsRef<Path>) -> Result<(), BitTorrentError> {
+        let resume = self.generate_fast_resume()?;
+        resume.save_to_file(path)
+    }
 
     /// Transitions the session status to `Downloading`, commencing active peer-based downloading.
     ///

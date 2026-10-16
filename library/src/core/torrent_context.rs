@@ -106,7 +106,7 @@ pub struct TorrentContext {
     pub maximum_swarm_size: usize,
     assembler: Assembler,
     bad_peer_scores: Mutex<HashMap<String, usize>>,
-    pieces_missing: Vec<u8>,
+    pub pieces_missing: Vec<u8>,
     piece_data: Vec<PieceInfo>,
     pub storage: Arc<dyn crate::io_traits::BlockStorage>,
     pub config: SessionConfig,

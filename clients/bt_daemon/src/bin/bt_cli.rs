@@ -62,6 +62,7 @@ fn print_usage() {
     println!("  bt-cli super-seed <info-hash> <on|off>");
     println!("  bt-cli peers <info-hash>");
     println!("  bt-cli pieces <info-hash>");
+    println!("  bt-cli resume-info <path-to-fastresume-file>");
     println!("  bt-cli shutdown");
 }
 
@@ -105,6 +106,68 @@ fn main() {
     }
 
     let command = args[1].as_str();
+
+    if command == "resume-info" {
+        if args.len() < 3 {
+            eprintln!("Error: 'resume-info' command requires a path to a fast-resume file.");
+            eprintln!("Usage: bt-cli resume-info <path-to-fastresume-file>");
+            return;
+        }
+        let resume_path = std::path::Path::new(&args[2]);
+        match bittorrent_rs::FastResumeData::load_from_file(resume_path) {
+            Ok(data) => {
+                let info_hash_hex = data.info_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                println!("Fast Resume Metadata (BEP 47):");
+                println!("  File:             {}", resume_path.display());
+                println!("  Info Hash:        {}", info_hash_hex);
+                println!("  Save Path:        {}", data.save_path.display());
+                println!("  Pieces:           {} / {} ({:.1}%)",
+                    data.pieces_have_count(),
+                    data.num_pieces,
+                    data.progress() * 100.0,
+                );
+                println!("  Piece Length:     {}", fmt_bytes(data.piece_length as u64));
+                println!("  Downloaded:       {}", fmt_bytes(data.total_downloaded));
+                println!("  Uploaded:         {}", fmt_bytes(data.total_uploaded));
+                println!("  Active Time:      {}s", data.active_time);
+                println!("  Seeding Time:     {}s", data.seeding_time);
+                println!("  Seeding:          {}", if data.is_seeding { "YES" } else { "NO" });
+                println!("  Files ({}) :", data.files.len());
+                for (i, f) in data.files.iter().enumerate() {
+                    let pri_str = match f.priority {
+                        0 => "Skip",
+                        1 => "Low",
+                        7 => "High",
+                        _ => "Normal",
+                    };
+                    let display_path = if f.path.as_os_str().is_empty() {
+                        format!("file_{}", i + 1)
+                    } else {
+                        f.path.display().to_string()
+                    };
+                    println!("    {:>3}. {} ({} bytes, mtime: {}, priority: {})",
+                        i + 1,
+                        display_path,
+                        f.length,
+                        f.mtime,
+                        pri_str
+                    );
+                }
+                println!("  Known Peers ({}):", data.peers.len());
+                for p in &data.peers {
+                    println!("    - {}", p);
+                }
+
+                let verified = data.verify_on_disk(&data.save_path).unwrap_or(false);
+                println!("\n  On-Disk Fast Verification: {}", if verified { "PASS (Valid)" } else { "FAIL (Disk mismatch or files missing)" });
+            }
+            Err(e) => {
+                eprintln!("Failed to parse fast-resume file: {}", e);
+            }
+        }
+        return;
+    }
+
     let message = match command {
         "add" => {
             if args.len() < 3 {

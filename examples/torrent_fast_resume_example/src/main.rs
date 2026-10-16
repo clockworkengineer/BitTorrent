@@ -1,4 +1,3 @@
-use bittorrent_rs::session::SessionConfig;
 use bittorrent_rs::TorrentSession;
 use std::env;
 use std::path::PathBuf;
@@ -24,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let torrent_path = PathBuf::from(torrent_path);
     let download_dir = PathBuf::from(download_dir);
 
-    // 1. First, build session with standard full hash validation
+    // 1. Build session with standard full hash validation
     println!("--- Standard Startup (Full Hash Checking) ---");
     let start_std = Instant::now();
     let session_std = TorrentSession::builder(&torrent_path, &download_dir)
@@ -34,18 +33,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         start_std.elapsed()
     );
     println!("Standard initial progress: {:.2}%", session_std.progress());
+
+    // 2. Save Fast Resume file (BEP 47 / libtorrent format)
+    let resume_path = download_dir.join("state.fastresume");
+    session_std.save_fast_resume(&resume_path)?;
+    println!("Saved BEP 47 fast resume file to: {:?}", resume_path);
     
     // Cleanup standard session resources
     drop(session_std);
 
-    // 2. Build session with fast-resume capability (skipping the full hash checks)
-    println!("\n--- Fast Resume Startup (Skipping Hash Checking) ---");
-    let mut config = SessionConfig::default();
-    config.skip_hash_check = true;
-
+    // 3. Build session with BEP 47 fast resume file
+    println!("\n--- Fast Resume Startup (BEP 47 Fast On-Disk Validation) ---");
     let start_fast = Instant::now();
     let session_fast = TorrentSession::builder(&torrent_path, &download_dir)
-        .config(config)
+        .fast_resume_file(&resume_path)
         .build()?;
     println!(
         "Fast resume session initialized in: {:?}",

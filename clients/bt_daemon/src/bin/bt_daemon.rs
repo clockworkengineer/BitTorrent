@@ -24,6 +24,8 @@ pub struct DaemonState {
 pub struct SavedTorrent {
     pub torrent_path: String,
     pub bitfield_hex: String,
+    #[serde(default)]
+    pub fast_resume_file: Option<String>,
 }
 
 fn info_hash_hex(session: &TorrentSession) -> String {
@@ -51,14 +53,29 @@ impl Engine {
 
     fn save_state(&self) {
         let torrents = self.sessions.iter().map(|s| {
-            let bitfield_hex = if let Ok(ctx) = s.session.context().lock() {
-                ctx.bitfield.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+            let (bitfield_hex, hash_hex) = if let Ok(ctx) = s.session.context().lock() {
+                let bf = ctx.bitfield.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                let ih = bittorrent_rs::util::info_hash_to_string(&ctx.info_hash);
+                (bf, ih)
             } else {
-                String::new()
+                (String::new(), String::new())
             };
+
+            let fast_resume_file = if !hash_hex.is_empty() {
+                let resume_path = self.state_file.with_file_name(format!("{}.fastresume", hash_hex));
+                if s.session.save_fast_resume(&resume_path).is_ok() {
+                    Some(resume_path.to_string_lossy().to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             SavedTorrent {
                 torrent_path: s.torrent_path.clone(),
                 bitfield_hex,
+                fast_resume_file,
             }
         }).collect::<Vec<_>>();
 
@@ -78,14 +95,19 @@ impl Engine {
                 if let Ok(state) = serde_json::from_str::<DaemonState>(&content) {
                     self.download_dir = state.download_dir;
                     for t in state.torrents {
-                        let _ = self.add_session(t.torrent_path, Some(t.bitfield_hex));
+                        let _ = self.add_session(t.torrent_path, Some(t.bitfield_hex), t.fast_resume_file);
                     }
                 }
             }
         }
     }
 
-    fn add_session(&mut self, torrent_path: String, bitfield_hex: Option<String>) -> Result<(), String> {
+    fn add_session(
+        &mut self,
+        torrent_path: String,
+        bitfield_hex: Option<String>,
+        fast_resume_file: Option<String>,
+    ) -> Result<(), String> {
         let torrent_path_buf = PathBuf::from(&torrent_path);
         let download_dir_buf = PathBuf::from(&self.download_dir);
 
@@ -94,7 +116,7 @@ impl Engine {
         }
 
         let mut config = bittorrent_rs::session::SessionConfig::default();
-        if bitfield_hex.is_some() {
+        if bitfield_hex.is_some() && fast_resume_file.is_none() {
             config.skip_hash_check = true;
         }
 
@@ -104,10 +126,13 @@ impl Engine {
                 .selector(Arc::new(bittorrent_rs::RarestFirstSelector))
                 .build()
         } else {
-            TorrentSession::builder(&torrent_path_buf, &download_dir_buf)
+            let mut builder = TorrentSession::builder(&torrent_path_buf, &download_dir_buf)
                 .config(config)
-                .selector(Arc::new(bittorrent_rs::RarestFirstSelector))
-                .build()
+                .selector(Arc::new(bittorrent_rs::RarestFirstSelector));
+            if let Some(ref fr_path) = fast_resume_file {
+                builder = builder.fast_resume_file(fr_path);
+            }
+            builder.build()
         };
 
         let mut session = match session_res {
@@ -784,7 +809,7 @@ fn main() {
                     if let Some(dir) = download_dir {
                         e.download_dir = dir;
                     }
-                    match e.add_session(torrent_path, None) {
+                    match e.add_session(torrent_path, None, None) {
                         Ok(_) => IpcReply::Success { message: "Torrent added successfully".to_string() },
                         Err(err) => IpcReply::Error { reason: err },
                     }
