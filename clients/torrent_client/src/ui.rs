@@ -125,22 +125,24 @@ impl TorrentClientApp {
 
     /// Renders a list of the relative paths, lengths, and file offsets of all files packaged inside the torrent.
     pub fn draw_files_tab(&mut self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>, session_idx: usize) {
-        if let Ok(ctx) = context.lock() {
+        if let Ok(mut ctx) = context.lock() {
             if ctx.files_to_download.is_empty() {
                 ui.label("No files list found (Magnet bootstrapping...)");
                 return;
             }
 
             let mut stream_target: Option<usize> = None;
+            let mut priority_changes: Vec<(usize, bittorrent_rs::FilePriority)> = Vec::new();
 
             egui::Grid::new("files_grid")
-                .num_columns(4)
+                .num_columns(5)
                 .spacing([12.0, 6.0])
                 .striped(true)
                 .show(ui, |ui| {
                     ui.strong("Relative Path");
                     ui.strong("Size");
                     ui.strong("Offset");
+                    ui.strong("Priority");
                     ui.strong("Action");
                     ui.end_row();
 
@@ -148,6 +150,20 @@ impl TorrentClientApp {
                         ui.label(&file.torrent_path);
                         ui.label(fmt_bytes(file.length));
                         ui.label(fmt_bytes(file.offset));
+
+                        let mut current_priority = file.priority;
+                        egui::ComboBox::from_id_source(format!("prio_{}_{}", session_idx, idx))
+                            .selected_text(current_priority.as_str())
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::Skip, "skip");
+                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::Low, "low");
+                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::Normal, "normal");
+                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::High, "high");
+                            });
+
+                        if current_priority != file.priority {
+                            priority_changes.push((idx, current_priority));
+                        }
 
                         if torrent_client_shared::is_media_filename(&file.torrent_path) {
                             if ui.button("▶ Stream").clicked() {
@@ -159,6 +175,10 @@ impl TorrentClientApp {
                         ui.end_row();
                     }
                 });
+
+            for (idx, prio) in priority_changes {
+                let _ = ctx.set_file_priority(idx, prio);
+            }
 
             if let Some(idx) = stream_target {
                 self.start_streaming(session_idx, Some(idx));

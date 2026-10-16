@@ -9,7 +9,7 @@
 use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
 use crate::manager::Manager;
-use crate::metainfo::MetaInfoFile;
+use crate::metainfo::{FilePriority, MetaInfoFile};
 use crate::peer::Peer;
 use crate::selector::PieceSelector;
 use crate::core::torrent_context::{TorrentContext, TorrentStatus};
@@ -519,6 +519,18 @@ impl TorrentSession {
     /// Returns the root download directory path.
     pub fn download_path(&self) -> &Path {
         &self.download_path
+    }
+
+    /// Returns the download priority of a file at the given index, if found.
+    pub fn file_priority(&self, index: usize) -> Option<FilePriority> {
+        let ctx = self.context.lock().unwrap();
+        ctx.files_to_download.get(index).map(|f| f.priority)
+    }
+
+    /// Sets the download priority of a file at the given index.
+    pub fn set_file_priority(&mut self, index: usize, priority: FilePriority) -> Result<(), BitTorrentError> {
+        let mut ctx = self.context.lock().unwrap();
+        ctx.set_file_priority(index, priority)
     }
 
     /// Identifies the next missing block to download and transmits a Request packet to the specified peer.

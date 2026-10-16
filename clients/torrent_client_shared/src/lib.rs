@@ -99,6 +99,12 @@ pub struct FileInfo {
     pub name: String,
     pub length: u64,
     pub is_media: bool,
+    #[serde(default = "default_priority")]
+    pub priority: String,
+}
+
+fn default_priority() -> String {
+    "normal".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -211,6 +217,11 @@ pub enum IpcMessage {
     },
     Pieces {
         info_hash: String,
+    },
+    SetFilePriority {
+        info_hash: String,
+        file_index: usize,
+        priority: String,
     },
 }
 

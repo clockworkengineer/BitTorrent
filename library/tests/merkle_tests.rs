@@ -187,6 +187,7 @@ fn test_torrent_context_v2_block_verification() {
         md5sum: None,
         offset: 0,
         pieces_root: Some(tree.root()),
+        priority: bittorrent_rs::FilePriority::Normal,
     };
 
     let config = bittorrent_rs::SessionConfig::default();
@@ -221,6 +222,7 @@ fn test_torrent_context_v2_block_verification() {
         md5sum: None,
         offset: 0,
         pieces_root: Some(multi_tree.root()),
+        priority: bittorrent_rs::FilePriority::Normal,
     };
     ctx.files_to_download = vec![multi_file];
     ctx.register_file_merkle_tree(0, multi_tree);

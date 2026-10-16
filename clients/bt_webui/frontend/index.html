@@ -97,10 +97,30 @@
                 </div>
                 <div class="modal-controls">
                     <div class="tab-switcher">
+                        <button id="tab-files-btn" class="tab-btn" onclick="switchSwarmTab('files')">📁 Files (<span id="swarm-files-count">0</span>)</button>
                         <button id="tab-peers-btn" class="tab-btn active" onclick="switchSwarmTab('peers')">👥 Peers (<span id="swarm-peer-count">0</span>)</button>
                         <button id="tab-pieces-btn" class="tab-btn" onclick="switchSwarmTab('pieces')">🧩 Piece Heatmap</button>
                     </div>
                     <button id="swarm-modal-close" class="close-btn" title="Close Visualizer">&times;</button>
+                </div>
+            </div>
+
+            <!-- Tab 0: Files Panel -->
+            <div id="swarm-files-panel" class="swarm-tab-panel hidden">
+                <div class="table-container swarm-table-container">
+                    <table class="swarm-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 50px;">#</th>
+                                <th>File Name</th>
+                                <th style="width: 120px;">Size</th>
+                                <th style="width: 150px;">Priority</th>
+                            </tr>
+                        </thead>
+                        <tbody id="swarm-files-body">
+                            <tr class="empty-row"><td colspan="4">Loading files...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 

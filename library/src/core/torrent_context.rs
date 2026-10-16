@@ -6,8 +6,7 @@
 use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};
 use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
-use crate::metainfo::FileDetails;
-use crate::metainfo::MetaInfoFile;
+use crate::metainfo::{FileDetails, FilePriority, MetaInfoFile};
 use crate::peer::Peer;
 use crate::piece_buffer::PieceBuffer;
 use crate::selector::PieceSelector;
@@ -269,6 +268,30 @@ impl TorrentContext {
             file_merkle_trees: Mutex::new(HashMap::new()),
         };
         Ok(context)
+    }
+
+    /// Resizes and initializes piece tracking structures.
+    pub fn init_pieces(&mut self, number_of_pieces: usize, piece_length: u32) {
+        self.number_of_pieces = number_of_pieces;
+        self.piece_length = piece_length;
+        self.bitfield = vec![0u8; (number_of_pieces + 7) / 8];
+        self.pieces_missing = vec![0u8; self.bitfield.len()];
+        self.piece_data = vec![
+            PieceInfo {
+                peer_count: 0,
+                piece_length,
+            };
+            number_of_pieces
+        ];
+        if let Ok(mut pq) = self.piece_priority_queue.lock() {
+            pq.clear();
+            for piece_index in 0..number_of_pieces as u32 {
+                pq.push(PieceRarity {
+                    peer_count: 0,
+                    piece_index,
+                });
+            }
+        }
     }
 
     /// Transitions a magnet bootstrap context to a standard torrent download session once metadata is fetched.
@@ -635,14 +658,114 @@ impl TorrentContext {
         self.update_bitfield_status(piece_number, piece_there, number_of_bytes);
     }
 
-    /// Checks if the session download is complete.
+    /// Returns the download priority of a piece based on all files that overlap it.
+    ///
+    /// If multiple files overlap this piece, the highest priority among them is selected.
+    /// If all overlapping files are `FilePriority::Skip`, the piece itself is skipped.
+    pub fn get_piece_priority(&self, piece: u32) -> FilePriority {
+        if self.files_to_download.is_empty() || self.piece_length == 0 {
+            return FilePriority::Normal;
+        }
+
+        let piece_start = piece as u64 * self.piece_length as u64;
+        let piece_end = if self.total_bytes_to_download > 0 {
+            min(piece_start + self.piece_length as u64, self.total_bytes_to_download)
+        } else {
+            piece_start + self.piece_length as u64
+        };
+
+        if piece_end <= piece_start {
+            return FilePriority::Normal;
+        }
+
+        let mut max_priority = None;
+        for file in &self.files_to_download {
+            let file_start = file.offset;
+            let file_end = file.offset + file.length;
+            if file.length > 0 && file_start < piece_end && file_end > piece_start {
+                max_priority = match max_priority {
+                    None => Some(file.priority),
+                    Some(p) => Some(std::cmp::max(p, file.priority)),
+                };
+            }
+        }
+
+        max_priority.unwrap_or(FilePriority::Normal)
+    }
+
+    /// Returns true if this piece is desired for download (i.e. not marked as `Skip`).
+    pub fn is_piece_wanted(&self, piece: u32) -> bool {
+        self.get_piece_priority(piece) != FilePriority::Skip
+    }
+
+    /// Sets the download priority for a file at the given index.
+    ///
+    /// If a file is skipped and this causes pieces to become un-wanted,
+    /// any pending block reservations for those pieces are released.
+    pub fn set_file_priority(
+        &mut self,
+        file_index: usize,
+        priority: FilePriority,
+    ) -> Result<(), BitTorrentError> {
+        if file_index >= self.files_to_download.len() {
+            return Err(BitTorrentError::Parse(format!(
+                "File index {} out of range",
+                file_index
+            )));
+        }
+
+        self.files_to_download[file_index].priority = priority;
+
+        // If priority is Skip, clear any pending reservations for pieces that are no longer wanted
+        if priority == FilePriority::Skip {
+            for piece in 0..self.number_of_pieces as u32 {
+                if !self.is_piece_wanted(piece) {
+                    self.clear_piece_requests(piece);
+                }
+            }
+        } else {
+            // Re-seed the priority queue with wanted missing pieces
+            if let Ok(mut pq) = self.piece_priority_queue.lock() {
+                pq.clear();
+                for piece_index in 0..self.number_of_pieces as u32 {
+                    if self.is_piece_wanted(piece_index) && !self.is_piece_local(piece_index) {
+                        let count = self.piece_data.get(piece_index as usize).map(|p| p.peer_count).unwrap_or(0);
+                        pq.push(PieceRarity { peer_count: count, piece_index });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Checks if the session download is complete (all wanted pieces downloaded).
     pub fn is_download_complete(&self) -> bool {
-        self.bytes_left_to_download().unwrap_or(1) == 0
+        if self.number_of_pieces == 0 {
+            return false;
+        }
+        if self.bytes_left_to_download().unwrap_or(1) == 0 {
+            return true;
+        }
+        let mut any_wanted = false;
+        for piece in 0..self.number_of_pieces as u32 {
+            if self.is_piece_wanted(piece) {
+                any_wanted = true;
+                if !self.is_piece_local(piece) {
+                    return false;
+                }
+            }
+        }
+        any_wanted
     }
 
     /// Returns true when the torrent has entered endgame mode.
     pub fn is_endgame(&self) -> bool {
-        self.missing_pieces_count <= ENDGAME_THRESHOLD
+        let missing_wanted = (0..self.number_of_pieces as u32)
+            .filter(|&p| self.is_piece_wanted(p) && !self.is_piece_local(p))
+            .take(ENDGAME_THRESHOLD + 1)
+            .count();
+        missing_wanted <= ENDGAME_THRESHOLD
     }
 
     /// Checks and updates status to `Seeding` if downloading is completed.
@@ -1023,8 +1146,8 @@ impl TorrentContext {
         if endgame {
             // Endgame mode: request any block from the rarest available piece.
             let piece_number = (0..self.number_of_pieces as u32)
-                .filter(|&piece| !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
-                .min_by_key(|&piece| (self.piece_data[piece as usize].peer_count, piece))?;
+                .filter(|&piece| self.is_piece_wanted(piece) && !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
+                .min_by_key(|&piece| (std::cmp::Reverse(self.get_piece_priority(piece)), self.piece_data[piece as usize].peer_count, piece))?;
 
             let piece_length = self.get_piece_length(piece_number);
             let block_count = ((piece_length as usize + block_size - 1) / block_size) as u32;
@@ -1051,13 +1174,13 @@ impl TorrentContext {
                 return Some((piece_number, begin, length));
             }
         } else {
-            // Standard mode: find the rarest piece with an unrequested block.
+            // Standard mode: find the rarest piece with an unrequested block, prioritizing High > Normal > Low pieces.
             let best = (0..self.number_of_pieces as u32)
-                .filter(|&piece| !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
+                .filter(|&piece| self.is_piece_wanted(piece) && !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
                 .filter_map(|piece| {
                     self.next_pending_block(piece).map(|block| (piece, block))
                 })
-                .min_by_key(|&(piece, _)| (self.piece_data[piece as usize].peer_count, piece));
+                .min_by_key(|&(piece, _)| (std::cmp::Reverse(self.get_piece_priority(piece)), self.piece_data[piece as usize].peer_count, piece));
 
             if let Some((piece_number, (begin, length))) = best {
                 let block_index = begin / block_size as u32;
@@ -1084,6 +1207,7 @@ impl TorrentContext {
         let mut current_piece = start_piece;
         loop {
             if self.is_piece_missing(current_piece)
+                && self.is_piece_wanted(current_piece)
                 && self.piece_data[current_piece as usize].peer_count > 0
             {
                 return (true, current_piece);

@@ -372,6 +372,7 @@ Access-Control-Max-Age: 86400\r\n\r\n";
                         name: f.torrent_path.clone(),
                         length: f.length,
                         is_media: is_media_filename(&f.torrent_path),
+                        priority: f.priority.as_str().to_string(),
                     }
                 }).collect();
                 drop(ctx);
@@ -826,6 +827,7 @@ fn main() {
                                     name: f.torrent_path.clone(),
                                     length: f.length,
                                     is_media: is_media_filename(&f.torrent_path),
+                                    priority: f.priority.as_str().to_string(),
                                 }
                             }).collect()
                         } else {
@@ -857,6 +859,18 @@ fn main() {
                             IpcReply::PieceStates { info }
                         } else {
                             IpcReply::Error { reason: "Unable to lock session context".to_string() }
+                        }
+                    } else {
+                        IpcReply::Error { reason: "Torrent not found".to_string() }
+                    }
+                }
+                IpcMessage::SetFilePriority { info_hash, file_index, priority } => {
+                    let mut e = engine_ipc.lock().unwrap();
+                    if let Some(s) = e.sessions.iter_mut().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
+                        let prio = bittorrent_rs::FilePriority::from_str_loose(&priority);
+                        match s.session.set_file_priority(file_index, prio) {
+                            Ok(()) => IpcReply::Success { message: format!("Set file {} priority to {}", file_index, prio.as_str()) },
+                            Err(err) => IpcReply::Error { reason: err.to_string() },
                         }
                     } else {
                         IpcReply::Error { reason: "Torrent not found".to_string() }

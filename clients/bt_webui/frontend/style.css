@@ -687,4 +687,37 @@ tr:hover td {
 .piece-swarm-low { background: #38bdf8; }
 .piece-swarm-high { background: #06b6d4; }
 .piece-missing { background: #1e293b; border: 1px solid #334155; }
+.piece-skipped { opacity: 0.35; background: #0f172a; border: 1px dashed #475569; }
+
+.priority-select {
+    background: rgba(15, 23, 42, 0.8);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+}
+
+.priority-select:focus {
+    border-color: var(--primary);
+}
+
+.priority-select option {
+    background: #0f172a;
+    color: #f8fafc;
+}
+
+.file-media-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    margin-left: 6px;
+}
 

@@ -101,6 +101,7 @@ function renderTorrents(torrents) {
                 <td>
                     <div class="actions-cell">
                         <button class="stream-btn" onclick="openStreamModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Stream')}')">▶ Stream</button>
+                        <button class="secondary-btn" onclick="openFilesModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Files')}')">📁 Files</button>
                         <button class="secondary-btn" onclick="openSwarmModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Swarm')}')">👥 Swarm</button>
                         ${actionBtn}
                         <button class="danger-btn" onclick="removeTorrent('${t.info_hash}')">Remove</button>
@@ -311,6 +312,10 @@ const swarmTotalUp = document.getElementById('swarm-total-up');
 const swarmPeersBody = document.getElementById('swarm-peers-body');
 const swarmPeersPanel = document.getElementById('swarm-peers-panel');
 const swarmPiecesPanel = document.getElementById('swarm-pieces-panel');
+const swarmFilesPanel = document.getElementById('swarm-files-panel');
+const swarmFilesBody = document.getElementById('swarm-files-body');
+const swarmFilesCount = document.getElementById('swarm-files-count');
+const tabFilesBtn = document.getElementById('tab-files-btn');
 const tabPeersBtn = document.getElementById('tab-peers-btn');
 const tabPiecesBtn = document.getElementById('tab-pieces-btn');
 const piecesCompletionText = document.getElementById('pieces-completion-text');
@@ -326,19 +331,27 @@ let activeSwarmTab = 'peers';
 
 window.switchSwarmTab = (tab) => {
     activeSwarmTab = tab;
-    if (tab === 'peers') {
-        tabPeersBtn.classList.add('active');
-        tabPiecesBtn.classList.remove('active');
-        swarmPeersPanel.classList.remove('hidden');
-        swarmPiecesPanel.classList.add('hidden');
+    tabFilesBtn.classList.toggle('active', tab === 'files');
+    tabPeersBtn.classList.toggle('active', tab === 'peers');
+    tabPiecesBtn.classList.toggle('active', tab === 'pieces');
+
+    swarmFilesPanel.classList.toggle('hidden', tab !== 'files');
+    swarmPeersPanel.classList.toggle('hidden', tab !== 'peers');
+    swarmPiecesPanel.classList.toggle('hidden', tab !== 'pieces');
+
+    if (tab === 'files') {
+        visualizerHint.textContent = 'Set per-file download priorities (Skip, Low, Normal, High)';
+        fetchFilesData();
+    } else if (tab === 'peers') {
         visualizerHint.textContent = 'Live peer connections and transfer speeds';
     } else {
-        tabPeersBtn.classList.remove('active');
-        tabPiecesBtn.classList.add('active');
-        swarmPeersPanel.classList.add('hidden');
-        swarmPiecesPanel.classList.remove('hidden');
         visualizerHint.textContent = 'Hover over piece tiles for byte offsets and availability';
     }
+};
+
+window.openFilesModal = (infoHash, torrentName) => {
+    openSwarmModal(infoHash, torrentName);
+    switchSwarmTab('files');
 };
 
 window.openSwarmModal = (infoHash, torrentName) => {
@@ -348,6 +361,7 @@ window.openSwarmModal = (infoHash, torrentName) => {
     swarmModal.classList.remove('hidden');
 
     // Initial fetch
+    fetchFilesData();
     fetchSwarmData();
 
     // Poll every 1500 ms while modal is visible
@@ -361,6 +375,69 @@ window.closeSwarmModal = () => {
     if (swarmPollInterval) {
         clearInterval(swarmPollInterval);
         swarmPollInterval = null;
+    }
+};
+
+async function fetchFilesData() {
+    if (!currentSwarmHash) return;
+    try {
+        const res = await fetch(`/api/torrents/${currentSwarmHash}/files`);
+        if (res.ok) {
+            const data = await res.json();
+            renderSwarmFiles(data.files || []);
+        }
+    } catch (e) {
+        console.warn("Could not fetch torrent files:", e);
+    }
+}
+
+function renderSwarmFiles(files) {
+    swarmFilesCount.textContent = files.length;
+    if (files.length === 0) {
+        swarmFilesBody.innerHTML = '<tr class="empty-row"><td colspan="4">No files found (Magnet bootstrapping...)</td></tr>';
+        return;
+    }
+
+    let rowsHtml = '';
+    files.forEach((f) => {
+        const mediaBadge = f.is_media ? '<span class="file-media-badge">Media</span>' : '';
+        const prio = (f.priority || 'normal').toLowerCase();
+        rowsHtml += `
+            <tr>
+                <td class="code-font">${f.index}</td>
+                <td title="${escapeHtml(f.name)}"><strong>${escapeHtml(f.name)}</strong>${mediaBadge}</td>
+                <td>${fmtBytes(f.length)}</td>
+                <td>
+                    <select class="priority-select" onchange="changeFilePriority('${currentSwarmHash}', ${f.index}, this.value)">
+                        <option value="skip" ${prio === 'skip' ? 'selected' : ''}>Skip (0)</option>
+                        <option value="low" ${prio === 'low' ? 'selected' : ''}>Low (1)</option>
+                        <option value="normal" ${prio === 'normal' ? 'selected' : ''}>Normal (4)</option>
+                        <option value="high" ${prio === 'high' ? 'selected' : ''}>High (7)</option>
+                    </select>
+                </td>
+            </tr>
+        `;
+    });
+    swarmFilesBody.innerHTML = rowsHtml;
+}
+
+window.changeFilePriority = async (infoHash, fileIndex, priority) => {
+    try {
+        const res = await fetch(`/api/torrents/${infoHash}/files/${fileIndex}/priority`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ priority })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(`Priority updated to ${priority}`);
+            fetchFilesData();
+            fetchSwarmData();
+        } else {
+            showToast(data.reason || "Failed to update priority", true);
+        }
+    } catch (e) {
+        showToast("Error updating file priority", true);
     }
 };
 

@@ -30,6 +30,43 @@ type MetaInfoDict = HashMap<String, Vec<u8>>;
 #[cfg(not(feature = "std"))]
 type MetaInfoDict = BTreeMap<String, Vec<u8>>;
 
+/// Priority level for downloading a file within a torrent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[repr(u8)]
+pub enum FilePriority {
+    /// Do not download pieces exclusive to this file.
+    Skip = 0,
+    /// Low priority.
+    Low = 1,
+    /// Normal priority (default).
+    #[default]
+    Normal = 4,
+    /// High priority.
+    High = 7,
+}
+
+impl FilePriority {
+    /// Returns the priority as a lowercase string slice.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Skip => "skip",
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+        }
+    }
+
+    /// Parses a string loosely into a `FilePriority`.
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.to_ascii_lowercase().trim() {
+            "skip" | "0" | "none" | "off" => Self::Skip,
+            "low" | "1" => Self::Low,
+            "high" | "7" => Self::High,
+            _ => Self::Normal,
+        }
+    }
+}
+
 /// Detailed information about a single file in a multi-file torrent or the single file itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDetails {
@@ -43,6 +80,8 @@ pub struct FileDetails {
     pub offset: u64,
     /// Root hash of the file's SHA-256 Merkle tree (BitTorrent v2 / BEP 52).
     pub pieces_root: Option<[u8; 32]>,
+    /// Download priority for this file.
+    pub priority: FilePriority,
 }
 
 impl FileDetails {
@@ -720,6 +759,7 @@ impl MetaInfoFile {
                     .map(|bytes| String::from_utf8_lossy(bytes).to_string()),
                 offset: 0,
                 pieces_root,
+                priority: FilePriority::Normal,
             });
             total_bytes = length;
         } else {
@@ -783,6 +823,7 @@ impl MetaInfoFile {
                     },
                     offset: total_bytes,
                     pieces_root,
+                    priority: FilePriority::Normal,
                 });
                 total_bytes += length;
                 file_no += 1;

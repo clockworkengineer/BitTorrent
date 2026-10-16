@@ -141,13 +141,35 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 
 ---
 
+### Phase 24: Selective File Downloading & File Priorities (Completed)
+- **File Priority Levels (`FilePriority`)**: Added `Skip` (0), `Low` (1), `Normal` (4, default), and `High` (7) priority levels with parsing and string representation methods.
+- **Dynamic Piece Priority Mapping & Boundary Resolution**:
+  - Automatically calculates piece priority dynamically from all overlapping files: `piece_priority(p) = max_{f overlaps p} f.priority`.
+  - Boundary pieces shared between skipped and wanted files are safely retained at the highest overlapping priority, preventing data corruption.
+  - `is_piece_wanted(p)` determines if any wanted file requires piece `p`.
+- **Selector & Block Requester Integration**:
+  - `RarestFirstSelector`, `SequentialSelector`, and `StreamingPieceSelector` filter out skipped pieces.
+  - `TorrentContext::next_block_request_for_peer` sorts missing pieces by priority (`Reverse(get_piece_priority)`), dispatching blocks for `High` priority files before `Normal` and `Low`.
+  - Selective download completion check (`is_download_complete`) transitions to `Seeding` when all wanted pieces are downloaded.
+- **Dynamic Priority Modification**:
+  - `TorrentContext::set_file_priority` and `TorrentSession::set_file_priority` allow updating file priorities on the fly.
+  - Automatically clears pending block reservations for pieces that transition to `Skip`, and re-seeds the piece priority queue when files are re-enabled.
+- **Full Client Ecosystem Support**:
+  - **IPC & Daemon**: Added `IpcMessage::SetFilePriority { info_hash, file_index, priority }` and `priority` field to `FileInfo`.
+  - **CLI (`bt-cli`)**: Added `bt-cli set-priority <hash> <index> <priority>` and `PRIORITY` column to `bt-cli files <hash>`.
+  - **WebUI (`bt_webui`)**: Added `POST /api/torrents/:info_hash/files/:file_index/priority` endpoint, a dedicated `📁 Files` tab in the visualizer modal, and interactive priority dropdown `<select>` controls per file.
+  - **Desktop GUI (`torrent_client`)**: Added interactive `egui::ComboBox` priority dropdown per file in the `Files` detail tab.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Selective File Downloading & File Priorities**: Ability to mark specific files within multi-file torrents as `Skip`, `Low`, `Normal`, or `High` priority, updating piece selection masks accordingly.
+1. **Super-Seeding Mode (BEP 16)**: Algorithm to optimize initial seeding bandwidth by advertising pieces only after existing peers have uploaded them to others.
 
-2. **Super-Seeding Mode (BEP 16)**: Algorithm to optimize initial seeding bandwidth by advertising pieces only after existing peers have uploaded them to others.
+2. **WebRTC / WebTorrent Peer Transport**: Integrate WebRTC data channels enabling browser clients to exchange torrent pieces directly with the client.
 
-3. **WebRTC / WebTorrent Peer Transport**: Integrate WebRTC data channels enabling browser clients to exchange torrent pieces directly with the client.
+3. **Fast Resume File Serialization (BEP 47)**: Native binary / bencode serialization and loading of `.resume` state files to avoid re-checking complete files across restarts.
+
 

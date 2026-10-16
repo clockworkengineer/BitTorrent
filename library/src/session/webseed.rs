@@ -33,7 +33,7 @@ pub fn start_webseed_loop(
                 let ctx = context.lock().unwrap();
                 let mut missing = None;
                 for p in 0..num_pieces as u32 {
-                    if !ctx.is_piece_local(p) {
+                    if !ctx.is_piece_local(p) && ctx.is_piece_wanted(p) {
                         if let Some((begin, length)) = ctx.next_pending_block(p) {
                             let block_index = begin / BLOCK_SIZE as u32;
                             if ctx.reserve_block_request(p, block_index) {

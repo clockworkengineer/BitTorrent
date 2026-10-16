@@ -58,6 +58,7 @@ fn print_usage() {
     println!("  bt-cli resume <info-hash>");
     println!("  bt-cli remove <info-hash> [--purge]");
     println!("  bt-cli files <info-hash>");
+    println!("  bt-cli set-priority <info-hash> <file-index> <skip|low|normal|high>");
     println!("  bt-cli peers <info-hash>");
     println!("  bt-cli pieces <info-hash>");
     println!("  bt-cli shutdown");
@@ -145,6 +146,22 @@ fn main() {
             }
             IpcMessage::Files { info_hash: args[2].clone() }
         }
+        "set-priority" | "priority" => {
+            if args.len() < 5 {
+                eprintln!("Error: 'set-priority' requires <info-hash> <file-index> <skip|low|normal|high>");
+                return;
+            }
+            let info_hash = args[2].clone();
+            let file_index = match args[3].parse::<usize>() {
+                Ok(i) => i,
+                Err(_) => {
+                    eprintln!("Error: <file-index> must be an integer");
+                    return;
+                }
+            };
+            let priority = args[4].clone();
+            IpcMessage::SetFilePriority { info_hash, file_index, priority }
+        }
         "peers" => {
             if args.len() < 3 {
                 eprintln!("Error: 'peers' command requires an info hash.");
@@ -195,15 +212,16 @@ fn main() {
                     print_status_table(&torrents);
                 }
                 IpcReply::FileList { files } => {
-                    println!("{:<6} {:<50} {:<14} {}", "INDEX", "NAME", "SIZE", "MEDIA");
-                    println!("{}", "-".repeat(80));
+                    println!("{:<6} {:<45} {:<12} {:<7} {}", "INDEX", "NAME", "SIZE", "MEDIA", "PRIORITY");
+                    println!("{}", "-".repeat(82));
                     for f in files {
                         println!(
-                            "{:<6} {:<50} {:<14} {}",
+                            "{:<6} {:<45} {:<12} {:<7} {}",
                             f.index,
-                            if f.name.len() > 48 { format!("{}...", &f.name[..45]) } else { f.name },
+                            if f.name.len() > 43 { format!("{}...", &f.name[..40]) } else { f.name },
                             torrent_client_shared::fmt_bytes(f.length),
-                            if f.is_media { "YES" } else { "NO" }
+                            if f.is_media { "YES" } else { "NO" },
+                            f.priority
                         );
                     }
                 }

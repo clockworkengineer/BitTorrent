@@ -159,6 +159,33 @@ async fn get_torrent_files(AxumPath(info_hash): AxumPath<String>) -> impl IntoRe
     }
 }
 
+#[derive(serde::Deserialize)]
+struct SetPriorityPayload {
+    priority: String,
+}
+
+async fn set_file_priority(
+    AxumPath((info_hash, file_index)): AxumPath<(String, usize)>,
+    Json(payload): Json<SetPriorityPayload>,
+) -> impl IntoResponse {
+    match execute_ipc(IpcMessage::SetFilePriority {
+        info_hash,
+        file_index,
+        priority: payload.priority,
+    }) {
+        Ok(IpcReply::Success { message }) => {
+            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": message }))).into_response()
+        }
+        Ok(IpcReply::Error { reason }) => {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
+        }
+        Err(err) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+    }
+}
+
 async fn get_torrent_peers(AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
     match execute_ipc(IpcMessage::Peers { info_hash }) {
         Ok(IpcReply::PeerList { peers }) => {
@@ -300,6 +327,7 @@ async fn main() {
         .route("/api/torrents/:info_hash/pause", post(pause_torrent))
         .route("/api/torrents/:info_hash/resume", post(resume_torrent))
         .route("/api/torrents/:info_hash/files", get(get_torrent_files))
+        .route("/api/torrents/:info_hash/files/:file_index/priority", post(set_file_priority))
         .route("/api/torrents/:info_hash/peers", get(get_torrent_peers))
         .route("/api/torrents/:info_hash/pieces", get(get_torrent_pieces))
         .route("/api/torrents/:info_hash", axum::routing::delete(delete_torrent))
