@@ -346,6 +346,7 @@ fn test_utp_header_encode_decode() {
         wnd_size: 1_048_576,
         seq_nr: 42,
         ack_nr: 7,
+        extensions: Vec::new(),
     };
 
     let encoded = header.encode();
@@ -659,6 +660,7 @@ fn test_utp_ledbat_cwnd_dynamics() {
         wnd_size: 1024,
         seq_nr: 1,
         ack_nr: 1,
+        extensions: Vec::new(),
     };
     let encoded = h.encode();
     let decoded = UtpHeader::decode(&encoded).unwrap();

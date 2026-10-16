@@ -19,9 +19,121 @@
 
 use crate::error::BitTorrentError;
 use crate::io_traits::AsyncSocket;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
+
+/// The uTP extension types defined by BEP 29.
+pub const UTP_EXT_SACK: u8 = 1;
+pub const UTP_EXT_EXTENSION_BITS: u8 = 2;
+
+/// A uTP extension header (BEP 29).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UtpExtension {
+    /// Selective Acknowledgement (BEP 29).
+    ///
+    /// Contains a bitmask indicating received out-of-order packets starting at `ack_nr + 2`.
+    /// The bitmask length is always a multiple of 4 bytes (minimum 4 bytes).
+    SelectiveAck(Vec<u8>),
+    /// Other extension header with type and raw data.
+    Unknown {
+        extension_type: u8,
+        data: Vec<u8>,
+    },
+}
+
+impl UtpExtension {
+    /// Returns the type identifier byte for this extension.
+    pub fn extension_type(&self) -> u8 {
+        match self {
+            UtpExtension::SelectiveAck(_) => UTP_EXT_SACK,
+            UtpExtension::Unknown { extension_type, .. } => *extension_type,
+        }
+    }
+
+    /// Returns the extension payload data bytes.
+    pub fn data(&self) -> &[u8] {
+        match self {
+            UtpExtension::SelectiveAck(data) => data,
+            UtpExtension::Unknown { data, .. } => data,
+        }
+    }
+}
+
+/// Constructs a SACK bitmask from a set or slice of out-of-order received sequence numbers.
+///
+/// In BEP 29, the bitmask has reverse byte order:
+/// - Byte 0: bits 0..7 represent `[ack_nr + 2 .. ack_nr + 9]` (bit 0 = `ack_nr + 2`).
+/// - Byte 1: bits 0..7 represent `[ack_nr + 10 .. ack_nr + 17]`, and so on.
+/// - `ack_nr + 1` is omitted because it represents the missing packet.
+/// - The length must be at least 4 bytes and in multiples of 4.
+pub fn build_sack_bitmask(ack_nr: u16, received_seqs: &[u16]) -> Vec<u8> {
+    let mut max_bit_offset: Option<usize> = None;
+    for &seq in received_seqs {
+        let diff = seq.wrapping_sub(ack_nr);
+        if diff >= 2 && diff < 32768 {
+            let bit_offset = (diff - 2) as usize;
+            max_bit_offset = Some(max_bit_offset.map_or(bit_offset, |m| m.max(bit_offset)));
+        }
+    }
+
+    let Some(max_offset) = max_bit_offset else {
+        return Vec::new();
+    };
+
+    let min_bytes = (max_offset / 8) + 1;
+    // SACK length must be at least 4 bytes and in multiples of 4
+    let num_bytes = ((min_bytes + 3) / 4).max(1) * 4;
+    let mut bitmask = vec![0u8; num_bytes];
+
+    for &seq in received_seqs {
+        let diff = seq.wrapping_sub(ack_nr);
+        if diff >= 2 && diff < 32768 {
+            let bit_offset = (diff - 2) as usize;
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+            if byte_idx < bitmask.len() {
+                bitmask[byte_idx] |= 1 << bit_idx;
+            }
+        }
+    }
+
+    bitmask
+}
+
+/// Returns true if the sequence number `seq` is indicated as received in the SACK bitmask.
+pub fn is_seq_sacked(ack_nr: u16, bitmask: &[u8], seq: u16) -> bool {
+    let diff = seq.wrapping_sub(ack_nr);
+    if diff < 2 || diff >= 32768 {
+        return false;
+    }
+    let bit_offset = (diff - 2) as usize;
+    let byte_idx = bit_offset / 8;
+    let bit_idx = bit_offset % 8;
+    if byte_idx < bitmask.len() {
+        (bitmask[byte_idx] & (1 << bit_idx)) != 0
+    } else {
+        false
+    }
+}
+
+/// Parses a SACK bitmask and returns all selectively acknowledged sequence numbers in order.
+pub fn parse_sacked_seqs(ack_nr: u16, bitmask: &[u8]) -> Vec<u16> {
+    let mut seqs = Vec::new();
+    for (byte_idx, &byte) in bitmask.iter().enumerate() {
+        if byte == 0 {
+            continue;
+        }
+        for bit_idx in 0..8 {
+            if (byte & (1 << bit_idx)) != 0 {
+                let bit_offset = byte_idx * 8 + bit_idx;
+                let seq = ack_nr.wrapping_add((bit_offset + 2) as u16);
+                seqs.push(seq);
+            }
+        }
+    }
+    seqs
+}
 
 /// The five packet types defined by the uTP protocol (BEP 29).
 ///
@@ -54,7 +166,7 @@ impl UtpPacketType {
     }
 }
 
-/// The fixed 20-byte uTP packet header.
+/// The uTP packet header with optional BEP 29 extension headers (e.g. SACK).
 ///
 /// All multi-byte fields are big-endian. The `packet_type` and `version` share
 /// the first byte (type in the upper 4 bits, version in the lower 4 bits).
@@ -89,13 +201,32 @@ pub struct UtpHeader {
     pub seq_nr: u16,
     /// The last sequence number the sender has acknowledged from the remote peer.
     pub ack_nr: u16,
+    /// Any extension headers (e.g. SACK) appended to the 20-byte base header.
+    pub extensions: Vec<UtpExtension>,
+}
+
+impl Default for UtpHeader {
+    fn default() -> Self {
+        Self {
+            packet_type: UtpPacketType::Data,
+            version: 1,
+            extension: 0,
+            connection_id: 0,
+            timestamp_us: 0,
+            timestamp_difference_us: 0,
+            wnd_size: 1_048_576,
+            seq_nr: 0,
+            ack_nr: 0,
+            extensions: Vec::new(),
+        }
+    }
 }
 
 impl UtpHeader {
-    /// Decodes a 20-byte uTP header from the start of a buffer.
+    /// Decodes a uTP header and any attached extension headers from a buffer.
     ///
-    /// Returns an error if `buf` is shorter than 20 bytes or the packet type
-    /// field contains an unrecognized value.
+    /// Returns an error if `buf` is shorter than 20 bytes or if any extension header
+    /// is truncated or malformed.
     pub fn decode(buf: &[u8]) -> Result<Self, BitTorrentError> {
         if buf.len() < 20 {
             return Err(BitTorrentError::Parse("uTP header too short".into()));
@@ -112,6 +243,36 @@ impl UtpHeader {
         let seq_nr = u16::from_be_bytes([buf[16], buf[17]]);
         let ack_nr = u16::from_be_bytes([buf[18], buf[19]]);
 
+        let mut extensions = Vec::new();
+        let mut ext_type = extension;
+        let mut offset = 20;
+
+        while ext_type != 0 {
+            if buf.len() < offset + 2 {
+                return Err(BitTorrentError::Parse("uTP extension header truncated".into()));
+            }
+            let next_ext = buf[offset];
+            let ext_len = buf[offset + 1] as usize;
+            offset += 2;
+            if buf.len() < offset + ext_len {
+                return Err(BitTorrentError::Parse("uTP extension data truncated".into()));
+            }
+            let ext_data = &buf[offset..offset + ext_len];
+            match ext_type {
+                UTP_EXT_SACK => {
+                    extensions.push(UtpExtension::SelectiveAck(ext_data.to_vec()));
+                }
+                _ => {
+                    extensions.push(UtpExtension::Unknown {
+                        extension_type: ext_type,
+                        data: ext_data.to_vec(),
+                    });
+                }
+            }
+            offset += ext_len;
+            ext_type = next_ext;
+        }
+
         Ok(UtpHeader {
             packet_type,
             version,
@@ -122,23 +283,65 @@ impl UtpHeader {
             wnd_size,
             seq_nr,
             ack_nr,
+            extensions,
         })
     }
 
-    /// Serializes the header into exactly 20 bytes (big-endian).
+    /// Serializes the header and all attached extension headers into bytes (big-endian).
     ///
-    /// The `packet_type` occupies the upper 4 bits of byte 0 and `version` the lower 4 bits.
-    pub fn encode(&self) -> [u8; 20] {
-        let mut buf = [0u8; 20];
-        buf[0] = ((self.packet_type as u8) << 4) | (self.version & 0x0F);
-        buf[1] = self.extension;
-        buf[2..4].copy_from_slice(&self.connection_id.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.timestamp_us.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.timestamp_difference_us.to_be_bytes());
-        buf[12..16].copy_from_slice(&self.wnd_size.to_be_bytes());
-        buf[16..18].copy_from_slice(&self.seq_nr.to_be_bytes());
-        buf[18..20].copy_from_slice(&self.ack_nr.to_be_bytes());
+    /// If extensions are present, byte 1 is set to the first extension's type ID,
+    /// and each extension header is serialized in sequence with `next_ext` linking.
+    pub fn encode(&self) -> Vec<u8> {
+        let first_ext = self.extensions.first().map(|e| e.extension_type()).unwrap_or(self.extension);
+        let mut buf = Vec::with_capacity(20 + self.extensions.iter().map(|e| 2 + e.data().len()).sum::<usize>());
+        buf.push(((self.packet_type as u8) << 4) | (self.version & 0x0F));
+        buf.push(first_ext);
+        buf.extend_from_slice(&self.connection_id.to_be_bytes());
+        buf.extend_from_slice(&self.timestamp_us.to_be_bytes());
+        buf.extend_from_slice(&self.timestamp_difference_us.to_be_bytes());
+        buf.extend_from_slice(&self.wnd_size.to_be_bytes());
+        buf.extend_from_slice(&self.seq_nr.to_be_bytes());
+        buf.extend_from_slice(&self.ack_nr.to_be_bytes());
+
+        for (i, ext) in self.extensions.iter().enumerate() {
+            let next_ext = if i + 1 < self.extensions.len() {
+                self.extensions[i + 1].extension_type()
+            } else {
+                0
+            };
+            buf.push(next_ext);
+            buf.push(ext.data().len() as u8);
+            buf.extend_from_slice(ext.data());
+        }
+
         buf
+    }
+
+    /// Returns the total serialized size in bytes of this header including all extension headers.
+    pub fn total_header_len(&self) -> usize {
+        20 + self.extensions.iter().map(|e| 2 + e.data().len()).sum::<usize>()
+    }
+
+    /// Returns the SACK bitmask slice if a SelectiveAck extension is present in the header.
+    pub fn sack_bitmask(&self) -> Option<&[u8]> {
+        self.extensions.iter().find_map(|ext| match ext {
+            UtpExtension::SelectiveAck(mask) => Some(mask.as_slice()),
+            _ => None,
+        })
+    }
+
+    /// Returns true if the sequence number `seq` is selectively acknowledged by this header.
+    pub fn is_seq_sacked(&self, seq: u16) -> bool {
+        self.sack_bitmask()
+            .map(|mask| is_seq_sacked(self.ack_nr, mask, seq))
+            .unwrap_or(false)
+    }
+
+    /// Adds a SACK extension header with the given bitmask.
+    pub fn with_sack(mut self, bitmask: Vec<u8>) -> Self {
+        self.extension = UTP_EXT_SACK;
+        self.extensions.push(UtpExtension::SelectiveAck(bitmask));
+        self
     }
 }
 
@@ -435,6 +638,27 @@ impl LedbatCongestionController {
 /// - **`write()`** — wraps the payload in a `ST_DATA` packet with sequence tracking and LEDBAT window checks.
 /// - **`read()`** — receives UDP datagrams, measures one-way delay, updates LEDBAT `cwnd`, and sends `ST_STATE` ACKs.
 /// - **`close()`** — sends `ST_RESET` and marks the socket as closed.
+/// A packet sent by the adapter that is tracked until acknowledged.
+#[derive(Debug, Clone)]
+pub struct SentPacket {
+    /// Sequence number of the packet.
+    pub seq: u16,
+    /// Time when the packet was transmitted.
+    pub timestamp: std::time::Instant,
+    /// Payload bytes.
+    pub payload: Vec<u8>,
+    /// Whether this packet has been selectively acknowledged via a SACK extension.
+    pub sacked: bool,
+}
+
+/// Adapts a UDP socket to the [`AsyncSocket`] trait using the uTP framing protocol and LEDBAT.
+///
+/// `UtpSocketAdapter` implements the uTP connection state machine:
+/// - **`connect()`** — sends a `ST_SYN` packet to initiate the handshake.
+/// - **`write()`** — wraps the payload in a `ST_DATA` packet with sequence tracking and LEDBAT window checks.
+/// - **`read()`** — receives UDP datagrams, measures one-way delay, updates LEDBAT `cwnd`, and sends `ST_STATE` ACKs.
+/// - **`close()`** — sends `ST_RESET` and marks the socket as closed.
+/// - **SACK (BEP 29)** — generates SACK extension headers when out-of-order packets arrive, and processes incoming SACK bitmasks to mark sent packets as delivered without redundant retransmission.
 #[derive(Debug)]
 pub struct UtpSocketAdapter {
     udp: Arc<UdpSocket>,
@@ -446,7 +670,10 @@ pub struct UtpSocketAdapter {
     controller: Mutex<LedbatCongestionController>,
     last_remote_timestamp_us: Mutex<u32>,
     last_remote_recv_us: Mutex<u32>,
-    sent_packets: Mutex<VecDeque<(u16, std::time::Instant, Vec<u8>)>>,
+    sent_packets: Mutex<VecDeque<SentPacket>>,
+    // Out-of-order packet reassembly & buffered incoming bytes
+    out_of_order_received: Mutex<BTreeMap<u16, Vec<u8>>>,
+    recv_buffer: Mutex<VecDeque<u8>>,
 }
 
 impl UtpSocketAdapter {
@@ -482,12 +709,19 @@ impl UtpSocketAdapter {
             last_remote_timestamp_us: Mutex::new(0),
             last_remote_recv_us: Mutex::new(0),
             sent_packets: Mutex::new(VecDeque::new()),
+            out_of_order_received: Mutex::new(BTreeMap::new()),
+            recv_buffer: Mutex::new(VecDeque::new()),
         }
     }
 
     /// Returns the current congestion window (`cwnd`) of the adapter in bytes.
     pub fn cwnd(&self) -> u32 {
         self.controller.lock().unwrap().cwnd()
+    }
+
+    /// Sets the next outgoing sequence number (primarily for testing out-of-order delivery).
+    pub fn set_seq_nr(&self, seq: u16) {
+        *self.seq_nr.lock().unwrap() = seq;
     }
 
     /// Returns the estimated base delay in microseconds.
@@ -500,17 +734,28 @@ impl UtpSocketAdapter {
         self.controller.lock().unwrap().queuing_delay()
     }
 
-    /// Returns the number of bytes currently in flight.
+    /// Returns the number of bytes currently in flight (excluding SACKed packets).
     pub fn bytes_in_flight(&self) -> u32 {
-        self.sent_packets.lock().unwrap().iter().map(|(_, _, p)| p.len() as u32).sum()
+        self.sent_packets.lock().unwrap().iter().filter(|p| !p.sacked).map(|p| p.payload.len() as u32).sum()
     }
 
-    /// Builds and sends a uTP packet of the given type with the supplied payload.
-    ///
-    /// Acquires the sequence and acknowledgement number locks, constructs the
-    /// 20-byte header with current timestamps and reflected delay, appends the payload,
-    /// and sends the combined packet over UDP.
-    pub fn send_packet(&self, packet_type: UtpPacketType, payload: &[u8]) -> Result<(), BitTorrentError> {
+    /// Returns the number of sent packets currently marked as SACKed by the peer.
+    pub fn sacked_packets_count(&self) -> usize {
+        self.sent_packets.lock().unwrap().iter().filter(|p| p.sacked).count()
+    }
+
+    /// Returns the number of out-of-order packets currently buffered awaiting reassembly.
+    pub fn out_of_order_count(&self) -> usize {
+        self.out_of_order_received.lock().unwrap().len()
+    }
+
+    /// Builds and sends a uTP packet of the given type with optional extension headers and payload.
+    pub fn send_packet_with_extensions(
+        &self,
+        packet_type: UtpPacketType,
+        payload: &[u8],
+        extensions: Vec<UtpExtension>,
+    ) -> Result<(), BitTorrentError> {
         let mut seq = self.seq_nr.lock().unwrap();
         let ack = self.ack_nr.lock().unwrap();
 
@@ -527,26 +772,33 @@ impl UtpSocketAdapter {
             0
         };
 
+        let first_ext = extensions.first().map(|e| e.extension_type()).unwrap_or(0);
         let header = UtpHeader {
             packet_type,
             version: 1,
-            extension: 0,
+            extension: first_ext,
             connection_id: self.connection_id,
             timestamp_us: now_us,
             timestamp_difference_us,
             wnd_size: 1_048_576,
             seq_nr: *seq,
             ack_nr: *ack,
+            extensions,
         };
 
-        let mut packet = header.encode().to_vec();
+        let mut packet = header.encode();
         packet.extend_from_slice(payload);
 
         self.udp.send(&packet).map_err(BitTorrentError::Io)?;
 
         if packet_type == UtpPacketType::Data {
             let mut sent = self.sent_packets.lock().unwrap();
-            sent.push_back((*seq, std::time::Instant::now(), payload.to_vec()));
+            sent.push_back(SentPacket {
+                seq: *seq,
+                timestamp: std::time::Instant::now(),
+                payload: payload.to_vec(),
+                sacked: false,
+            });
             if sent.len() > 256 {
                 sent.pop_front();
             }
@@ -555,17 +807,33 @@ impl UtpSocketAdapter {
         *seq = seq.wrapping_add(1);
         Ok(())
     }
+
+    /// Builds and sends a uTP packet of the given type with the supplied payload.
+    pub fn send_packet(&self, packet_type: UtpPacketType, payload: &[u8]) -> Result<(), BitTorrentError> {
+        self.send_packet_with_extensions(packet_type, payload, Vec::new())
+    }
 }
 
 impl AsyncSocket for UtpSocketAdapter {
     /// Receives one uTP DATA packet and copies its payload into `buf`.
     ///
-    /// Loops until a `ST_DATA` packet is received (skipping non-data packets).
-    /// Sends a `ST_STATE` ACK for each data packet received.
+    /// Loops until data is available, handling out-of-order reassembly and SACK generation.
     /// Returns `Ok(0)` if a `ST_RESET` packet is received or the socket is closed.
     async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError> {
         if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(0);
+        }
+
+        // Drain any contiguous buffered payload from out-of-order reassembly first
+        {
+            let mut recv = self.recv_buffer.lock().unwrap();
+            if !recv.is_empty() {
+                let to_read = buf.len().min(recv.len());
+                for (i, byte) in recv.drain(..to_read).enumerate() {
+                    buf[i] = byte;
+                }
+                return Ok(to_read);
+            }
         }
 
         let mut packet_buf = vec![0u8; 2048];
@@ -578,23 +846,21 @@ impl AsyncSocket for UtpSocketAdapter {
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
                     continue;
                 }
+                Err(ref e) if e.raw_os_error() == Some(10054) || e.kind() == std::io::ErrorKind::ConnectionReset => {
+                    // Windows WSAECONNRESET (10054) can be delivered on connected UDP sockets when ICMP unreachable is received
+                    continue;
+                }
                 Err(e) => return Err(BitTorrentError::Io(e)),
             };
             if n < 20 {
                 continue;
             }
 
-            if let Ok(header) = UtpHeader::decode(&packet_buf[..20]) {
+            if let Ok(header) = UtpHeader::decode(&packet_buf[..n]) {
                 let now_us = (std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_micros() & 0xFFFFFFFF) as u32;
-
-                // Track the remote peer's sequence number for our ACK field
-                {
-                    let mut ack = self.ack_nr.lock().unwrap();
-                    *ack = header.seq_nr;
-                }
 
                 // Track remote timestamps for our reflected timestamp_difference_us
                 if header.timestamp_us > 0 {
@@ -602,16 +868,24 @@ impl AsyncSocket for UtpSocketAdapter {
                     *self.last_remote_recv_us.lock().unwrap() = now_us;
                 }
 
-                // Acknowledge sent packets and calculate newly acked bytes
+                // Acknowledge sent packets, considering both cumulative ack_nr and selective SACK bitmask
                 let mut bytes_acked: u32 = 0;
                 {
                     let mut sent = self.sent_packets.lock().unwrap();
                     let mut unacked = VecDeque::new();
-                    while let Some((seq, ts, payload)) = sent.pop_front() {
-                        if seq_acked(seq, header.ack_nr) {
-                            bytes_acked = bytes_acked.saturating_add(payload.len() as u32);
+                    while let Some(mut pkt) = sent.pop_front() {
+                        if seq_acked(pkt.seq, header.ack_nr) {
+                            if !pkt.sacked {
+                                bytes_acked = bytes_acked.saturating_add(pkt.payload.len() as u32);
+                            }
                         } else {
-                            unacked.push_back((seq, ts, payload));
+                            if let Some(mask) = header.sack_bitmask() {
+                                if is_seq_sacked(header.ack_nr, mask, pkt.seq) && !pkt.sacked {
+                                    pkt.sacked = true;
+                                    bytes_acked = bytes_acked.saturating_add(pkt.payload.len() as u32);
+                                }
+                            }
+                            unacked.push_back(pkt);
                         }
                     }
                     *sent = unacked;
@@ -634,14 +908,68 @@ impl AsyncSocket for UtpSocketAdapter {
                 }
 
                 if header.packet_type == UtpPacketType::Data {
-                    let payload_len = n - 20;
-                    let to_read = buf.len().min(payload_len);
-                    buf[..to_read].copy_from_slice(&packet_buf[20..20 + to_read]);
+                    let total_hdr = header.total_header_len();
+                    let payload = if n >= total_hdr {
+                        &packet_buf[total_hdr..n]
+                    } else {
+                        &[]
+                    };
 
-                    // Acknowledge receipt with ST_STATE
-                    let _ = self.send_packet(UtpPacketType::State, &[]);
+                    let cumulative_ack = {
+                        let mut ack_guard = self.ack_nr.lock().unwrap();
+                        let current_ack = *ack_guard;
 
-                    return Ok(to_read);
+                        if current_ack == 0 {
+                            // First data packet received
+                            *ack_guard = header.seq_nr;
+                            let mut recv = self.recv_buffer.lock().unwrap();
+                            recv.extend(payload);
+                        } else if header.seq_nr == current_ack.wrapping_add(1) {
+                            // In order arrival
+                            *ack_guard = header.seq_nr;
+                            let mut recv = self.recv_buffer.lock().unwrap();
+                            recv.extend(payload);
+
+                            // Stitch any consecutive out-of-order packets buffered
+                            let mut ooo = self.out_of_order_received.lock().unwrap();
+                            while let Some(next_p) = ooo.remove(&ack_guard.wrapping_add(1)) {
+                                *ack_guard = ack_guard.wrapping_add(1);
+                                recv.extend(next_p);
+                            }
+                        } else if !seq_acked(header.seq_nr, current_ack) {
+                            // Out-of-order packet ahead of expected sequence
+                            let mut ooo = self.out_of_order_received.lock().unwrap();
+                            ooo.insert(header.seq_nr, payload.to_vec());
+                        }
+
+                        *ack_guard
+                    }; // ack_guard dropped here to prevent reentrancy deadlock when calling send_packet below
+
+                    // Acknowledge receipt with ST_STATE, attaching SACK if out-of-order packets exist
+                    let ooo_keys: Vec<u16> = self.out_of_order_received.lock().unwrap().keys().cloned().collect();
+                    if !ooo_keys.is_empty() {
+                        let sack_mask = build_sack_bitmask(cumulative_ack, &ooo_keys);
+                        if !sack_mask.is_empty() {
+                            let _ = self.send_packet_with_extensions(
+                                UtpPacketType::State,
+                                &[],
+                                vec![UtpExtension::SelectiveAck(sack_mask)],
+                            );
+                        } else {
+                            let _ = self.send_packet(UtpPacketType::State, &[]);
+                        }
+                    } else {
+                        let _ = self.send_packet(UtpPacketType::State, &[]);
+                    }
+
+                    let mut recv = self.recv_buffer.lock().unwrap();
+                    if !recv.is_empty() {
+                        let to_read = buf.len().min(recv.len());
+                        for (i, byte) in recv.drain(..to_read).enumerate() {
+                            buf[i] = byte;
+                        }
+                        return Ok(to_read);
+                    }
                 }
             }
         }
@@ -661,7 +989,7 @@ impl AsyncSocket for UtpSocketAdapter {
         // Check congestion window before sending
         let start_wait = std::time::Instant::now();
         loop {
-            let in_flight: u32 = self.sent_packets.lock().unwrap().iter().map(|(_, _, p)| p.len() as u32).sum();
+            let in_flight: u32 = self.bytes_in_flight();
             let can_send = self.controller.lock().unwrap().can_send(in_flight);
             if can_send || start_wait.elapsed() > std::time::Duration::from_millis(500) {
                 break;

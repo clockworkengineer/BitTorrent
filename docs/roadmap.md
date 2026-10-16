@@ -121,12 +121,20 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 - **Dual UI Access**: Provides `▶ Stream` buttons in both the torrent list items (streaming the primary/largest media file) and individual media files in the `Files` detail tab.
 - **Active Streaming Top Banner**: Live playback banner with progress bar, `⏹ Stop`, `📋 Copy URL`, and `🚀 Open Player` to launch the stream directly in the default OS media player / browser via `webbrowser`.
 
+### Phase 22: uTP Selective Acknowledgement (SACK Extension Header — BEP 29) (Completed)
+- **Extension Header Parsing & Serialization**: Fully parsed and formatted chained uTP extension headers (`UtpExtension::SelectiveAck`, `UtpExtension::Unknown`), encoding dynamic extension type headers with big-endian wire alignment.
+- **BEP 29 SACK Bitmask Arithmetic**: Reverse bitmask generation (`build_sack_bitmask`) and sequence checking (`is_seq_sacked`, `parse_sacked_seqs`) strictly adhering to BEP 29 bitmask standards (bit 0 = `ack_nr + 2`, multiples of 4 bytes padding, handling 16-bit sequence wraparound).
+- **Out-of-Order Reassembly Buffer**: `UtpSocketAdapter` receiver buffers out-of-order packets in `BTreeMap<u16, Vec<u8>>` and emits SACK extension headers on `ST_STATE` responses. Contiguous sequences are stitched sequentially into the user receive buffer as missing holes are filled.
+- **Sender Selective Retransmission & In-Flight Tracking**: Sender inspects incoming SACK extension headers to mark packets as acknowledged without retransmission, adjusting `bytes_in_flight` and crediting the LEDBAT congestion controller window.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **uTP Selective Acknowledgement (SACK Extension Header — BEP 29)**: Support selective ACK extension headers in `UtpHeader` for efficient out-of-order delivery and selective retransmissions.
+1. **Peer Swarm Visualizer & Piece Heatmap**: Visual real-time map of connected peers, availability piece grids, piece frequency heatmaps, and country flags in GUI and WebUI.
 
-2. **Peer Swarm Visualizer & Bitfield Canvas**: Visual real-time map of connected peers, availability piece grids, and country flags.
+2. **Selective File Downloading & File Priorities**: Ability to mark specific files within multi-file torrents as `Skip`, `Low`, `Normal`, or `High` priority, updating piece selection masks accordingly.
+
+3. **Super-Seeding Mode (BEP 16)**: Algorithm to optimize initial seeding bandwidth by advertising pieces only after existing peers have uploaded them to others.
