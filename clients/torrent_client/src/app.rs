@@ -158,11 +158,22 @@ impl eframe::App for TorrentClientApp {
         // Move ready sessions into self.sessions
         let mut ready = vec![];
         let mut should_save = false;
-        for (i, pending) in self.pending_sessions.iter().enumerate() {
-            if let Ok(session) = pending.rx.try_recv() {
-                self.sessions.push(SessionState::new(session, pending.torrent_path.clone()));
-                ready.push(i);
-                should_save = true;
+        for (i, pending) in self.pending_sessions.iter_mut().enumerate() {
+            match pending.rx.try_recv() {
+                Ok(Ok(session)) => {
+                    self.sessions.push(SessionState::new(session, pending.torrent_path.clone()));
+                    ready.push(i);
+                    should_save = true;
+                }
+                Ok(Err(err)) => {
+                    pending.error = Some(err);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if pending.error.is_none() {
+                        pending.error = Some("Failed to initialize session (file missing or thread terminated)".to_string());
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
         for i in ready.into_iter().rev() {
@@ -350,8 +361,10 @@ impl eframe::App for TorrentClientApp {
                     let mut select_idx = None;
                     let mut stream_torrent_idx = None;
 
-                    // Display pending/loading sessions with a spinner for instant feedback
-                    for pending in &self.pending_sessions {
+                    let mut delete_pending_indices = vec![];
+
+                    // Display pending/loading sessions with a spinner or error state and delete button
+                    for (p_idx, pending) in self.pending_sessions.iter().enumerate() {
                         let name = std::path::Path::new(&pending.torrent_path)
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
@@ -359,17 +372,41 @@ impl eframe::App for TorrentClientApp {
 
                         ui.group(|ui| {
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(&name).strong().color(egui::Color32::from_rgb(230, 126, 34)));
+                                let title_color = if pending.error.is_some() {
+                                    egui::Color32::from_rgb(231, 76, 60)
+                                } else {
+                                    egui::Color32::from_rgb(230, 126, 34)
+                                };
+                                ui.label(egui::RichText::new(&name).strong().color(title_color));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.add(egui::Spinner::new());
-                                    ui.label("Loading... ");
+                                    if ui.button("🗑 Delete").clicked() {
+                                        delete_pending_indices.push(p_idx);
+                                    }
+                                    ui.add_space(6.0);
+                                    if pending.error.is_some() {
+                                        ui.label(egui::RichText::new("Failed").color(egui::Color32::from_rgb(231, 76, 60)).strong());
+                                    } else {
+                                        ui.add(egui::Spinner::new());
+                                        ui.label("Loading... ");
+                                    }
                                 });
                             });
                             ui.horizontal(|ui| {
-                                ui.label("Verifying local storage and resolving metadata...");
+                                if let Some(ref err) = pending.error {
+                                    ui.label(egui::RichText::new(format!("⚠ {}", err)).color(egui::Color32::from_rgb(231, 76, 60)));
+                                } else {
+                                    ui.label("Verifying local storage and resolving metadata...");
+                                }
                             });
                         });
                         ui.add_space(6.0);
+                    }
+
+                    if !delete_pending_indices.is_empty() {
+                        for idx in delete_pending_indices.into_iter().rev() {
+                            self.pending_sessions.remove(idx);
+                        }
+                        self.save_state();
                     }
 
                     let mut should_save_progress = false;

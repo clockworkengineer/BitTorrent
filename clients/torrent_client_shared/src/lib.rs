@@ -59,7 +59,8 @@ impl SessionState {
 
 pub struct PendingSession {
     pub torrent_path: String,
-    pub rx: mpsc::Receiver<TorrentSession>,
+    pub rx: mpsc::Receiver<Result<TorrentSession, String>>,
+    pub error: Option<String>,
 }
 
 pub fn fmt_bytes(bytes: u64) -> String {

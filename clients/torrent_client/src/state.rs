@@ -93,7 +93,7 @@ impl TorrentClientApp {
                 bitfield_hex,
             }
         })
-        .chain(self.pending_sessions.iter().map(|s| SavedTorrent {
+        .chain(self.pending_sessions.iter().filter(|s| s.error.is_none()).map(|s| SavedTorrent {
             torrent_path: s.torrent_path.clone(),
             bitfield_hex: String::new(),
         }))
@@ -166,11 +166,12 @@ impl TorrentClientApp {
 
     /// Spawns a background thread to asynchronously resolve metadata, verify disk space, and establish tracker connections for a torrent session.
     pub fn add_session_by_path(&mut self, torrent_path: String, download_dir: String, bitfield_hex: Option<String>) {
-        let (session_tx, session_rx) = mpsc::channel::<TorrentSession>();
+        let (session_tx, session_rx) = mpsc::channel::<Result<TorrentSession, String>>();
         let msg_tx = self.log_tx.clone();
         self.pending_sessions.push(PendingSession {
             torrent_path: torrent_path.clone(),
             rx: session_rx,
+            error: None,
         });
         self.save_state();
 
@@ -217,7 +218,9 @@ impl TorrentClientApp {
             let mut session = match session_res {
                 Ok(s) => s,
                 Err(e) => {
-                    log_err(format!("Failed to create session: {}", e));
+                    let err_str = format!("Failed to create session: {}", e);
+                    log_err(err_str.clone());
+                    let _ = session_tx.send(Err(err_str));
                     return;
                 }
             };
@@ -256,12 +259,14 @@ impl TorrentClientApp {
             }
 
             if let Err(e) = session.start_download() {
-                log_err(format!("Failed to start download: {}", e));
+                let err_str = format!("Failed to start download: {}", e);
+                log_err(err_str.clone());
+                let _ = session_tx.send(Err(err_str));
                 return;
             }
 
             // Send TorrentSession to the UI thread immediately so the client displays it instantly
-            let _ = session_tx.send(session);
+            let _ = session_tx.send(Ok(session));
         });
     }
 }
