@@ -58,6 +58,35 @@
         </main>
     </div>
 
+    <!-- Video Stream Modal -->
+    <div id="stream-modal" class="modal-backdrop hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title-area">
+                    <span class="stream-pulse"></span>
+                    <h2 id="stream-title">Streaming Media</h2>
+                </div>
+                <div class="modal-controls">
+                    <select id="stream-file-select" class="file-dropdown hidden" title="Select File to Stream"></select>
+                    <button id="stream-modal-close" class="close-btn" title="Close Player">&times;</button>
+                </div>
+            </div>
+            <div class="player-wrapper">
+                <video id="stream-player" controls preload="auto"></video>
+            </div>
+            <div class="stream-footer">
+                <div class="stream-stat">
+                    <span class="stat-label">Stream Status:</span>
+                    <span id="stream-status" class="stat-value">Ready to stream</span>
+                </div>
+                <div class="stream-stat">
+                    <span class="stat-label">Endpoint:</span>
+                    <span id="stream-url-display" class="stat-value code-font"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Notification Toast -->
     <div id="toast" class="toast hidden"></div>
 

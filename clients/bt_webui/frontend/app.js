@@ -100,6 +100,7 @@ function renderTorrents(torrents) {
                 <td class="dir-cell" title="${t.download_dir}"><small>${t.download_dir}</small></td>
                 <td>
                     <div class="actions-cell">
+                        <button class="stream-btn" onclick="openStreamModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Stream')}')">▶ Stream</button>
                         ${actionBtn}
                         <button class="danger-btn" onclick="removeTorrent('${t.info_hash}')">Remove</button>
                     </div>
@@ -179,5 +180,132 @@ addBtn.addEventListener('click', async () => {
     }
 });
 
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+
+// Media Streaming Modal
+const streamModal = document.getElementById('stream-modal');
+const streamPlayer = document.getElementById('stream-player');
+const streamTitle = document.getElementById('stream-title');
+const streamFileSelect = document.getElementById('stream-file-select');
+const streamStatus = document.getElementById('stream-status');
+const streamUrlDisplay = document.getElementById('stream-url-display');
+const streamModalClose = document.getElementById('stream-modal-close');
+
+let currentStreamHash = null;
+
+window.openStreamModal = async (infoHash, torrentName) => {
+    currentStreamHash = infoHash;
+    streamTitle.textContent = torrentName || 'Media Stream';
+    streamStatus.textContent = 'Probing torrent media files...';
+    streamStatus.style.color = '#38bdf8';
+    
+    // Clear previous state
+    streamFileSelect.innerHTML = '';
+    streamFileSelect.classList.add('hidden');
+    
+    // Show modal
+    streamModal.classList.remove('hidden');
+
+    try {
+        const res = await fetch(`/api/torrents/${infoHash}/files`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.files && data.files.length > 0) {
+                const mediaFiles = data.files.filter(f => f.is_media);
+                const filesToShow = mediaFiles.length > 0 ? mediaFiles : data.files;
+
+                if (filesToShow.length > 1) {
+                    filesToShow.forEach((f) => {
+                        const opt = document.createElement('option');
+                        opt.value = f.index;
+                        opt.textContent = `${f.name} (${fmtBytes(f.length)})`;
+                        streamFileSelect.appendChild(opt);
+                    });
+                    streamFileSelect.classList.remove('hidden');
+                    streamFileSelect.onchange = () => {
+                        loadStreamSource(infoHash, streamFileSelect.value);
+                    };
+                }
+
+                // Default to first media file
+                const defaultIndex = filesToShow[0].index;
+                loadStreamSource(infoHash, defaultIndex);
+                return;
+            }
+        }
+    } catch (e) {
+        console.warn("Could not query files list; falling back to direct stream:", e);
+    }
+
+    // Fallback: direct torrent stream
+    loadStreamSource(infoHash);
+};
+
+function loadStreamSource(infoHash, fileIndex) {
+    const streamEndpoint = fileIndex !== undefined && fileIndex !== null 
+        ? `/api/stream/${infoHash}/${fileIndex}`
+        : `/api/stream/${infoHash}`;
+
+    streamUrlDisplay.textContent = streamEndpoint;
+    streamStatus.textContent = 'Buffering streaming pieces from peers...';
+    streamStatus.style.color = '#38bdf8';
+
+    streamPlayer.pause();
+    streamPlayer.src = streamEndpoint;
+    streamPlayer.load();
+    streamPlayer.play().catch(e => {
+        // Autoplay may be restricted by browser until user clicks play
+        console.log("Autoplay deferred:", e);
+    });
+}
+
+streamPlayer.addEventListener('waiting', () => {
+    streamStatus.textContent = 'Awaiting next piece blocks from swarm...';
+    streamStatus.style.color = '#fbbf24';
+});
+
+streamPlayer.addEventListener('playing', () => {
+    streamStatus.textContent = 'Streaming live (seeking enabled)';
+    streamStatus.style.color = '#34d399';
+});
+
+streamPlayer.addEventListener('canplay', () => {
+    streamStatus.textContent = 'Buffer ready for playback';
+    streamStatus.style.color = '#34d399';
+});
+
+streamPlayer.addEventListener('error', () => {
+    streamStatus.textContent = 'Streaming error (ensure daemon is active & peers connected)';
+    streamStatus.style.color = '#f87171';
+});
+
+window.closeStreamModal = () => {
+    streamPlayer.pause();
+    streamPlayer.removeAttribute('src');
+    streamPlayer.load();
+    streamModal.classList.add('hidden');
+    currentStreamHash = null;
+};
+
+streamModalClose.addEventListener('click', closeStreamModal);
+
+// Close on backdrop click
+streamModal.addEventListener('click', (e) => {
+    if (e.target === streamModal) {
+        closeStreamModal();
+    }
+});
+
+// Close on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !streamModal.classList.contains('hidden')) {
+        closeStreamModal();
+    }
+});
+
 // Init
 connectWebSocket();
+

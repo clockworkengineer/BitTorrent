@@ -57,6 +57,7 @@ fn print_usage() {
     println!("  bt-cli pause <info-hash>");
     println!("  bt-cli resume <info-hash>");
     println!("  bt-cli remove <info-hash> [--purge]");
+    println!("  bt-cli files <info-hash>");
     println!("  bt-cli shutdown");
 }
 
@@ -135,6 +136,13 @@ fn main() {
             let delete_data = args.iter().any(|arg| arg == "--purge");
             IpcMessage::Remove { info_hash: args[2].clone(), delete_data }
         }
+        "files" => {
+            if args.len() < 3 {
+                eprintln!("Error: 'files' command requires an info hash.");
+                return;
+            }
+            IpcMessage::Files { info_hash: args[2].clone() }
+        }
         "shutdown" => IpcMessage::Shutdown,
         _ => {
             eprintln!("Unknown command: {}", command);
@@ -169,6 +177,19 @@ fn main() {
                 }
                 IpcReply::StatusList { torrents } => {
                     print_status_table(&torrents);
+                }
+                IpcReply::FileList { files } => {
+                    println!("{:<6} {:<50} {:<14} {}", "INDEX", "NAME", "SIZE", "MEDIA");
+                    println!("{}", "-".repeat(80));
+                    for f in files {
+                        println!(
+                            "{:<6} {:<50} {:<14} {}",
+                            f.index,
+                            if f.name.len() > 48 { format!("{}...", &f.name[..45]) } else { f.name },
+                            torrent_client_shared::fmt_bytes(f.length),
+                            if f.is_media { "YES" } else { "NO" }
+                        );
+                    }
                 }
                 IpcReply::Error { reason } => {
                     eprintln!("Error from daemon: {}", reason);

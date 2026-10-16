@@ -93,6 +93,14 @@ pub struct TorrentStatusInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileInfo {
+    pub index: usize,
+    pub name: String,
+    pub length: u64,
+    pub is_media: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "data")]
 pub enum IpcMessage {
     Add {
@@ -111,6 +119,9 @@ pub enum IpcMessage {
         delete_data: bool,
     },
     Shutdown,
+    Files {
+        info_hash: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,7 +133,11 @@ pub enum IpcReply {
     StatusList {
         torrents: Vec<TorrentStatusInfo>,
     },
+    FileList {
+        files: Vec<FileInfo>,
+    },
     Error {
         reason: String,
     },
 }
+

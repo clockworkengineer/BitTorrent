@@ -18,6 +18,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 struct AppState {
     notify: Arc<tokio::sync::Notify>,
+    stream_port: u16,
 }
 
 fn execute_ipc(msg: IpcMessage) -> Result<IpcReply, String> {
@@ -143,6 +144,37 @@ async fn delete_torrent(State(state): State<AppState>, AxumPath(info_hash): Axum
     }
 }
 
+async fn get_torrent_files(AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
+    match execute_ipc(IpcMessage::Files { info_hash }) {
+        Ok(IpcReply::FileList { files }) => {
+            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "files": files }))).into_response()
+        }
+        Ok(IpcReply::Error { reason }) => {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
+        }
+        Err(err) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+    }
+}
+
+async fn stream_redirect(
+    State(state): State<AppState>,
+    AxumPath(info_hash): AxumPath<String>,
+) -> impl IntoResponse {
+    let url = format!("http://127.0.0.1:{}/stream/{}", state.stream_port, info_hash);
+    axum::response::Redirect::temporary(&url).into_response()
+}
+
+async fn stream_file_redirect(
+    State(state): State<AppState>,
+    AxumPath((info_hash, file_index)): AxumPath<(String, usize)>,
+) -> impl IntoResponse {
+    let url = format!("http://127.0.0.1:{}/stream/{}/{}", state.stream_port, info_hash, file_index);
+    axum::response::Redirect::temporary(&url).into_response()
+}
+
 // WebSocket Handler
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
@@ -203,6 +235,7 @@ async fn serve_js() -> impl IntoResponse {
 #[tokio::main]
 async fn main() {
     let mut port = 8080;
+    let mut stream_port = 8081;
     
     // Parse arguments
     let args: Vec<String> = std::env::args().collect();
@@ -213,13 +246,18 @@ async fn main() {
                 port = p;
             }
             i += 2;
+        } else if (args[i] == "--stream-port" || args[i] == "-s") && i + 1 < args.len() {
+            if let Ok(sp) = args[i + 1].parse::<u16>() {
+                stream_port = sp;
+            }
+            i += 2;
         } else {
             i += 1;
         }
     }
 
     let notify = Arc::new(tokio::sync::Notify::new());
-    let state = AppState { notify };
+    let state = AppState { notify, stream_port };
 
     let app = Router::new()
         // Serve SPA assets
@@ -231,7 +269,11 @@ async fn main() {
         .route("/api/torrents/add", post(add_torrent))
         .route("/api/torrents/:info_hash/pause", post(pause_torrent))
         .route("/api/torrents/:info_hash/resume", post(resume_torrent))
+        .route("/api/torrents/:info_hash/files", get(get_torrent_files))
         .route("/api/torrents/:info_hash", axum::routing::delete(delete_torrent))
+        // Stream redirect routes
+        .route("/api/stream/:info_hash", get(stream_redirect))
+        .route("/api/stream/:info_hash/:file_index", get(stream_file_redirect))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));

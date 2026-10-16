@@ -4,9 +4,11 @@
 //! and listens on a local Unix socket or Named Pipe for command-line instructions.
 
 use bittorrent_rs::TorrentSession;
-use torrent_client_shared::{SessionState, TorrentStatusInfo, IpcMessage, IpcReply};
+use torrent_client_shared::{SessionState, TorrentStatusInfo, IpcMessage, IpcReply, FileInfo};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::io::{Read, Write, Seek, SeekFrom, BufRead, BufReader};
+use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Default)]
@@ -231,6 +233,321 @@ impl Engine {
     }
 }
 
+// Media Streaming Server Implementations
+
+pub fn is_media_filename(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.ends_with(".mp4") || lower.ends_with(".mkv") || lower.ends_with(".webm") ||
+    lower.ends_with(".avi") || lower.ends_with(".mov") || lower.ends_with(".m4v") ||
+    lower.ends_with(".flv") || lower.ends_with(".wmv") || lower.ends_with(".mp3") ||
+    lower.ends_with(".flac") || lower.ends_with(".ogg") || lower.ends_with(".wav") ||
+    lower.ends_with(".aac") || lower.ends_with(".m4a")
+}
+
+pub fn detect_mime_type(name: &str) -> &'static str {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".mp4") || lower.ends_with(".m4v") {
+        "video/mp4"
+    } else if lower.ends_with(".mkv") {
+        "video/x-matroska"
+    } else if lower.ends_with(".webm") {
+        "video/webm"
+    } else if lower.ends_with(".avi") {
+        "video/x-msvideo"
+    } else if lower.ends_with(".mov") {
+        "video/quicktime"
+    } else if lower.ends_with(".mp3") {
+        "audio/mpeg"
+    } else if lower.ends_with(".flac") {
+        "audio/flac"
+    } else if lower.ends_with(".ogg") {
+        "audio/ogg"
+    } else if lower.ends_with(".wav") {
+        "audio/wav"
+    } else {
+        "video/mp4"
+    }
+}
+
+fn start_stream_server(engine: Arc<Mutex<Engine>>, port: u16) {
+    std::thread::spawn(move || {
+        let addr = format!("0.0.0.0:{}", port);
+        let listener = match std::net::TcpListener::bind(&addr) {
+            Ok(l) => {
+                println!("HTTP Media Streaming Server listening on http://127.0.0.1:{}", port);
+                l
+            }
+            Err(e) => {
+                eprintln!("Failed to bind HTTP stream server on {}: {}", addr, e);
+                return;
+            }
+        };
+
+        for stream in listener.incoming() {
+            if let Ok(tcp_stream) = stream {
+                let eng = engine.clone();
+                std::thread::spawn(move || {
+                    handle_stream_client(tcp_stream, eng);
+                });
+            }
+        }
+    });
+}
+
+fn handle_stream_client(mut stream: std::net::TcpStream, engine: Arc<Mutex<Engine>>) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let mut reader = BufReader::new(match stream.try_clone() {
+        Ok(s) => s,
+        Err(_) => return,
+    });
+
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
+        return;
+    }
+
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        return;
+    }
+
+    let method = parts[0];
+    let path = parts[1];
+
+    if method == "OPTIONS" {
+        let response = "HTTP/1.1 204 No Content\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n\
+Access-Control-Allow-Headers: Range, Content-Type, Accept\r\n\
+Access-Control-Max-Age: 86400\r\n\r\n";
+        let _ = stream.write_all(response.as_bytes());
+        return;
+    }
+
+    if method != "GET" && method != "HEAD" {
+        let _ = stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n");
+        return;
+    }
+
+    // Read remaining headers to find Range
+    let mut range_header: Option<String> = None;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+            break;
+        }
+        if line.to_lowercase().starts_with("range:") {
+            range_header = Some(line.trim()["range:".len()..].trim().to_string());
+        }
+    }
+
+    // Path pattern: /stream/:info_hash or /stream/:info_hash/:file_index or /stream/:info_hash/files
+    let clean_path = path.split('?').next().unwrap_or(path);
+    let segments: Vec<&str> = clean_path.trim_start_matches('/').split('/').collect();
+    if segments.is_empty() || segments[0] != "stream" || segments.len() < 2 {
+        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+        return;
+    }
+
+    let target_hash = segments[1];
+
+    let (torrent_stream_res, file_name) = {
+        let e = engine.lock().unwrap();
+        let session_state = match e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(target_hash)) {
+            Some(s) => s,
+            None => {
+                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\nTorrent not found");
+                return;
+            }
+        };
+
+        if segments.len() >= 3 && segments[2] == "files" {
+            if let Ok(ctx) = session_state.session.context().lock() {
+                let files: Vec<FileInfo> = ctx.files_to_download.iter().enumerate().map(|(idx, f)| {
+                    FileInfo {
+                        index: idx,
+                        name: f.torrent_path.clone(),
+                        length: f.length,
+                        is_media: is_media_filename(&f.torrent_path),
+                    }
+                }).collect();
+                drop(ctx);
+                drop(e);
+                let json = serde_json::to_string(&files).unwrap_or_else(|_| "[]".into());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\n\
+Content-Type: application/json\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Content-Length: {}\r\n\r\n{}",
+                    json.len(),
+                    json
+                );
+                let _ = stream.write_all(response.as_bytes());
+                return;
+            }
+        }
+
+        let file_index_opt: Option<usize> = if segments.len() >= 3 {
+            segments[2].parse::<usize>().ok()
+        } else {
+            None
+        };
+
+        let target_file_index = match file_index_opt {
+            Some(idx) => Some(idx),
+            None => {
+                if let Ok(ctx) = session_state.session.context().lock() {
+                    let mut best_idx = None;
+                    let mut max_len = 0;
+                    for (i, f) in ctx.files_to_download.iter().enumerate() {
+                        if is_media_filename(&f.torrent_path) && f.length > max_len {
+                            max_len = f.length;
+                            best_idx = Some(i);
+                        }
+                    }
+                    if best_idx.is_none() {
+                        for (i, f) in ctx.files_to_download.iter().enumerate() {
+                            if f.length > max_len {
+                                max_len = f.length;
+                                best_idx = Some(i);
+                            }
+                        }
+                    }
+                    best_idx
+                } else {
+                    None
+                }
+            }
+        };
+
+        let file_name = if let Some(idx) = target_file_index {
+            if let Ok(ctx) = session_state.session.context().lock() {
+                ctx.files_to_download.get(idx).map(|f| f.torrent_path.clone()).unwrap_or_else(|| session_state.last_file_name.clone())
+            } else {
+                session_state.last_file_name.clone()
+            }
+        } else {
+            session_state.last_file_name.clone()
+        };
+
+        let stream_res = match target_file_index {
+            Some(idx) => session_state.session.create_file_stream(idx),
+            None => session_state.session.create_stream(),
+        };
+
+        (stream_res, file_name)
+    };
+
+    let mut torrent_stream = match torrent_stream_res {
+        Ok(s) => s,
+        Err(err) => {
+            let msg = format!("Failed to create stream: {}", err);
+            let response = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}", msg.len(), msg);
+            let _ = stream.write_all(response.as_bytes());
+            return;
+        }
+    };
+
+    let total_len = torrent_stream.total_len();
+    if total_len == 0 {
+        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        return;
+    }
+
+    let mime_type = detect_mime_type(&file_name);
+
+    let mut range_start = 0u64;
+    let mut range_end = total_len - 1;
+    let is_range_request = if let Some(ref r) = range_header {
+        if r.starts_with("bytes=") {
+            let spec = &r["bytes=".len()..];
+            let parts: Vec<&str> = spec.split('-').collect();
+            if parts.len() == 2 {
+                if let Ok(s) = parts[0].parse::<u64>() {
+                    range_start = s;
+                }
+                if !parts[1].is_empty() {
+                    if let Ok(e) = parts[1].parse::<u64>() {
+                        range_end = e.min(total_len - 1);
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if range_start >= total_len {
+        let response = format!(
+            "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nContent-Length: 0\r\n\r\n",
+            total_len
+        );
+        let _ = stream.write_all(response.as_bytes());
+        return;
+    }
+
+    let content_len = range_end.saturating_sub(range_start) + 1;
+
+    let header = if is_range_request {
+        format!(
+            "HTTP/1.1 206 Partial Content\r\n\
+Content-Type: {}\r\n\
+Content-Range: bytes {}-{}/{}\r\n\
+Content-Length: {}\r\n\
+Accept-Ranges: bytes\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length\r\n\
+Connection: keep-alive\r\n\r\n",
+            mime_type, range_start, range_end, total_len, content_len
+        )
+    } else {
+        format!(
+            "HTTP/1.1 200 OK\r\n\
+Content-Type: {}\r\n\
+Content-Length: {}\r\n\
+Accept-Ranges: bytes\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length\r\n\
+Connection: keep-alive\r\n\r\n",
+            mime_type, total_len
+        )
+    };
+
+    if stream.write_all(header.as_bytes()).is_err() {
+        return;
+    }
+
+    if method == "HEAD" {
+        return;
+    }
+
+    if torrent_stream.seek(SeekFrom::Start(range_start)).is_err() {
+        return;
+    }
+
+    let mut remaining = content_len;
+    let mut buf = [0u8; 65536];
+
+    while remaining > 0 {
+        let to_read = (buf.len() as u64).min(remaining) as usize;
+        match torrent_stream.read(&mut buf[..to_read]) {
+            Ok(0) => break,
+            Ok(bytes_read) => {
+                if stream.write_all(&buf[..bytes_read]).is_err() {
+                    break;
+                }
+                remaining -= bytes_read as u64;
+            }
+            Err(_) => break,
+        }
+    }
+}
+
 // IPC Transport Implementations
 
 #[cfg(unix)]
@@ -401,6 +718,20 @@ mod ipc {
 }
 
 fn main() {
+    let mut stream_port = 8081u16;
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        if (args[i] == "--stream-port" || args[i] == "-s") && i + 1 < args.len() {
+            if let Ok(p) = args[i + 1].parse::<u16>() {
+                stream_port = p;
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
     let mut state_dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
     state_dir.push("BitTorrent-rs");
     let _ = std::fs::create_dir_all(&state_dir);
@@ -414,6 +745,11 @@ fn main() {
         e.load_state();
         println!("Daemon initialized. Loaded {} active sessions.", e.sessions.len());
     }
+
+    // Launch HTTP Media Stream Server
+    let engine_stream = engine.clone();
+    start_stream_server(engine_stream, stream_port);
+
 
     // Set up shutdown channel
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
@@ -476,6 +812,26 @@ fn main() {
                 IpcMessage::Shutdown => {
                     let _ = shutdown_tx_ipc.send(());
                     IpcReply::Success { message: "Daemon shutting down...".to_string() }
+                }
+                IpcMessage::Files { info_hash } => {
+                    let e = engine_ipc.lock().unwrap();
+                    let files = if let Some(s) = e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
+                        if let Ok(ctx) = s.session.context().lock() {
+                            ctx.files_to_download.iter().enumerate().map(|(idx, f)| {
+                                FileInfo {
+                                    index: idx,
+                                    name: f.torrent_path.clone(),
+                                    length: f.length,
+                                    is_media: is_media_filename(&f.torrent_path),
+                                }
+                            }).collect()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+                    IpcReply::FileList { files }
                 }
             };
 

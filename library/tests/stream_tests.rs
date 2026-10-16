@@ -356,3 +356,167 @@ fn test_streaming_piece_selector_prioritization() {
     let ctx_guard = context.lock().unwrap();
     assert_eq!(selector.select_piece(&ctx_guard, &peer), Some(6));
 }
+
+#[test]
+fn test_http_range_stream_server() {
+    let (context, storage) = create_test_context_and_storage("singlefile.torrent");
+    let total_bytes = { context.lock().unwrap().total_bytes_to_download };
+    let num_pieces = { context.lock().unwrap().number_of_pieces as u32 };
+
+    let mut data = Vec::with_capacity(total_bytes as usize);
+    for i in 0..total_bytes {
+        data.push((i % 251) as u8);
+    }
+    storage.write_block(0, &data).unwrap();
+
+    {
+        let mut ctx = context.lock().unwrap();
+        for p in 0..num_pieces {
+            let len = ctx.get_piece_length(p);
+            ctx.update_bitfield_status(p, true, len);
+        }
+    }
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let context_clone = context.clone();
+    let storage_clone = storage.clone();
+
+    let server_handle = std::thread::spawn(move || {
+        for _ in 0..3 {
+            let (mut tcp_stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(tcp_stream.try_clone().unwrap());
+            let mut req_line = String::new();
+            std::io::BufRead::read_line(&mut reader, &mut req_line).unwrap();
+
+            let mut range_header = None;
+            loop {
+                let mut line = String::new();
+                std::io::BufRead::read_line(&mut reader, &mut line).unwrap();
+                if line.trim().is_empty() {
+                    break;
+                }
+                if line.to_lowercase().starts_with("range:") {
+                    range_header = Some(line.trim()["range:".len()..].trim().to_string());
+                }
+            }
+
+            let mut torrent_stream = TorrentStream::new(
+                context_clone.clone(),
+                Arc::new(StorageBlockReader(storage_clone.clone())),
+                0,
+                total_bytes,
+                None,
+            );
+            let total_len = torrent_stream.total_len();
+
+            let (start, end, status) = if let Some(r) = range_header {
+                if r.starts_with("bytes=") {
+                    let spec = &r["bytes=".len()..];
+                    let parts: Vec<&str> = spec.split('-').collect();
+                    let s: u64 = parts[0].parse().unwrap();
+                    let e: u64 = if !parts[1].is_empty() { parts[1].parse().unwrap() } else { total_len - 1 };
+                    (s, e, 206)
+                } else {
+                    (0, total_len - 1, 200)
+                }
+            } else {
+                (0, total_len - 1, 200)
+            };
+
+            let content_len = end.saturating_sub(start) + 1;
+            let header = if status == 206 {
+                format!("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n", start, end, total_len, content_len)
+            } else {
+                format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", total_len)
+            };
+
+            if std::io::Write::write_all(&mut tcp_stream, header.as_bytes()).is_err() {
+                continue;
+            }
+            torrent_stream.seek(SeekFrom::Start(start)).unwrap();
+            let mut remaining = content_len;
+            let mut buf = [0u8; 1024];
+            while remaining > 0 {
+                let to_read = (buf.len() as u64).min(remaining) as usize;
+                let n = torrent_stream.read(&mut buf[..to_read]).unwrap();
+                if n == 0 { break; }
+                if std::io::Write::write_all(&mut tcp_stream, &buf[..n]).is_err() {
+                    break;
+                }
+                remaining -= n as u64;
+            }
+        }
+    });
+
+    // Test 1: Full content GET
+    {
+        let mut client = std::net::TcpStream::connect(addr).unwrap();
+        std::io::Write::write_all(&mut client, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").unwrap();
+        let mut reader = std::io::BufReader::new(client);
+        let mut status_line = String::new();
+        std::io::BufRead::read_line(&mut reader, &mut status_line).unwrap();
+        assert!(status_line.contains("200 OK"));
+
+        loop {
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut reader, &mut line).unwrap();
+            if line.trim().is_empty() {
+                break;
+            }
+        }
+
+        let mut body = vec![0u8; total_bytes as usize];
+        std::io::Read::read_exact(&mut reader, &mut body).unwrap();
+        assert_eq!(&body[..], &data[..]);
+    }
+
+
+    // Test 2: Range request bytes=100-199
+    {
+        let mut client = std::net::TcpStream::connect(addr).unwrap();
+        std::io::Write::write_all(&mut client, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=100-199\r\n\r\n").unwrap();
+        let mut reader = std::io::BufReader::new(client);
+        let mut status_line = String::new();
+        std::io::BufRead::read_line(&mut reader, &mut status_line).unwrap();
+        assert!(status_line.contains("206 Partial Content"));
+
+        loop {
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut reader, &mut line).unwrap();
+            if line.trim().is_empty() {
+                break;
+            }
+        }
+
+        let mut body = [0u8; 100];
+        std::io::Read::read_exact(&mut reader, &mut body).unwrap();
+        assert_eq!(&body[..], &data[100..200]);
+    }
+
+    // Test 3: Range request bytes=500-
+    {
+        let mut client = std::net::TcpStream::connect(addr).unwrap();
+        std::io::Write::write_all(&mut client, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=500-\r\n\r\n").unwrap();
+        let mut reader = std::io::BufReader::new(client);
+        let mut status_line = String::new();
+        std::io::BufRead::read_line(&mut reader, &mut status_line).unwrap();
+        assert!(status_line.contains("206 Partial Content"));
+
+        loop {
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut reader, &mut line).unwrap();
+            if line.trim().is_empty() {
+                break;
+            }
+        }
+
+        let mut body = [0u8; 50];
+        std::io::Read::read_exact(&mut reader, &mut body).unwrap();
+        assert_eq!(&body[..], &data[500..550]);
+    }
+
+    server_handle.join().unwrap();
+}
+
