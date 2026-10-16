@@ -4,6 +4,7 @@
 //! files, bitfield vectors, missing piece indices, and the connected peer swarm.
 
 use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};
+use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::metainfo::FileDetails;
 use crate::metainfo::MetaInfoFile;
@@ -109,6 +110,8 @@ pub struct TorrentContext {
     pub upload_speed_tracker: Mutex<(std::time::Instant, u64, i64)>,
     pub piece_priority_queue: Mutex<std::collections::BinaryHeap<PieceRarity>>,
     pub unchoked_peers_count: AtomicUsize,
+    #[cfg(feature = "v2")]
+    pub file_merkle_trees: Mutex<HashMap<usize, crate::core::merkle::MerkleTree>>,
 }
 
 impl TorrentContext {
@@ -201,6 +204,8 @@ impl TorrentContext {
                 pq
             }),
             unchoked_peers_count: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            file_merkle_trees: Mutex::new(HashMap::new()),
         };
         Ok(context)
     }
@@ -260,6 +265,8 @@ impl TorrentContext {
             upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
             piece_priority_queue: Mutex::new(std::collections::BinaryHeap::new()),
             unchoked_peers_count: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            file_merkle_trees: Mutex::new(HashMap::new()),
         };
         Ok(context)
     }
@@ -689,9 +696,7 @@ impl TorrentContext {
         if !already_present {
             #[cfg(feature = "v2")]
             {
-                use sha2::Digest;
-                let _block_hash = sha2::Sha256::digest(block_data);
-                // Perform leaf level block validation (verifying block hash calculation)
+                self.verify_v2_block(piece_number, block_index, block_data)?;
             }
             let block_offset = (block_index as u64) * BLOCK_SIZE as u64;
             let global_offset = (piece_number as u64) * self.piece_length as u64 + block_offset;
@@ -1136,6 +1141,58 @@ impl TorrentContext {
     /// Returns the number of blocks currently reserved/requested.
     pub fn number_of_reserved_blocks(&self) -> usize {
         self.assembler.requested_blocks.read().map(|r| r.len()).unwrap_or(0)
+    }
+
+    #[cfg(feature = "v2")]
+    /// Validates an incoming 16 KiB block for BitTorrent v2 torrents against its Merkle tree or pieces root.
+    pub fn verify_v2_block(&self, piece_number: u32, block_index: u32, block_data: &[u8]) -> Result<(), BitTorrentError> {
+        let block_offset = (block_index as u64) * BLOCK_SIZE as u64;
+        let global_offset = (piece_number as u64) * self.piece_length as u64 + block_offset;
+
+        // Find the file that spans global_offset
+        let file = self.files_to_download.iter().enumerate().find(|(_, f)| {
+            global_offset >= f.offset && global_offset < f.offset + f.length
+        });
+
+        if let Some((file_idx, file_details)) = file {
+            let file_rel_offset = global_offset - file_details.offset;
+            let file_block_idx = (file_rel_offset / BLOCK_SIZE as u64) as usize;
+
+            // 1. Check if we have a full MerkleTree registered for this file
+            let trees = self.file_merkle_trees.lock().unwrap();
+            if let Some(tree) = trees.get(&file_idx) {
+                if !tree.verify_block(file_block_idx, block_data) {
+                    return Err(BitTorrentError::Parse(format!(
+                        "BEP 52 Merkle block hash mismatch for file {} at block {}",
+                        file_idx, file_block_idx
+                    )));
+                }
+                return Ok(());
+            }
+
+            // 2. If single-block file (length <= 16 KiB) with pieces_root, root IS the leaf hash!
+            if file_details.length <= BLOCK_SIZE as u64 {
+                if let Some(expected_root) = file_details.pieces_root {
+                    use sha2::Digest;
+                    let actual_hash: [u8; 32] = sha2::Sha256::digest(block_data).into();
+                    if actual_hash != expected_root {
+                        return Err(BitTorrentError::Parse(format!(
+                            "BEP 52 block hash mismatch for file {}: expected {:?}, got {:?}",
+                            file_details.name, expected_root, actual_hash
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "v2")]
+    /// Registers a MerkleTree for a file to enable strict block-by-block validation.
+    pub fn register_file_merkle_tree(&self, file_index: usize, tree: crate::core::merkle::MerkleTree) {
+        let mut trees = self.file_merkle_trees.lock().unwrap();
+        trees.insert(file_index, tree);
     }
 }
 

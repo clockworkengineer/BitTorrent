@@ -172,6 +172,8 @@ pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector,
 pub use network::dht::Dht;
 #[cfg(all(feature = "std", feature = "utp"))]
 pub use network::utp::{DelayBucket, DelayTracker, LedbatCongestionController, UtpHeader, UtpPacketType, UtpSocketAdapter};
+#[cfg(feature = "v2")]
+pub use core::merkle::{MerkleProof, MerkleTree, BLOCK_SIZE as V2_BLOCK_SIZE};
 #[cfg(all(feature = "std", feature = "mse"))]
 pub use network::peer_network::EncryptedSocket;
 #[cfg(feature = "std")]

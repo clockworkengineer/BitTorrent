@@ -108,16 +108,21 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 - **Bidirectional Delay Measurement**: Accurately reflects remote timestamps in `timestamp_us` and `timestamp_difference_us` headers without requiring synchronized clocks.
 - **`UtpSocketAdapter`**: Enforces congestion window during transmission and dynamically adjusts window size upon packet acknowledgment.
 
+### Phase 20: BitTorrent v2 Merkle Tree Block Validation (BEP 52) (Completed)
+- **Binary SHA-256 Merkle Tree (`MerkleTree`)**: Chunks files into 16 KiB leaf blocks, zero-pads odd leaves to power-of-two boundaries with `[0u8; 32]`, and generates `pieces_root` Merkle roots.
+- **Audit Path Proofs (`MerkleProof`)**: Extracts and verifies logarithmic sibling proof paths up the tree to validate individual blocks independently.
+- **Piece Layer Generation**: Generates and reconstructs piece layers for arbitrary power-of-two piece sizes (e.g. 32 KiB, 64 KiB, 128 KiB).
+- **Metadata Integration**: Parsed and propagated per-file `pieces_root` in `FileDetails` from the metadata `file tree` dictionary.
+- **Immediate Block Assembly Rejection**: Verified blocks directly in `TorrentContext::add_block_to_storage`, immediately rejecting and discarding corrupt or poisoned blocks from bad peers.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BEP 52 Merkle Tree Block Validation**: Extend the v2 implementation to verify individual blocks against per-file `pieces_root` Merkle tree hashes, enabling block-level verification without downloading an entire piece.
+1. **uTP Selective Acknowledgement (SACK Extension Header — BEP 29)**: Support selective ACK extension headers in `UtpHeader` for efficient out-of-order delivery and selective retransmissions.
 
-2. **Tit-for-Tat Upload Choking (BEP 3)**: Optimize upload slot allocation by measuring rolling per-peer download/upload rates and preferentially unchoking the peers contributing the most data to us.
+2. **Desktop GUI Video Streaming & In-App Player**: Embed native video playback in `torrent_client` utilizing the seekable `TorrentStream` reader.
 
-3. **Optimistic Unchoking (BEP 3)**: Periodically unchoke a randomly-selected interested peer every 30 seconds to discover unused upload capacity and give new peers a chance to contribute.
-
-4. **uTP Selective Acknowledgement (SACK)**: Support selective ACK extension headers in `UtpHeader` for efficient out-of-order delivery and selective retransmissions.
+3. **Peer Swarm Visualizer & Bitfield Canvas**: Visual real-time map of connected peers, availability piece grids, and country flags.

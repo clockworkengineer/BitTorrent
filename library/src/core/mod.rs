@@ -5,3 +5,5 @@ pub mod metainfo;
 pub mod selector;
 #[cfg(feature = "std")]
 pub mod torrent_context;
+#[cfg(feature = "v2")]
+pub mod merkle;

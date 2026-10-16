@@ -31,7 +31,7 @@ type MetaInfoDict = HashMap<String, Vec<u8>>;
 type MetaInfoDict = BTreeMap<String, Vec<u8>>;
 
 /// Detailed information about a single file in a multi-file torrent or the single file itself.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDetails {
     /// Absolute path on the local filesystem (may be a UNC path on Windows).
     pub name: String,
@@ -41,6 +41,22 @@ pub struct FileDetails {
     pub length: u64,
     pub md5sum: Option<String>,
     pub offset: u64,
+    /// Root hash of the file's SHA-256 Merkle tree (BitTorrent v2 / BEP 52).
+    pub pieces_root: Option<[u8; 32]>,
+}
+
+impl FileDetails {
+    /// Returns the root hash of the file's Merkle tree, if present.
+    pub fn pieces_root(&self) -> Option<&[u8; 32]> {
+        self.pieces_root.as_ref()
+    }
+
+    /// Returns the root hash of the file's Merkle tree formatted as hexadecimal.
+    pub fn pieces_root_hex(&self) -> Option<String> {
+        self.pieces_root.map(|r| {
+            r.iter().map(|b| format!("{:02x}", b)).collect()
+        })
+    }
 }
 
 /// Represents a parsed `.torrent` metadata file.
@@ -683,6 +699,16 @@ impl MetaInfoFile {
                     "Path traversal detected: file path is outside the download directory.".into(),
                 ));
             }
+            let pieces_root = self.meta_info_dict.get("pieces root")
+                .and_then(|bytes| {
+                    if bytes.len() == 32 {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(bytes);
+                        Some(arr)
+                    } else {
+                        None
+                    }
+                });
             files_to_download.push(FileDetails {
                 name: file_path.to_string_lossy().into_owned(),
                 // Single-file torrent: torrent_path is just the file name.
@@ -693,6 +719,7 @@ impl MetaInfoFile {
                     .get("md5sum")
                     .map(|bytes| String::from_utf8_lossy(bytes).to_string()),
                 offset: 0,
+                pieces_root,
             });
             total_bytes = length;
         } else {
@@ -735,6 +762,16 @@ impl MetaInfoFile {
                     root_name.as_ref().replace('\\', "/"),
                     trimmed_path.replace('\\', "/")
                 );
+                let pieces_root = self.meta_info_dict.get(&format!("pieces_root_{}", file_no))
+                    .and_then(|bytes| {
+                        if bytes.len() == 32 {
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(bytes);
+                            Some(arr)
+                        } else {
+                            None
+                        }
+                    });
                 files_to_download.push(FileDetails {
                     name: file_path.to_string_lossy().into_owned(),
                     torrent_path,
@@ -745,6 +782,7 @@ impl MetaInfoFile {
                         Some(md5sum_value.to_string())
                     },
                     offset: total_bytes,
+                    pieces_root,
                 });
                 total_bytes += length;
                 file_no += 1;
