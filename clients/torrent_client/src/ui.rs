@@ -34,6 +34,7 @@ impl TorrentClientApp {
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Overview, "🔍 Overview");
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Files, "📁 Files");
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Peers, "👥 Peers");
+            ui.selectable_value(&mut self.active_detail_tab, DetailTab::Pieces, "🧩 Pieces");
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Trackers, "📡 Trackers");
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Logs, "📝 Logs");
 
@@ -53,6 +54,7 @@ impl TorrentClientApp {
                     DetailTab::Overview => self.draw_overview_tab(ui, &context, &last_file_name, last_downloaded, last_uploaded, last_total),
                     DetailTab::Files => self.draw_files_tab(ui, &context, selected_idx),
                     DetailTab::Peers => self.draw_peers_tab(ui, &context),
+                    DetailTab::Pieces => self.draw_pieces_tab(ui, &context),
                     DetailTab::Trackers => self.draw_trackers_tab(ui, &context),
                     DetailTab::Logs => self.draw_logs_tab(ui),
                 }
@@ -166,45 +168,184 @@ impl TorrentClientApp {
         }
     }
 
-    /// Renders a list of all connected peer swarm members, showing their IP, port, upload/download speeds, and choking state flags.
+    /// Renders a list of all connected peer swarm members, showing their client identity, IP, port, rates, and progress.
     pub fn draw_peers_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>) {
         if let Ok(ctx) = context.lock() {
-            let swarm = ctx.peer_swarm.read().unwrap();
-            if swarm.is_empty() {
+            let peers = torrent_client_shared::extract_peer_infos(&ctx);
+            if peers.is_empty() {
                 ui.label("No peers connected.");
                 return;
             }
 
+            ui.horizontal(|ui| {
+                ui.label(format!("Connected Peers: {}", peers.len()));
+                ui.separator();
+                let total_down: u64 = peers.iter().map(|p| p.down_rate).sum();
+                let total_up: u64 = peers.iter().map(|p| p.up_rate).sum();
+                ui.colored_label(egui::Color32::from_rgb(46, 204, 113), format!("↓ {}/s", fmt_bytes(total_down)));
+                ui.separator();
+                ui.colored_label(egui::Color32::from_rgb(52, 152, 219), format!("↑ {}/s", fmt_bytes(total_up)));
+            });
+
+            ui.add_space(4.0);
+
             egui::Grid::new("peers_grid")
-                .num_columns(5)
+                .num_columns(6)
                 .spacing([12.0, 6.0])
                 .striped(true)
                 .show(ui, |ui| {
-                    ui.strong("IP Address");
-                    ui.strong("Port");
+                    ui.strong("Client");
+                    ui.strong("IP:Port");
+                    ui.strong("Progress");
                     ui.strong("Down Rate");
                     ui.strong("Up Rate");
                     ui.strong("Flags");
                     ui.end_row();
 
-                    for peer_arc in swarm.values() {
-                        if let Ok(peer) = peer_arc.try_lock() {
-                            ui.label(&peer.ip);
-                            ui.label(peer.port.to_string());
-                            ui.label(format!("{}/s", fmt_bytes(peer.rolling_download_rate as u64)));
-                            ui.label(format!("{}/s", fmt_bytes(peer.rolling_upload_rate as u64)));
+                    for p in &peers {
+                        ui.label(&p.client);
+                        ui.label(format!("{}:{}", p.ip, p.port));
 
-                            let mut flags = String::new();
-                            if peer.am_interested { flags.push('I'); } else { flags.push('i'); }
-                            if peer.am_choking { flags.push('C'); } else { flags.push('c'); }
-                            if peer.peer_interested { flags.push('H'); } else { flags.push('h'); }
-                            if peer.peer_choking.wait_one(0) { flags.push('U'); } else { flags.push('u'); }
+                        let bar = egui::ProgressBar::new(p.progress)
+                            .text(format!("{:.1}%", p.progress * 100.0));
+                        ui.add_sized([100.0, 14.0], bar);
 
-                            ui.label(flags);
-                            ui.end_row();
+                        if p.down_rate > 0 {
+                            ui.colored_label(egui::Color32::from_rgb(46, 204, 113), format!("{}/s", fmt_bytes(p.down_rate)));
+                        } else {
+                            ui.label("-");
+                        }
+
+                        if p.up_rate > 0 {
+                            ui.colored_label(egui::Color32::from_rgb(52, 152, 219), format!("{}/s", fmt_bytes(p.up_rate)));
+                        } else {
+                            ui.label("-");
+                        }
+
+                        let flag_response = ui.label(&p.flags);
+                        flag_response.on_hover_text(
+                            "Flags Legend:\n\
+                             I/i: Am Interested / Not Interested\n\
+                             C/c: Am Choking / Not Choking\n\
+                             H/h: Peer Interested / Not Interested\n\
+                             U/u: Peer Unchoked / Choked\n\
+                             E: BEP 10 Extension Protocol\n\
+                             F: BEP 6 Fast Extension"
+                        );
+
+                        ui.end_row();
+                    }
+                });
+        } else {
+            ui.label("Unable to lock session context.");
+        }
+    }
+
+    /// Renders an interactive piece availability and swarm rarity heatmap canvas.
+    pub fn draw_pieces_tab(&self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>) {
+        if let Ok(ctx) = context.lock() {
+            let (local_have, swarm_rarity) = ctx.get_piece_availability();
+            let total = ctx.number_of_pieces;
+            if total == 0 {
+                ui.label("No piece metadata available.");
+                return;
+            }
+
+            let completed = local_have.iter().filter(|&&h| h).count();
+            let pct = (completed as f32 / total as f32) * 100.0;
+            let piece_size = ctx.piece_length;
+
+            ui.horizontal(|ui| {
+                ui.strong(format!("Completed: {} / {} pieces ({:.1}%)", completed, total, pct));
+                ui.separator();
+                ui.label(format!("Piece Size: {}", fmt_bytes(piece_size as u64)));
+            });
+
+            ui.add_space(4.0);
+
+            // Legend
+            ui.horizontal(|ui| {
+                ui.label("Legend:");
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(46, 204, 113));
+                ui.label("Downloaded");
+
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(52, 152, 219));
+                ui.label("In Swarm");
+
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(44, 62, 80));
+                ui.label("Missing");
+            });
+
+            ui.add_space(8.0);
+
+            // Canvas Grid
+            let available_width = ui.available_width().max(200.0);
+            let block_size = 14.0;
+            let gap = 2.0;
+            let cols = ((available_width + gap) / (block_size + gap)).floor().max(1.0) as usize;
+            let rows = (total + cols - 1) / cols;
+            let total_height = rows as f32 * (block_size + gap);
+
+            let (response, painter) = ui.allocate_painter(
+                egui::vec2(available_width, total_height),
+                egui::Sense::hover(),
+            );
+            let origin = response.rect.min;
+            let hover_pos = response.hover_pos();
+
+            let mut hovered_piece: Option<usize> = None;
+
+            for i in 0..total {
+                let col = i % cols;
+                let row = i / cols;
+                let x = origin.x + col as f32 * (block_size + gap);
+                let y = origin.y + row as f32 * (block_size + gap);
+                let rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(block_size, block_size));
+
+                let color = if local_have.get(i).copied().unwrap_or(false) {
+                    egui::Color32::from_rgb(46, 204, 113) // Emerald green
+                } else {
+                    let rarity = swarm_rarity.get(i).copied().unwrap_or(0);
+                    if rarity == 0 {
+                        egui::Color32::from_rgb(44, 62, 80) // Dark slate
+                    } else if rarity == 1 {
+                        egui::Color32::from_rgb(155, 89, 182) // Purple
+                    } else if rarity <= 3 {
+                        egui::Color32::from_rgb(52, 152, 219) // Sky Blue
+                    } else {
+                        egui::Color32::from_rgb(26, 188, 156) // Turquoise
+                    }
+                };
+
+                painter.rect_filled(rect, 2.0, color);
+
+                if let Some(pos) = hover_pos {
+                    if rect.contains(pos) {
+                        hovered_piece = Some(i);
+                        painter.rect_stroke(rect, 2.0, egui::Stroke::new(2.0f32, egui::Color32::WHITE));
+                    }
+                }
+            }
+
+            if let Some(p_idx) = hovered_piece {
+                egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), response.id.with(p_idx), |ui: &mut egui::Ui| {
+                    ui.strong(format!("Piece #{}", p_idx));
+                    ui.label(format!("Byte Offset: {}", fmt_bytes(p_idx as u64 * piece_size as u64)));
+                    if local_have.get(p_idx).copied().unwrap_or(false) {
+                        ui.colored_label(egui::Color32::from_rgb(46, 204, 113), "✔ Downloaded & Verified");
+                    } else {
+                        let rarity = swarm_rarity.get(p_idx).copied().unwrap_or(0);
+                        if rarity > 0 {
+                            ui.colored_label(egui::Color32::from_rgb(52, 152, 219), format!("Available from {} peer(s)", rarity));
+                        } else {
+                            ui.colored_label(egui::Color32::from_rgb(231, 76, 60), "✖ Missing in swarm");
                         }
                     }
                 });
+            }
         } else {
             ui.label("Unable to lock session context.");
         }

@@ -58,6 +58,8 @@ fn print_usage() {
     println!("  bt-cli resume <info-hash>");
     println!("  bt-cli remove <info-hash> [--purge]");
     println!("  bt-cli files <info-hash>");
+    println!("  bt-cli peers <info-hash>");
+    println!("  bt-cli pieces <info-hash>");
     println!("  bt-cli shutdown");
 }
 
@@ -143,6 +145,20 @@ fn main() {
             }
             IpcMessage::Files { info_hash: args[2].clone() }
         }
+        "peers" => {
+            if args.len() < 3 {
+                eprintln!("Error: 'peers' command requires an info hash.");
+                return;
+            }
+            IpcMessage::Peers { info_hash: args[2].clone() }
+        }
+        "pieces" => {
+            if args.len() < 3 {
+                eprintln!("Error: 'pieces' command requires an info hash.");
+                return;
+            }
+            IpcMessage::Pieces { info_hash: args[2].clone() }
+        }
         "shutdown" => IpcMessage::Shutdown,
         _ => {
             eprintln!("Unknown command: {}", command);
@@ -189,6 +205,53 @@ fn main() {
                             torrent_client_shared::fmt_bytes(f.length),
                             if f.is_media { "YES" } else { "NO" }
                         );
+                    }
+                }
+                IpcReply::PeerList { peers } => {
+                    if peers.is_empty() {
+                        println!("No peers currently connected to this torrent.");
+                    } else {
+                        println!("{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | {}",
+                                 "IP:PORT", "CLIENT", "PROGRESS", "DOWN RATE", "UP RATE", "FLAGS");
+                        println!("{}", "-".repeat(95));
+                        for p in peers {
+                            let endpoint = format!("{}:{}", p.ip, p.port);
+                            let progress_str = format!("{:.1}%", p.progress * 100.0);
+                            let down_str = format!("{}/s", fmt_bytes(p.down_rate));
+                            let up_str = format!("{}/s", fmt_bytes(p.up_rate));
+                            println!("{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | {}",
+                                     endpoint, p.client, progress_str, down_str, up_str, p.flags);
+                        }
+                    }
+                }
+                IpcReply::PieceStates { info } => {
+                    let pct = if info.total_pieces > 0 {
+                        (info.have_pieces as f64 / info.total_pieces as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    println!("Piece Summary: {} / {} completed ({:.1}%) • Piece Size: {}",
+                             info.have_pieces, info.total_pieces, pct, fmt_bytes(info.piece_length as u64));
+                    
+                    let max_rarity = info.swarm_rarity.iter().copied().max().unwrap_or(0);
+                    println!("Swarm Availability: Max peer copies for a piece: {}", max_rarity);
+
+                    // Render mini ASCII availability / completion bar (50 characters wide)
+                    let bar_width = 50.min(info.total_pieces);
+                    if bar_width > 0 {
+                        let mut bar = String::with_capacity(bar_width);
+                        for i in 0..bar_width {
+                            let piece_idx = (i * info.total_pieces) / bar_width;
+                            if info.local_have.get(piece_idx).copied().unwrap_or(false) {
+                                bar.push('█'); // Completed locally
+                            } else if info.swarm_rarity.get(piece_idx).copied().unwrap_or(0) > 0 {
+                                bar.push('▒'); // Available in swarm
+                            } else {
+                                bar.push('░'); // Missing everywhere
+                            }
+                        }
+                        println!("\nProgress: [{}]", bar);
+                        println!("Legend:   █ = Completed locally   ▒ = In Swarm   ░ = Missing\n");
                     }
                 }
                 IpcReply::Error { reason } => {

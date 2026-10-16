@@ -159,6 +159,36 @@ async fn get_torrent_files(AxumPath(info_hash): AxumPath<String>) -> impl IntoRe
     }
 }
 
+async fn get_torrent_peers(AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
+    match execute_ipc(IpcMessage::Peers { info_hash }) {
+        Ok(IpcReply::PeerList { peers }) => {
+            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "peers": peers }))).into_response()
+        }
+        Ok(IpcReply::Error { reason }) => {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
+        }
+        Err(err) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+    }
+}
+
+async fn get_torrent_pieces(AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
+    match execute_ipc(IpcMessage::Pieces { info_hash }) {
+        Ok(IpcReply::PieceStates { info }) => {
+            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "pieces": info }))).into_response()
+        }
+        Ok(IpcReply::Error { reason }) => {
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
+        }
+        Err(err) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+    }
+}
+
 async fn stream_redirect(
     State(state): State<AppState>,
     AxumPath(info_hash): AxumPath<String>,
@@ -270,6 +300,8 @@ async fn main() {
         .route("/api/torrents/:info_hash/pause", post(pause_torrent))
         .route("/api/torrents/:info_hash/resume", post(resume_torrent))
         .route("/api/torrents/:info_hash/files", get(get_torrent_files))
+        .route("/api/torrents/:info_hash/peers", get(get_torrent_peers))
+        .route("/api/torrents/:info_hash/pieces", get(get_torrent_pieces))
         .route("/api/torrents/:info_hash", axum::routing::delete(delete_torrent))
         // Stream redirect routes
         .route("/api/stream/:info_hash", get(stream_redirect))

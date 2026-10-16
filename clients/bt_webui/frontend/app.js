@@ -101,6 +101,7 @@ function renderTorrents(torrents) {
                 <td>
                     <div class="actions-cell">
                         <button class="stream-btn" onclick="openStreamModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Stream')}')">▶ Stream</button>
+                        <button class="secondary-btn" onclick="openSwarmModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Swarm')}')">👥 Swarm</button>
                         ${actionBtn}
                         <button class="danger-btn" onclick="removeTorrent('${t.info_hash}')">Remove</button>
                     </div>
@@ -299,13 +300,209 @@ streamModal.addEventListener('click', (e) => {
     }
 });
 
-// Close on Escape key
+// Swarm & Piece Visualizer Controller
+const swarmModal = document.getElementById('swarm-modal');
+const swarmModalClose = document.getElementById('swarm-modal-close');
+const swarmTitle = document.getElementById('swarm-title');
+const swarmPeerCount = document.getElementById('swarm-peer-count');
+const swarmTotalPeers = document.getElementById('swarm-total-peers');
+const swarmTotalDown = document.getElementById('swarm-total-down');
+const swarmTotalUp = document.getElementById('swarm-total-up');
+const swarmPeersBody = document.getElementById('swarm-peers-body');
+const swarmPeersPanel = document.getElementById('swarm-peers-panel');
+const swarmPiecesPanel = document.getElementById('swarm-pieces-panel');
+const tabPeersBtn = document.getElementById('tab-peers-btn');
+const tabPiecesBtn = document.getElementById('tab-pieces-btn');
+const piecesCompletionText = document.getElementById('pieces-completion-text');
+const piecesSizeText = document.getElementById('pieces-size-text');
+const piecesRarityText = document.getElementById('pieces-rarity-text');
+const piecesGrid = document.getElementById('pieces-grid');
+const swarmHashDisplay = document.getElementById('swarm-hash-display');
+const visualizerHint = document.getElementById('visualizer-hint');
+
+let currentSwarmHash = null;
+let swarmPollInterval = null;
+let activeSwarmTab = 'peers';
+
+window.switchSwarmTab = (tab) => {
+    activeSwarmTab = tab;
+    if (tab === 'peers') {
+        tabPeersBtn.classList.add('active');
+        tabPiecesBtn.classList.remove('active');
+        swarmPeersPanel.classList.remove('hidden');
+        swarmPiecesPanel.classList.add('hidden');
+        visualizerHint.textContent = 'Live peer connections and transfer speeds';
+    } else {
+        tabPeersBtn.classList.remove('active');
+        tabPiecesBtn.classList.add('active');
+        swarmPeersPanel.classList.add('hidden');
+        swarmPiecesPanel.classList.remove('hidden');
+        visualizerHint.textContent = 'Hover over piece tiles for byte offsets and availability';
+    }
+};
+
+window.openSwarmModal = (infoHash, torrentName) => {
+    currentSwarmHash = infoHash;
+    swarmTitle.textContent = `${torrentName} — Swarm & Pieces`;
+    swarmHashDisplay.textContent = infoHash;
+    swarmModal.classList.remove('hidden');
+
+    // Initial fetch
+    fetchSwarmData();
+
+    // Poll every 1500 ms while modal is visible
+    if (swarmPollInterval) clearInterval(swarmPollInterval);
+    swarmPollInterval = setInterval(fetchSwarmData, 1500);
+};
+
+window.closeSwarmModal = () => {
+    swarmModal.classList.add('hidden');
+    currentSwarmHash = null;
+    if (swarmPollInterval) {
+        clearInterval(swarmPollInterval);
+        swarmPollInterval = null;
+    }
+};
+
+swarmModalClose.addEventListener('click', closeSwarmModal);
+swarmModal.addEventListener('click', (e) => {
+    if (e.target === swarmModal) closeSwarmModal();
+});
+
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !streamModal.classList.contains('hidden')) {
-        closeStreamModal();
+    if (e.key === 'Escape' && !swarmModal.classList.contains('hidden')) {
+        closeSwarmModal();
     }
 });
 
+async function fetchSwarmData() {
+    if (!currentSwarmHash) return;
+
+    try {
+        // Fetch peers and pieces concurrently
+        const [peersRes, piecesRes] = await Promise.all([
+            fetch(`/api/torrents/${currentSwarmHash}/peers`),
+            fetch(`/api/torrents/${currentSwarmHash}/pieces`),
+        ]);
+
+        if (peersRes.ok) {
+            const peersData = await peersRes.json();
+            renderSwarmPeers(peersData.peers || []);
+        }
+
+        if (piecesRes.ok) {
+            const piecesData = await piecesRes.json();
+            if (piecesData.pieces) {
+                renderPieceHeatmap(piecesData.pieces);
+            }
+        }
+    } catch (e) {
+        console.warn("Could not poll swarm data:", e);
+    }
+}
+
+function renderSwarmPeers(peers) {
+    swarmPeerCount.textContent = peers.length;
+    swarmTotalPeers.textContent = peers.length;
+
+    const totalDown = peers.reduce((sum, p) => sum + (p.down_rate || 0), 0);
+    const totalUp = peers.reduce((sum, p) => sum + (p.up_rate || 0), 0);
+
+    swarmTotalDown.textContent = fmtBytes(totalDown) + '/s';
+    swarmTotalUp.textContent = fmtBytes(totalUp) + '/s';
+
+    if (peers.length === 0) {
+        swarmPeersBody.innerHTML = '<tr class="empty-row"><td colspan="6">No peers currently connected.</td></tr>';
+        return;
+    }
+
+    let rowsHtml = '';
+    peers.forEach((p) => {
+        const progressPct = ((p.progress || 0) * 100).toFixed(1);
+        const downStr = p.down_rate > 0 ? `<span style="color:#10b981;font-weight:600">${fmtBytes(p.down_rate)}/s</span>` : '-';
+        const upStr = p.up_rate > 0 ? `<span style="color:#38bdf8;font-weight:600">${fmtBytes(p.up_rate)}/s</span>` : '-';
+
+        rowsHtml += `
+            <tr>
+                <td><strong>${escapeHtml(p.client || 'Unknown')}</strong></td>
+                <td class="code-font">${escapeHtml(p.ip)}:${p.port}</td>
+                <td>
+                    <div class="progress-container">
+                        <div class="progress-track" style="width:70px">
+                            <div class="progress-fill" style="width: ${progressPct}%"></div>
+                        </div>
+                        <span class="progress-text">${progressPct}%</span>
+                    </div>
+                </td>
+                <td>${downStr}</td>
+                <td>${upStr}</td>
+                <td title="I/i: Interested, C/c: Choking, H/h: Peer Interested, U/u: Peer Unchoked, E: Extension protocol, F: Fast extension"><span class="code-font">${p.flags}</span></td>
+            </tr>
+        `;
+    });
+    swarmPeersBody.innerHTML = rowsHtml;
+}
+
+function renderPieceHeatmap(info) {
+    const total = info.total_pieces || 0;
+    const have = info.have_pieces || 0;
+    const pct = total > 0 ? ((have / total) * 100).toFixed(1) : '0.0';
+
+    piecesCompletionText.textContent = `${have} / ${total} (${pct}%)`;
+    piecesSizeText.textContent = fmtBytes(info.piece_length || 0);
+
+    const maxRarity = info.swarm_rarity ? Math.max(0, ...info.swarm_rarity) : 0;
+    piecesRarityText.textContent = `${maxRarity} peer copies`;
+
+    // Only rebuild DOM tiles if piece count changed or on first render
+    const currentTiles = piecesGrid.children.length;
+    if (currentTiles !== total) {
+        piecesGrid.innerHTML = '';
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < total; i++) {
+            const tile = document.createElement('div');
+            tile.className = 'piece-tile';
+            tile.dataset.index = i;
+            frag.appendChild(tile);
+        }
+        piecesGrid.appendChild(frag);
+    }
+
+    // Update classes and titles
+    const tiles = piecesGrid.children;
+    for (let i = 0; i < total; i++) {
+        const tile = tiles[i];
+        const isHave = info.local_have && info.local_have[i];
+        const rarity = (info.swarm_rarity && info.swarm_rarity[i]) || 0;
+        const offset = fmtBytes(i * (info.piece_length || 0));
+
+        let statusText = 'Missing';
+        let cls = 'piece-tile ';
+
+        if (isHave) {
+            cls += 'piece-downloaded';
+            statusText = 'Downloaded & Verified';
+        } else if (rarity > 0) {
+            if (rarity === 1) {
+                cls += 'piece-rare';
+                statusText = 'Rare (1 peer copy)';
+            } else if (rarity <= 3) {
+                cls += 'piece-swarm-low';
+                statusText = `In Swarm (${rarity} peer copies)`;
+            } else {
+                cls += 'piece-swarm-high';
+                statusText = `Well-seeded (${rarity} peer copies)`;
+            }
+        } else {
+            cls += 'piece-missing';
+        }
+
+        tile.className = cls;
+        tile.title = `Piece #${i}\nOffset: ${offset}\nStatus: ${statusText}`;
+    }
+}
+
 // Init
 connectWebSocket();
+
 

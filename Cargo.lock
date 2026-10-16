@@ -4005,6 +4005,7 @@ version = "0.1.1"
 dependencies = [
  "bittorrent-rs",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

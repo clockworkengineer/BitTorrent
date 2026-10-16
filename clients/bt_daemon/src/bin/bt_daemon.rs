@@ -4,7 +4,10 @@
 //! and listens on a local Unix socket or Named Pipe for command-line instructions.
 
 use bittorrent_rs::TorrentSession;
-use torrent_client_shared::{SessionState, TorrentStatusInfo, IpcMessage, IpcReply, FileInfo};
+use torrent_client_shared::{
+    extract_peer_infos, extract_piece_availability, FileInfo, IpcMessage, IpcReply,
+    SessionState, TorrentStatusInfo,
+};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::io::{Read, Write, Seek, SeekFrom, BufRead, BufReader};
@@ -832,6 +835,32 @@ fn main() {
                         Vec::new()
                     };
                     IpcReply::FileList { files }
+                }
+                IpcMessage::Peers { info_hash } => {
+                    let e = engine_ipc.lock().unwrap();
+                    let peers = if let Some(s) = e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
+                        if let Ok(ctx) = s.session.context().lock() {
+                            extract_peer_infos(&ctx)
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+                    IpcReply::PeerList { peers }
+                }
+                IpcMessage::Pieces { info_hash } => {
+                    let e = engine_ipc.lock().unwrap();
+                    if let Some(s) = e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
+                        if let Ok(ctx) = s.session.context().lock() {
+                            let info = extract_piece_availability(&ctx);
+                            IpcReply::PieceStates { info }
+                        } else {
+                            IpcReply::Error { reason: "Unable to lock session context".to_string() }
+                        }
+                    } else {
+                        IpcReply::Error { reason: "Torrent not found".to_string() }
+                    }
                 }
             };
 

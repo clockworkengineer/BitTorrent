@@ -127,14 +127,27 @@ All milestones through Phase 16 have been fully implemented, tested, and integra
 - **Out-of-Order Reassembly Buffer**: `UtpSocketAdapter` receiver buffers out-of-order packets in `BTreeMap<u16, Vec<u8>>` and emits SACK extension headers on `ST_STATE` responses. Contiguous sequences are stitched sequentially into the user receive buffer as missing holes are filled.
 - **Sender Selective Retransmission & In-Flight Tracking**: Sender inspects incoming SACK extension headers to mark packets as acknowledged without retransmission, adjusting `bytes_in_flight` and crediting the LEDBAT congestion controller window.
 
+### Phase 23: Peer Swarm Visualizer & Piece Heatmap (Completed)
+- **Peer Client Software Identification**: Implemented `parse_peer_client` to detect and decode client identity and version strings from Azureus-style (`-qB4600-`, `-TR4000-`, `-UT3550-`, `-DE2100-`), Shadow-style (`M4-2-0-`), and vendor-specific Peer IDs.
+- **Piece Availability & Swarm Rarity Matrix**: Added `TorrentContext::get_piece_availability` returning local piece completion bitmasks alongside swarm-wide piece rarity counts (frequency of each piece held by connected peers).
+- **Desktop GUI Piece Heatmap & Swarm Table**:
+  - Added **"🧩 Pieces"** detail tab with interactive canvas grid rendering pieces in emerald green (local verified), sky blue / turquoise (swarm copies), or slate dark grey (missing), with hover tooltips detailing piece offsets and availability.
+  - Enhanced **"👥 Peers"** detail tab with client software badges, progress bars, colored upload/download speed indicators, and protocol flag tooltips.
+- **CLI & WebUI Swarm Visualizer**:
+  - Added `bt-cli peers <hash>` and `bt-cli pieces <hash>` commands with visual ASCII progress and rarity bars.
+  - Extended IPC with `IpcMessage::Peers` and `IpcMessage::Pieces` / `IpcReply::PeerList` and `IpcReply::PieceStates`.
+  - Added `/api/torrents/:info_hash/peers` and `/api/torrents/:info_hash/pieces` endpoints in `bt_webui`.
+  - Added glassmorphic **Swarm & Piece Visualizer** modal with live piece tile heatmap, peer connection tables, and automatic 1.5s background polling.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Peer Swarm Visualizer & Piece Heatmap**: Visual real-time map of connected peers, availability piece grids, piece frequency heatmaps, and country flags in GUI and WebUI.
+1. **Selective File Downloading & File Priorities**: Ability to mark specific files within multi-file torrents as `Skip`, `Low`, `Normal`, or `High` priority, updating piece selection masks accordingly.
 
-2. **Selective File Downloading & File Priorities**: Ability to mark specific files within multi-file torrents as `Skip`, `Low`, `Normal`, or `High` priority, updating piece selection masks accordingly.
+2. **Super-Seeding Mode (BEP 16)**: Algorithm to optimize initial seeding bandwidth by advertising pieces only after existing peers have uploaded them to others.
 
-3. **Super-Seeding Mode (BEP 16)**: Algorithm to optimize initial seeding bandwidth by advertising pieces only after existing peers have uploaded them to others.
+3. **WebRTC / WebTorrent Peer Transport**: Integrate WebRTC data channels enabling browser clients to exchange torrent pieces directly with the client.
+

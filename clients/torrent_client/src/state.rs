@@ -29,6 +29,7 @@ pub enum DetailTab {
     Overview,
     Files,
     Peers,
+    Pieces,
     Trackers,
     Logs,
 }

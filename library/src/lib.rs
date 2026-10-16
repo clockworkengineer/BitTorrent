@@ -111,6 +111,8 @@ pub use network::nat;
 pub use network::peer;
 #[cfg(feature = "std")]
 pub use network::peer_id;
+#[cfg(feature = "std")]
+pub use network::peer_id::parse_peer_client;
 pub use network::peer_message;
 #[cfg(feature = "std")]
 pub use network::peer_network;

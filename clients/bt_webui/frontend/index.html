@@ -87,7 +87,97 @@
         </div>
     </div>
 
-    <!-- Notification Toast -->
+    <!-- Swarm & Pieces Modal -->
+    <div id="swarm-modal" class="modal-backdrop hidden">
+        <div class="modal-card swarm-card">
+            <div class="modal-header">
+                <div class="modal-title-area">
+                    <span class="stream-pulse" style="background:#10b981;box-shadow:0 0 10px #10b981;"></span>
+                    <h2 id="swarm-title">Swarm & Piece Visualizer</h2>
+                </div>
+                <div class="modal-controls">
+                    <div class="tab-switcher">
+                        <button id="tab-peers-btn" class="tab-btn active" onclick="switchSwarmTab('peers')">👥 Peers (<span id="swarm-peer-count">0</span>)</button>
+                        <button id="tab-pieces-btn" class="tab-btn" onclick="switchSwarmTab('pieces')">🧩 Piece Heatmap</button>
+                    </div>
+                    <button id="swarm-modal-close" class="close-btn" title="Close Visualizer">&times;</button>
+                </div>
+            </div>
+
+            <!-- Tab 1: Peers Panel -->
+            <div id="swarm-peers-panel" class="swarm-tab-panel">
+                <div class="swarm-stats-bar">
+                    <div class="stream-stat">
+                        <span class="stat-label">Connected Peers:</span>
+                        <span id="swarm-total-peers" class="stat-value">0</span>
+                    </div>
+                    <div class="stream-stat">
+                        <span class="stat-label">Total Download:</span>
+                        <span id="swarm-total-down" class="stat-value" style="color:#10b981;">0 B/s</span>
+                    </div>
+                    <div class="stream-stat">
+                        <span class="stat-label">Total Upload:</span>
+                        <span id="swarm-total-up" class="stat-value" style="color:#38bdf8;">0 B/s</span>
+                    </div>
+                </div>
+                <div class="table-container swarm-table-container">
+                    <table class="swarm-table">
+                        <thead>
+                            <tr>
+                                <th>Client</th>
+                                <th>Endpoint</th>
+                                <th>Progress</th>
+                                <th>Down Rate</th>
+                                <th>Up Rate</th>
+                                <th>Flags</th>
+                            </tr>
+                        </thead>
+                        <tbody id="swarm-peers-body">
+                            <tr class="empty-row"><td colspan="6">Loading peers...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab 2: Pieces Panel -->
+            <div id="swarm-pieces-panel" class="swarm-tab-panel hidden">
+                <div class="swarm-stats-bar">
+                    <div class="stream-stat">
+                        <span class="stat-label">Completion:</span>
+                        <span id="pieces-completion-text" class="stat-value">0 / 0 (0.0%)</span>
+                    </div>
+                    <div class="stream-stat">
+                        <span class="stat-label">Piece Size:</span>
+                        <span id="pieces-size-text" class="stat-value">0 B</span>
+                    </div>
+                    <div class="stream-stat">
+                        <span class="stat-label">Max Swarm Copies:</span>
+                        <span id="pieces-rarity-text" class="stat-value">0</span>
+                    </div>
+                </div>
+                <div class="pieces-legend">
+                    <span class="legend-item"><span class="legend-color legend-downloaded"></span> Downloaded</span>
+                    <span class="legend-item"><span class="legend-color legend-rare"></span> Rare (1 Peer)</span>
+                    <span class="legend-item"><span class="legend-color legend-swarm"></span> In Swarm</span>
+                    <span class="legend-item"><span class="legend-color legend-missing"></span> Missing</span>
+                </div>
+                <div class="heatmap-container">
+                    <div id="pieces-grid" class="pieces-grid"></div>
+                </div>
+            </div>
+
+            <div class="stream-footer">
+                <div class="stream-stat">
+                    <span class="stat-label">Visualizer Info:</span>
+                    <span id="visualizer-hint" class="stat-value">Hover over pieces for offset & availability</span>
+                </div>
+                <div class="stream-stat">
+                    <span class="stat-label">Active Hash:</span>
+                    <span id="swarm-hash-display" class="stat-value code-font"></span>
+                </div>
+            </div>
+        </div>
+    </div>
     <div id="toast" class="toast hidden"></div>
 
     <script src="/app.js"></script>

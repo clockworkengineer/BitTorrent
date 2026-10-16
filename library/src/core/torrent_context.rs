@@ -653,6 +653,35 @@ impl TorrentContext {
         }
     }
 
+    /// Returns a tuple containing:
+    /// 1. A boolean vector indicating which pieces are verified and present locally.
+    /// 2. A frequency vector counting how many connected peers currently hold each piece.
+    pub fn get_piece_availability(&self) -> (alloc::vec::Vec<bool>, alloc::vec::Vec<u16>) {
+        let total = self.number_of_pieces;
+        let mut local_have = alloc::vec![false; total];
+        for (i, have) in local_have.iter_mut().enumerate() {
+            *have = self.is_piece_local(i as u32);
+        }
+
+        let mut swarm_rarity = alloc::vec![0u16; total];
+        if let Ok(swarm) = self.peer_swarm.read() {
+            for peer_arc in swarm.values() {
+                if let Ok(peer) = peer_arc.try_lock() {
+                    for piece_idx in 0..total {
+                        let (byte_idx, mask) = crate::util::get_bitfield_index_and_mask(piece_idx as u32);
+                        if (byte_idx as usize) < peer.remote_piece_bitfield.len()
+                            && (peer.remote_piece_bitfield[byte_idx as usize] & mask) != 0
+                        {
+                            swarm_rarity[piece_idx] = swarm_rarity[piece_idx].saturating_add(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        (local_have, swarm_rarity)
+    }
+
     /// Appends incoming sub-block data, writing the fully assembled piece to disk upon completion and hash validation.
     ///
     /// # Errors

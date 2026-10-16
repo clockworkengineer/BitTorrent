@@ -486,6 +486,11 @@ impl TorrentSession {
         }
     }
 
+    /// Returns the local piece completion status and swarm-wide piece availability counts.
+    pub fn piece_availability(&self) -> (Vec<bool>, Vec<u16>) {
+        self.context.lock().unwrap().get_piece_availability()
+    }
+
     /// Validates the presence and integrity (exact sizes) of downloaded files on disk.
     pub fn validate(&self) -> Result<(), BitTorrentError> {
         let context = self.context.lock().unwrap();

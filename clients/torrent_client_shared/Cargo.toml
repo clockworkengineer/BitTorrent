@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 bittorrent_rs = { path = "../../library", package = "bittorrent-rs" }
 serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
