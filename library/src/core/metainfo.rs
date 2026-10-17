@@ -30,6 +30,11 @@ type MetaInfoDict = HashMap<String, Vec<u8>>;
 #[cfg(not(feature = "std"))]
 type MetaInfoDict = BTreeMap<String, Vec<u8>>;
 
+#[cfg(feature = "std")]
+pub type PieceLayersMap = HashMap<[u8; 32], Vec<[u8; 32]>>;
+#[cfg(not(feature = "std"))]
+pub type PieceLayersMap = BTreeMap<[u8; 32], Vec<[u8; 32]>>;
+
 /// Priority level for downloading a file within a torrent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(u8)]
@@ -96,6 +101,11 @@ impl FileDetails {
             r.iter().map(|b| format!("{:02x}", b)).collect()
         })
     }
+
+    /// Returns true if this file is a padding file inserted for v1 piece alignment in hybrid torrents.
+    pub fn is_pad_file(&self) -> bool {
+        self.torrent_path.contains("/.pad/") || self.torrent_path.starts_with(".pad/")
+    }
 }
 
 /// Represents a parsed `.torrent` metadata file.
@@ -105,6 +115,8 @@ pub struct MetaInfoFile {
     pub torrent_file_name: PathBuf,
     meta_info_data: Vec<u8>,
     meta_info_dict: MetaInfoDict,
+    #[cfg(feature = "v2")]
+    pub piece_layers: PieceLayersMap,
     parsed: bool,
 }
 
@@ -119,6 +131,10 @@ impl MetaInfoFile {
             meta_info_dict: HashMap::new(),
             #[cfg(not(feature = "std"))]
             meta_info_dict: BTreeMap::new(),
+            #[cfg(all(feature = "std", feature = "v2"))]
+            piece_layers: HashMap::new(),
+            #[cfg(all(not(feature = "std"), feature = "v2"))]
+            piece_layers: BTreeMap::new(),
             parsed: false,
         }
     }
@@ -131,6 +147,8 @@ impl MetaInfoFile {
             torrent_file_name,
             meta_info_data: Vec::new(),
             meta_info_dict: HashMap::new(),
+            #[cfg(feature = "v2")]
+            piece_layers: HashMap::new(),
             parsed: false,
         };
         meta_info.load()?;
@@ -245,6 +263,40 @@ impl MetaInfoFile {
                         )),
                     }
                 }
+                b"piece layers" => {
+                    let val_token = tokenizer.next_token()
+                        .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                    if val_token == BencodeToken::DictStart {
+                        while let Some(k_tok) = tokenizer.next_token() {
+                            let k = k_tok?;
+                            if k == BencodeToken::End {
+                                break;
+                            }
+                            let k_bytes = match k {
+                                BencodeToken::String(s) => s,
+                                _ => break,
+                            };
+                            let val_tok = tokenizer.next_token()
+                                .ok_or_else(|| BitTorrentError::Bencode(crate::error::BencodeError::UnexpectedEnd))??;
+                            let val_bytes = match val_tok {
+                                BencodeToken::String(s) => s,
+                                _ => break,
+                            };
+                            #[cfg(feature = "v2")]
+                            if k_bytes.len() == 32 {
+                                let mut root = [0u8; 32];
+                                root.copy_from_slice(k_bytes);
+                                let mut layer = Vec::with_capacity(val_bytes.len() / 32);
+                                for chunk in val_bytes.chunks_exact(32) {
+                                    let mut h = [0u8; 32];
+                                    h.copy_from_slice(chunk);
+                                    layer.push(h);
+                                }
+                                self.piece_layers.insert(root, layer);
+                            }
+                        }
+                    }
+                }
                 b"info" => {
                     let start_pos = tokenizer.position();
                     let val_token = tokenizer.next_token()
@@ -328,6 +380,7 @@ impl MetaInfoFile {
                                     let mut length = String::new();
                                     let mut md5sum = String::new();
                                     let mut path_segments = Vec::new();
+                                    let mut file_pieces_root: Option<Vec<u8>> = None;
                                     
                                     loop {
                                         let f_key_tok = info_tokenizer.next_token()
@@ -350,6 +403,13 @@ impl MetaInfoFile {
                                                         length = String::from_utf8_lossy(i).to_string();
                                                     }
                                                     _ => {}
+                                                }
+                                            }
+                                            b"pieces root" => {
+                                                if let BencodeToken::String(s) = f_val {
+                                                    if s.len() == 32 {
+                                                        file_pieces_root = Some(s.to_vec());
+                                                    }
                                                 }
                                             }
                                             b"md5sum" => {
@@ -407,6 +467,13 @@ impl MetaInfoFile {
                                     file_entry.push_str(&length);
                                     file_entry.push('\0');
                                     file_entry.push_str(&md5sum);
+
+                                    let file_rel_path = path_segments.join("/");
+                                    if let Some(pr) = file_pieces_root {
+                                        let norm_p = file_rel_path.replace('\\', "/").trim_start_matches('/').to_string();
+                                        self.meta_info_dict.insert(format!("pieces_root_path:{}", norm_p), pr.clone());
+                                        self.meta_info_dict.insert(format!("pieces_root_{}", file_no), pr);
+                                    }
                                     
                                     self.meta_info_dict.insert(file_no.to_string(), file_entry.into_bytes());
                                     file_no += 1;
@@ -426,6 +493,8 @@ impl MetaInfoFile {
                                 
                                 for (i, (path, length, pieces_root)) in files.into_iter().enumerate() {
                                     let file_entry = format!("{}{}\0{}", MAIN_SEPARATOR, path.replace("/", &MAIN_SEPARATOR.to_string()), length);
+                                    let norm_path = path.replace('\\', "/").trim_start_matches('/').to_string();
+                                    self.meta_info_dict.insert(format!("pieces_root_path:{}", norm_path), pieces_root.clone());
                                     self.meta_info_dict.insert(format!("pieces_root_{}", i), pieces_root);
                                     self.meta_info_dict.insert(i.to_string(), file_entry.into_bytes());
                                 }
@@ -460,23 +529,37 @@ impl MetaInfoFile {
                     } else {
                         false
                     };
-                    
+                    let has_pieces = self.meta_info_dict.contains_key("pieces");
+                    let is_hybrid = is_v2 && has_pieces;
+
+                    let mut v1_hasher = Sha1::new();
+                    v1_hasher.update(raw_info_bytes);
+                    let v1_hash: [u8; 20] = v1_hasher.finalize().into();
+                    self.meta_info_dict.insert("v1 info hash".to_string(), v1_hash.to_vec());
+
                     if is_v2 {
                         #[cfg(feature = "v2")]
                         {
                             use sha2::Digest;
-                            let mut hasher = sha2::Sha256::new();
-                            hasher.update(raw_info_bytes);
-                            self.meta_info_dict.insert("info hash".to_string(), hasher.finalize().to_vec());
+                            let mut v2_hasher = sha2::Sha256::new();
+                            v2_hasher.update(raw_info_bytes);
+                            let v2_hash: [u8; 32] = v2_hasher.finalize().into();
+                            self.meta_info_dict.insert("v2 info hash".to_string(), v2_hash.to_vec());
+
+                            if is_hybrid {
+                                // Hybrid mode: v1 info-hash is 20-byte SHA-1 for backwards compatibility with v1 swarms
+                                self.meta_info_dict.insert("info hash".to_string(), v1_hash.to_vec());
+                            } else {
+                                // Pure v2 mode: 32-byte SHA-256 info-hash
+                                self.meta_info_dict.insert("info hash".to_string(), v2_hash.to_vec());
+                            }
                         }
                         #[cfg(not(feature = "v2"))]
                         {
                             return Err(BitTorrentError::Parse("BitTorrent v2 is not compiled in this build".into()));
                         }
                     } else {
-                        let mut hasher = Sha1::new();
-                        hasher.update(raw_info_bytes);
-                        self.meta_info_dict.insert("info hash".to_string(), hasher.finalize().to_vec());
+                        self.meta_info_dict.insert("info hash".to_string(), v1_hash.to_vec());
                     }
                 }
                 _ => {
@@ -608,7 +691,50 @@ impl MetaInfoFile {
         }
     }
 
-    /// Returns the SHA-1 info hash of the `info` dictionary of the torrent.
+    /// Returns whether this is a BitTorrent v2 hybrid torrent (has both v1 pieces and v2 file tree).
+    pub fn is_hybrid(&self) -> bool {
+        self.is_v2() && self.meta_info_dict.contains_key("pieces")
+    }
+
+    /// Returns the 20-byte SHA-1 info-hash of the torrent's `info` dictionary (v1 or hybrid).
+    pub fn get_v1_info_hash(&self) -> Result<[u8; 20], BitTorrentError> {
+        if !self.parsed {
+            return Err(BitTorrentError::NotParsed("File has not been parsed.".into()));
+        }
+        let bytes = self.meta_info_dict.get("v1 info hash")
+            .ok_or_else(|| BitTorrentError::MissingField("v1 info hash".into()))?;
+        if bytes.len() == 20 {
+            let mut arr = [0u8; 20];
+            arr.copy_from_slice(bytes);
+            Ok(arr)
+        } else {
+            Err(BitTorrentError::Parse("Invalid v1 info hash length".into()))
+        }
+    }
+
+    /// Returns the 32-byte SHA-256 info-hash of the torrent's `info` dictionary (v2 or hybrid).
+    pub fn get_v2_info_hash(&self) -> Result<[u8; 32], BitTorrentError> {
+        if !self.parsed {
+            return Err(BitTorrentError::NotParsed("File has not been parsed.".into()));
+        }
+        let bytes = self.meta_info_dict.get("v2 info hash")
+            .ok_or_else(|| BitTorrentError::MissingField("v2 info hash".into()))?;
+        if bytes.len() == 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(bytes);
+            Ok(arr)
+        } else {
+            Err(BitTorrentError::Parse("Invalid v2 info hash length".into()))
+        }
+    }
+
+    /// Returns the map of piece layers parsed from the torrent file.
+    #[cfg(feature = "v2")]
+    pub fn get_piece_layers(&self) -> &PieceLayersMap {
+        &self.piece_layers
+    }
+
+    /// Returns the primary info hash of the `info` dictionary of the torrent.
     pub fn get_info_hash(&self) -> Result<Vec<u8>, BitTorrentError> {
         if !self.parsed {
             return Err(BitTorrentError::NotParsed(
@@ -739,6 +865,8 @@ impl MetaInfoFile {
                 ));
             }
             let pieces_root = self.meta_info_dict.get("pieces root")
+                .or_else(|| self.meta_info_dict.get(&format!("pieces_root_path:{}", name.as_ref().replace('\\', "/").trim_start_matches('/'))))
+                .or_else(|| self.meta_info_dict.get("pieces_root_0"))
                 .and_then(|bytes| {
                     if bytes.len() == 32 {
                         let mut arr = [0u8; 32];
@@ -802,7 +930,9 @@ impl MetaInfoFile {
                     root_name.as_ref().replace('\\', "/"),
                     trimmed_path.replace('\\', "/")
                 );
-                let pieces_root = self.meta_info_dict.get(&format!("pieces_root_{}", file_no))
+                let norm_path = trimmed_path.replace('\\', "/").trim_start_matches('/').to_string();
+                let pieces_root = self.meta_info_dict.get(&format!("pieces_root_path:{}", norm_path))
+                    .or_else(|| self.meta_info_dict.get(&format!("pieces_root_{}", file_no)))
                     .and_then(|bytes| {
                         if bytes.len() == 32 {
                             let mut arr = [0u8; 32];

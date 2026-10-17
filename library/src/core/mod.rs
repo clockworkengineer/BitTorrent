@@ -7,3 +7,5 @@ pub mod selector;
 pub mod torrent_context;
 #[cfg(feature = "v2")]
 pub mod merkle;
+#[cfg(all(feature = "std", feature = "v2"))]
+pub mod torrent_builder;

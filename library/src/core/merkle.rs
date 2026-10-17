@@ -273,4 +273,56 @@ impl MerkleTree {
 
         cur[0]
     }
+
+    #[cfg(feature = "std")]
+    /// Constructs a `MerkleTree` from a readable stream, computing 16 KiB block hashes incrementally
+    /// without loading the entire file into memory at once.
+    pub fn from_reader<R: std::io::Read>(reader: &mut R, file_length: u64) -> Result<Self, std::io::Error> {
+        if file_length == 0 {
+            return Ok(Self {
+                file_length: 0,
+                num_blocks: 0,
+                layers: Vec::new(),
+                root: [0u8; 32],
+            });
+        }
+
+        let mut leaves = Vec::new();
+        let mut buffer = vec![0u8; BLOCK_SIZE];
+        let mut total_read = 0u64;
+
+        loop {
+            let mut chunk_len = 0;
+            while chunk_len < BLOCK_SIZE {
+                let n = reader.read(&mut buffer[chunk_len..])?;
+                if n == 0 {
+                    break;
+                }
+                chunk_len += n;
+            }
+
+            if chunk_len == 0 {
+                break;
+            }
+
+            total_read += chunk_len as u64;
+            let hash = Sha256::digest(&buffer[..chunk_len]);
+            leaves.push(hash.into());
+
+            if total_read >= file_length {
+                break;
+            }
+        }
+
+        Ok(Self::from_leaf_hashes(leaves, total_read))
+    }
+
+    #[cfg(feature = "std")]
+    /// Constructs a `MerkleTree` directly from a file on disk.
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, std::io::Error> {
+        let mut file = std::fs::File::open(path.as_ref())?;
+        let len = file.metadata()?.len();
+        Self::from_reader(&mut file, len)
+    }
 }
+

@@ -125,6 +125,10 @@ pub struct TorrentContext {
     pub super_seeding: SuperSeedingState,
     #[cfg(feature = "v2")]
     pub file_merkle_trees: Mutex<HashMap<usize, crate::core::merkle::MerkleTree>>,
+    #[cfg(feature = "v2")]
+    pub file_merkle_proofs: Mutex<HashMap<(usize, usize), crate::core::merkle::MerkleProof>>,
+    #[cfg(feature = "v2")]
+    pub piece_layers: Mutex<HashMap<[u8; 32], Vec<[u8; 32]>>>,
 }
 
 impl TorrentContext {
@@ -223,6 +227,10 @@ impl TorrentContext {
             unchoked_peers_count: AtomicUsize::new(0),
             #[cfg(feature = "v2")]
             file_merkle_trees: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            file_merkle_proofs: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            piece_layers: Mutex::new(torrent_meta_info.get_piece_layers().clone()),
         };
         Ok(context)
     }
@@ -288,6 +296,10 @@ impl TorrentContext {
             unchoked_peers_count: AtomicUsize::new(0),
             #[cfg(feature = "v2")]
             file_merkle_trees: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            file_merkle_proofs: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            piece_layers: Mutex::new(HashMap::new()),
         };
         Ok(context)
     }
@@ -1512,7 +1524,23 @@ impl TorrentContext {
                 return Ok(());
             }
 
-            // 2. If single-block file (length <= 16 KiB) with pieces_root, root IS the leaf hash!
+            // 2. Check if we have an audit path MerkleProof registered for this block
+            {
+                let proofs = self.file_merkle_proofs.lock().unwrap();
+                if let Some(proof) = proofs.get(&(file_idx, file_block_idx)) {
+                    if let Some(expected_root) = file_details.pieces_root {
+                        if !proof.verify(block_data, &expected_root) {
+                            return Err(BitTorrentError::Parse(format!(
+                                "BEP 52 Merkle audit path proof mismatch for file {} at block {}",
+                                file_idx, file_block_idx
+                            )));
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+
+            // 3. If single-block file (length <= 16 KiB) with pieces_root, root IS the leaf hash!
             if file_details.length <= BLOCK_SIZE as u64 {
                 if let Some(expected_root) = file_details.pieces_root {
                     use sha2::Digest;
@@ -1535,6 +1563,26 @@ impl TorrentContext {
     pub fn register_file_merkle_tree(&self, file_index: usize, tree: crate::core::merkle::MerkleTree) {
         let mut trees = self.file_merkle_trees.lock().unwrap();
         trees.insert(file_index, tree);
+    }
+
+    #[cfg(feature = "v2")]
+    /// Registers an individual block MerkleProof (audit path) for a file block.
+    pub fn register_merkle_proof(&self, file_index: usize, proof: crate::core::merkle::MerkleProof) {
+        let mut proofs = self.file_merkle_proofs.lock().unwrap();
+        proofs.insert((file_index, proof.block_index), proof);
+    }
+
+    #[cfg(feature = "v2")]
+    /// Registers a piece layer (list of 32-byte piece hashes) for a file identified by its `pieces_root`.
+    pub fn register_piece_layer(&self, pieces_root: [u8; 32], layer: Vec<[u8; 32]>) {
+        let mut layers = self.piece_layers.lock().unwrap();
+        layers.insert(pieces_root, layer);
+    }
+
+    #[cfg(feature = "v2")]
+    /// Retrieves the `pieces_root` hash for the specified file index, if present.
+    pub fn get_file_pieces_root(&self, file_index: usize) -> Option<[u8; 32]> {
+        self.files_to_download.get(file_index).and_then(|f| f.pieces_root)
     }
 }
 

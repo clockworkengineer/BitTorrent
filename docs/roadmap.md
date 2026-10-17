@@ -315,15 +315,49 @@ Implemented the full BitTorrent Fast Extension (BEP 6) specification, optimizing
 
 ---
 
+### Phase 31: BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents (BEP 52)
+
+Implemented the full BitTorrent v2 (BEP 52) specification, supporting pure v2 torrents, canonical SHA-256 Merkle hash tree verification, top-level `piece layers`, dual-stack Hybrid torrents (v1 + v2), and programmatic torrent construction:
+- **Canonical SHA-256 Merkle Hash Tree Implementation (`MerkleTree`)**:
+  - Implements canonical SHA-256 Merkle trees with power-of-two padding (leaf nodes and intermediate nodes zero-padded as defined in BEP 52).
+  - Leaf hash calculation over 16 KiB blocks (`BLOCK_SIZE = 16384`) with canonical internal node hashing: `SHA256(left_child || right_child)`.
+  - Added streaming generation via `MerkleTree::from_reader<R: Read>(...)` and `MerkleTree::from_file<P: AsRef<Path>>(...)`, allowing files of arbitrary size to be hashed in constant memory without reading whole files into RAM.
+  - Implemented `MerkleTree::proof_for_block(block_index)` to generate minimal compact logarithmic audit paths (`MerkleProof`) for block verification.
+- **Top-Level `piece layers` Dictionary Support**:
+  - Parsed and extracted the top-level `piece layers` dictionary from torrent metadata into `MetaInfoFile::piece_layers: PieceLayersMap`.
+  - Maps 32-byte file `pieces root` to its concatenated 32-byte layer hashes for files larger than the piece length.
+  - Added `MetaInfoFile::get_piece_layers()` accessor.
+- **Dual Info-Hash & Backward Compatibility**:
+  - Dual info-hash computation: calculates both 20-byte SHA-1 info-hash (`"v1 info hash"`) and 32-byte SHA-256 info-hash (`"v2 info hash"`).
+  - Hybrid Torrents (`meta.is_hybrid()`): seamlessly sets primary `"info hash"` to the 20-byte SHA-1 hash, ensuring backward-compatible peer wire handshakes and tracker announces work with legacy v1 swarms.
+  - Pure v2 Torrents (`meta.is_v2()`): uses 32-byte SHA-256 info-hash.
+  - Added `get_v1_info_hash()` and `get_v2_info_hash()` accessors to `MetaInfoFile`.
+- **Hybrid Piece Alignment & Pad Files (BEP 52)**:
+  - Supports automatic piece boundary alignment for hybrid torrents by inserting `.pad/<length>` padding files in the v1 `files` dictionary.
+  - Added `FileDetails::is_pad_file()` helper to identify and handle padding files.
+  - Seamlessly reconciles v1 `files` list and v2 `file tree`, associating 32-byte `pieces_root` to downloaded files both by relative normalized path and index.
+- **Block-Level Merkle Verification (`TorrentContext`)**:
+  - Extended `TorrentContext` with `file_merkle_proofs: HashMap<[u8; 32], Vec<MerkleProof>>` and `piece_layers: PieceLayersMap`.
+  - Added `register_merkle_proof`, `register_piece_layer`, and `get_file_pieces_root`.
+  - Implemented `verify_v2_block`: validates incoming 16 KiB data blocks directly against registered `MerkleProof` audit paths or canonical single-block pieces roots, discarding corrupt blocks before assembly.
+- **Programmatic Torrent Construction (`TorrentBuilder`)**:
+  - Implemented `TorrentBuilder` (`library/src/core/torrent_builder.rs`) supporting:
+    - `.build_v1()`: Standard BitTorrent v1 `.torrent` files with SHA-1 piece hashes.
+    - `.build_v2()`: Pure BitTorrent v2 files with hierarchical `file tree` dictionaries, `pieces root`, and `piece layers`.
+    - `.build_hybrid()`: Dual-stack Hybrid files containing both piece-aligned v1 `pieces` (with pad files) and v2 `file tree` + `piece layers`.
+- **Test Suite**: Dedicated integration test suite in `library/tests/bep52_v2_tests.rs` covering pure v2 torrent generation and parsing, hybrid generation and dual info-hashes, pad file insertion and detection, incremental streaming hashing from reader and disk, piece layer registration and hash consistency, and Merkle audit path proof verification.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BitTorrent v2 Merkle Hash Tree File Verification & Hybrid Torrents (BEP 52)**: Complete piece-level block verification via SHA-256 Merkle trees.
+1. **PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support**: Wire-level peer exchange updates for dual-stack swarms.
 
-2. **PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support**: Wire-level peer exchange updates for dual-stack swarms.
+2. **Super-Seeding Optimization with Suggest Piece (BEP 6 & BEP 16)**: Dynamic hint generation utilizing `Suggest Piece` during initial seeding phases.
 
-3. **Super-Seeding Optimization with Suggest Piece (BEP 6 & BEP 16)**: Dynamic hint generation utilizing `Suggest Piece` during initial seeding phases.
+3. **BitTorrent v2 Peer Wire Messages (BEP 52)**: Implementing `hash_request`, `hashes`, `hash_reject` messages for on-demand Merkle layer retrieval from peers.
 
 
 
