@@ -280,3 +280,108 @@ pub fn acquire_buffer() -> Option<StaticBuffer> {
     }
     None
 }
+
+/// Computes the canonical Allowed Fast set for a peer according to BEP 6.
+///
+/// Returns an ordered list of up to `k` piece indices that a choked peer is
+/// permitted to request.
+///
+/// Canonical algorithm from BEP 6:
+/// 1. Mask IPv4 to /24 (top 3 octets, 4th octet = 0) or IPv6 to /48.
+/// 2. Prepend masked IP to the 20-byte torrent info-hash.
+/// 3. Repeatedly compute SHA-1 hash over the state buffer.
+/// 4. Extract big-endian 32-bit integers from the 20-byte digest modulo `num_pieces`.
+/// 5. Append unique piece indices until `k` pieces are gathered or all pieces exhausted.
+pub fn generate_allowed_fast_set(
+    k: usize,
+    num_pieces: usize,
+    info_hash: &[u8],
+    peer_ip: &str,
+) -> alloc::vec::Vec<u32> {
+    if num_pieces == 0 || k == 0 || info_hash.len() < 20 {
+        return alloc::vec::Vec::new();
+    }
+    let target_k = k.min(num_pieces);
+    let mut allowed_fast = alloc::vec::Vec::with_capacity(target_k);
+
+    // Extract IP bytes and apply BEP 6 masking (/24 for IPv4, /48 for IPv6)
+    let mut x = alloc::vec::Vec::new();
+    #[cfg(feature = "std")]
+    {
+        use std::net::{IpAddr, SocketAddr};
+        let stripped = peer_ip.trim_start_matches("webrtc:");
+        if let Ok(addr) = stripped.parse::<IpAddr>().or_else(|_| stripped.parse::<SocketAddr>().map(|s| s.ip())) {
+            match addr {
+                IpAddr::V4(v4) => {
+                    let oct = v4.octets();
+                    x.extend_from_slice(&[oct[0], oct[1], oct[2], 0]);
+                }
+                IpAddr::V6(v6) => {
+                    let mut oct = v6.octets();
+                    oct[6..].fill(0);
+                    x.extend_from_slice(&oct);
+                }
+            }
+        }
+    }
+    if x.is_empty() {
+        // Fallback manual IPv4 parser
+        let clean = peer_ip.trim_start_matches("webrtc:");
+        let host = clean.split(':').next().unwrap_or(clean);
+        let parts: alloc::vec::Vec<&str> = host.split('.').collect();
+        if parts.len() == 4 {
+            if let (Ok(b0), Ok(b1), Ok(b2), _) = (
+                parts[0].parse::<u8>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u8>(),
+                parts[3].parse::<u8>(),
+            ) {
+                x.extend_from_slice(&[b0, b1, b2, 0]);
+            }
+        }
+    }
+    if x.is_empty() {
+        x.extend_from_slice(&[127, 0, 0, 0]);
+    }
+    x.extend_from_slice(&info_hash[..20]);
+
+    while allowed_fast.len() < target_k {
+        use sha1::Digest;
+        let mut hasher = sha1::Sha1::new();
+        hasher.update(&x);
+        let digest = hasher.finalize();
+        for i in 0..5 {
+            if allowed_fast.len() >= target_k {
+                break;
+            }
+            let j = i * 4;
+            let y = u32::from_be_bytes([digest[j], digest[j + 1], digest[j + 2], digest[j + 3]]);
+            let index = y % (num_pieces as u32);
+            if !allowed_fast.contains(&index) {
+                allowed_fast.push(index);
+            }
+        }
+        x = digest.to_vec();
+    }
+
+    allowed_fast
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bep6_canonical_fast_set() {
+        let info_hash = [0xaa; 20];
+        let ip = "80.4.4.200";
+        let num_pieces = 1313;
+
+        let fast_7 = generate_allowed_fast_set(7, num_pieces, &info_hash, ip);
+        assert_eq!(fast_7, alloc::vec![1059, 431, 808, 1217, 287, 376, 1188]);
+
+        let fast_9 = generate_allowed_fast_set(9, num_pieces, &info_hash, ip);
+        assert_eq!(fast_9, alloc::vec![1059, 431, 808, 1217, 287, 376, 1188, 353, 508]);
+    }
+}
+

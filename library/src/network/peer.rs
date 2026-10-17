@@ -57,6 +57,15 @@ pub enum PeerAction {
         begin: u32,
         block: Vec<u8>,
     },
+    SendReject {
+        index: u32,
+        begin: u32,
+        length: u32,
+    },
+    SendAllowedFast(u32),
+    SendSuggest(u32),
+    SendHaveAll,
+    SendHaveNone,
     BroadcastCancel {
         index: u32,
         begin: u32,
@@ -357,6 +366,28 @@ impl Peer {
         false
     }
 
+    /// Checks if a piece index is in the Allowed Fast set that we grant to this remote peer.
+    pub fn is_peer_allowed_fast(&self, piece: u32, tc: &TorrentContext) -> bool {
+        if !self.supports_fast_extension || tc.number_of_pieces == 0 {
+            return false;
+        }
+        let fast_set = crate::util::generate_allowed_fast_set(10, tc.number_of_pieces, &tc.info_hash, &self.ip);
+        fast_set.contains(&piece)
+    }
+
+    /// Computes the canonical Allowed Fast set of pieces that we grant to this remote peer.
+    pub fn generate_allowed_fast_set(&self, k: usize, tc: &TorrentContext) -> Vec<u32> {
+        if !self.supports_fast_extension || tc.number_of_pieces == 0 {
+            return Vec::new();
+        }
+        crate::util::generate_allowed_fast_set(k, tc.number_of_pieces, &tc.info_hash, &self.ip)
+    }
+
+    /// Checks if the remote peer allows us to request a specific piece while choked.
+    pub fn is_allowed_fast_from_remote(&self, piece: u32) -> bool {
+        self.supports_fast_extension && self.allowed_fast_pieces.contains(&piece)
+    }
+
     /// Processes an incoming protocol message from the peer, updating connection states, logging events, and writing pieces to disk.
     pub fn handle_peer_message(
         &mut self,
@@ -485,9 +516,12 @@ impl Peer {
                 begin,
                 length,
             } => {
-                // Serve the block if we have the piece, are not choking the remote peer,
-                // and if super-seeding, this piece was offered to this peer.
-                if !self.am_choking && tc.is_piece_local(index) && tc.can_upload_piece_to_peer(&self.ip, index) {
+                let is_allowed_fast = self.supports_fast_extension && self.is_peer_allowed_fast(index, tc);
+                let can_serve = (!self.am_choking || is_allowed_fast)
+                    && tc.is_piece_local(index)
+                    && tc.can_upload_piece_to_peer(&self.ip, index);
+
+                if can_serve {
                     let offset = index as u64 * tc.piece_length as u64 + begin as u64;
                     let mut block = vec![0u8; length as usize];
                     match tc.storage.read_block(offset, &mut block) {
@@ -505,8 +539,14 @@ impl Peer {
                                 "[peer {}:{}] failed to read piece {} for upload: {}",
                                 self.ip, self.port, index, e
                             );
+                            if self.supports_fast_extension {
+                                actions.push(PeerAction::SendReject { index, begin, length });
+                            }
                         }
                     }
+                } else if self.supports_fast_extension {
+                    // BEP 6: Reject requests for pieces that cannot be satisfied or when choked
+                    actions.push(PeerAction::SendReject { index, begin, length });
                 }
             }
             PeerMessage::Extended { ext_id, payload } => {
@@ -642,12 +682,20 @@ impl Peer {
                 self.suggested_pieces.push(index);
             }
             PeerMessage::HaveAll => {
-                self.remote_piece_bitfield.fill(0xFF);
+                if self.remote_piece_bitfield.len() != tc.bitfield.len() {
+                    self.remote_piece_bitfield = vec![0xFF; tc.bitfield.len()];
+                } else {
+                    self.remote_piece_bitfield.fill(0xFF);
+                }
                 self.number_of_missing_pieces = 0;
                 tc.merge_piece_bitfield(self);
             }
             PeerMessage::HaveNone => {
-                self.remote_piece_bitfield.fill(0x00);
+                if self.remote_piece_bitfield.len() != tc.bitfield.len() {
+                    self.remote_piece_bitfield = vec![0x00; tc.bitfield.len()];
+                } else {
+                    self.remote_piece_bitfield.fill(0x00);
+                }
                 self.number_of_missing_pieces = tc.number_of_pieces;
             }
             PeerMessage::Reject { index, begin, length: _length } => {
@@ -685,6 +733,27 @@ impl Peer {
                 PeerAction::SendPiece { index, begin, block } => {
                     let msg = PeerMessage::Piece { index, begin, block: &block };
                     net.write_message(msg).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendReject { index, begin, length } => {
+                    let msg = PeerMessage::Reject { index, begin, length };
+                    net.write_message(msg).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendAllowedFast(piece) => {
+                    net.write_message(PeerMessage::AllowedFast(piece)).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendSuggest(piece) => {
+                    net.write_message(PeerMessage::Suggest(piece)).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendHaveAll => {
+                    net.write_message(PeerMessage::HaveAll).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendHaveNone => {
+                    net.write_message(PeerMessage::HaveNone).await?;
                     peer.lock().unwrap().update_last_message_sent();
                 }
                 PeerAction::SendExtended { ext_id, payload } => {

@@ -199,11 +199,13 @@ pub async fn perform_handshake(
     }
 
     let supports_extensions = (reserved[5] & 0x10) != 0;
+    let supports_fast_extension = (reserved[7] & 0x04) != 0;
     {
         let mut pg = peer.lock().unwrap();
         pg.connected = true;
         pg.remote_peer_id = Some(remote_peer_id);
         pg.supports_extensions = supports_extensions;
+        pg.supports_fast_extension = supports_fast_extension;
         pg.last_message_sent = Instant::now();
         pg.last_message_received = Instant::now();
     }
@@ -218,19 +220,62 @@ pub async fn perform_handshake(
         peer.lock().unwrap().update_last_message_sent();
     }
 
-    // Send our current bitfield so the remote knows which pieces we have (omitted in super-seeding mode)
-    let (bitfield, is_super_seeding) = {
+    // Send initial piece availability (BEP 6 HaveAll / HaveNone or Bitfield; omitted in super-seeding mode)
+    let (bitfield, is_super_seeding, number_of_pieces, is_seed, is_empty) = {
         let ctx = context.lock().unwrap();
-        (ctx.bitfield.clone(), ctx.is_super_seeding())
+        let num = ctx.number_of_pieces;
+        let seed = ctx.is_download_complete() || (num > 0 && (0..num as u32).all(|p| ctx.is_piece_local(p)));
+        let empty = num > 0 && (0..num as u32).all(|p| !ctx.is_piece_local(p));
+        (ctx.bitfield.clone(), ctx.is_super_seeding(), num, seed, empty)
     };
-    if !bitfield.is_empty() && !is_super_seeding {
-        if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
-            mark_peer_dead(manager, &peer_details.ip);
-            return Err(());
+
+    if !is_super_seeding && number_of_pieces > 0 {
+        if supports_fast_extension {
+            if is_seed {
+                if net.write_message(PeerMessage::HaveAll).await.is_err() {
+                    mark_peer_dead(manager, &peer_details.ip);
+                    return Err(());
+                }
+                peer.lock().unwrap().update_last_message_sent();
+                log_debug!("[peer {}:{}] sent HaveAll", peer_details.ip, peer_details.port);
+            } else if is_empty {
+                if net.write_message(PeerMessage::HaveNone).await.is_err() {
+                    mark_peer_dead(manager, &peer_details.ip);
+                    return Err(());
+                }
+                peer.lock().unwrap().update_last_message_sent();
+                log_debug!("[peer {}:{}] sent HaveNone", peer_details.ip, peer_details.port);
+            } else if !bitfield.is_empty() {
+                if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
+                    mark_peer_dead(manager, &peer_details.ip);
+                    return Err(());
+                }
+                peer.lock().unwrap().update_last_message_sent();
+                log_debug!("[peer {}:{}] sent Bitfield", peer_details.ip, peer_details.port);
+            }
+        } else if !bitfield.is_empty() {
+            if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
+                mark_peer_dead(manager, &peer_details.ip);
+                return Err(());
+            }
+            peer.lock().unwrap().update_last_message_sent();
+            log_debug!("[peer {}:{}] sent Bitfield", peer_details.ip, peer_details.port);
         }
-        peer.lock().unwrap().update_last_message_sent();
-        log_debug!("[peer {}:{}] sent Bitfield", peer_details.ip, peer_details.port);
     }
+
+    // BEP 6: Announce Allowed Fast pieces to remote peer upon connection
+    if supports_fast_extension && number_of_pieces > 0 {
+        let fast_set = crate::util::generate_allowed_fast_set(10, number_of_pieces, info_hash, &peer_details.ip);
+        for &fast_piece in &fast_set {
+            if net.write_message(PeerMessage::AllowedFast(fast_piece)).await.is_err() {
+                mark_peer_dead(manager, &peer_details.ip);
+                return Err(());
+            }
+            peer.lock().unwrap().update_last_message_sent();
+        }
+        log_debug!("[peer {}:{}] sent {} AllowedFast pieces", peer_details.ip, peer_details.port, fast_set.len());
+    }
+
     if net.write_message(PeerMessage::Unchoke).await.is_err() {
         mark_peer_dead(manager, &peer_details.ip);
         return Err(());
@@ -376,7 +421,14 @@ pub async fn send_block_requests(
         let next_req = {
             let mut ctx = context.lock().unwrap();
             let pg = peer.lock().unwrap();
-            ctx.next_block_request_for_peer(&pg)
+            let is_unchoked = pg.peer_choking.wait_one(0);
+            if is_unchoked {
+                ctx.next_block_request_for_peer(&pg)
+            } else if pg.supports_fast_extension && !pg.allowed_fast_pieces.is_empty() {
+                ctx.next_allowed_fast_block_request_for_peer(&pg)
+            } else {
+                None
+            }
         };
         match next_req {
             Some((pn, begin, length)) => {
@@ -587,9 +639,14 @@ async fn run_peer_loop(
 
         check_request_timeouts(peer, context).await;
 
-        let (peer_choking_set, outstanding_requests_count, number_of_missing_pieces) = {
+        let (peer_choking_set, outstanding_requests_count, number_of_missing_pieces, can_request_fast) = {
             let pg = peer.lock().unwrap();
-            (pg.peer_choking.wait_one(0), pg.outstanding_requests_count, pg.number_of_missing_pieces)
+            (
+                pg.peer_choking.wait_one(0),
+                pg.outstanding_requests_count,
+                pg.number_of_missing_pieces,
+                pg.supports_fast_extension && !pg.allowed_fast_pieces.is_empty(),
+            )
         };
 
         let is_downloading = context.lock().unwrap().status == TorrentStatus::Downloading;
@@ -604,7 +661,7 @@ async fn run_peer_loop(
         }
 
         // ── Block requests ────────────────────────────────────────────────
-        if !is_magnet_bootstrap && peer_choking_set && is_downloading {
+        if !is_magnet_bootstrap && (peer_choking_set || can_request_fast) && is_downloading {
             if send_block_requests(
                 peer_details, peer, net, context, manager,
                 outstanding_requests_count, number_of_missing_pieces,

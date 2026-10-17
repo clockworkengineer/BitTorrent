@@ -287,6 +287,34 @@ Implemented high-throughput in-memory block caching, asynchronous write coalesci
 
 ---
 
+### Phase 30: Fast Extensions (BEP 6)
+
+Implemented the full BitTorrent Fast Extension (BEP 6) specification, optimizing peer bootstrap speeds, choke/unchoke turnaround, and wire protocol efficiency:
+- **Canonical Allowed Fast Set Algorithm (`generate_allowed_fast_set`)**:
+  - Implemented the official CacheLogic canonical algorithm in `utils::util`.
+  - Applies IPv4 `/24` masking (`ip & 0xffffff00`) and IPv6 `/48` prefix masking to ensure IP subnet invariance.
+  - Generates deterministic pseudo-random piece indices via cyclic SHA-1 hashing of state buffer concatenated with the torrent info-hash modulo piece count.
+  - Validated against official BEP 6 test vectors ($k=7$ and $k=9$ for 1313 pieces, info-hash `0xAA`, IP `80.4.4.200`).
+- **Handshake Negotiation (`reserved[7] |= 0x04`)**:
+  - Advertises BEP 6 support via bit 0x04 in `reserved[7]` during peer handshakes.
+  - Automatically negotiates Fast Extension support with remote peers upon handshake completion.
+- **Wire Protocol Fast Extension Messages**:
+  - `HaveAll` (ID 14, 0x0E) & `HaveNone` (ID 15, 0x0F): Sent immediately after handshake when a peer possesses all or no pieces, replacing cumbersome bitfields and conserving bandwidth.
+  - `Suggest Piece` (ID 13, 0x0D): Advisory message informing connected peers of optimal pieces to request (used for super-seeding and sequential seeding).
+  - `Allowed Fast` (ID 17, 0x11): Announces piece indices that a peer is permitted to request and download even while choked.
+  - `Reject Request` (ID 16, 0x10): Sent when choked and a request cannot be satisfied, eliminating race conditions and ambiguously stalled blocks.
+- **Peer State Machine & Action Integration**:
+  - Added `SendReject`, `SendAllowedFast`, `SendSuggest`, `SendHaveAll`, and `SendHaveNone` to `PeerAction` and `Peer::execute_actions`.
+  - Choked incoming requests for non-allowed pieces automatically trigger `PeerAction::SendReject`.
+  - Choked incoming requests for pieces in the remote peer's canonical Allowed Fast set are served normally without waiting for an unchoke round.
+  - Receiving `Reject Request` immediately releases reserved blocks in `TorrentContext`, allowing immediate re-reservation or request dispatch to other peers.
+- **Choked Fast Downloading**:
+  - Implemented `TorrentContext::next_allowed_fast_block_request_for_peer(&peer)` to pipeline requests for Allowed Fast pieces even while choked by the remote peer.
+  - `send_block_requests` and `run_peer_loop` trigger immediate block requesting for Allowed Fast pieces when choked.
+- **Test Suite**: Dedicated integration test suite in `library/tests/fast_extension_tests.rs` covering official CacheLogic test vectors, subnet masking invariance, wire message framing/roundtrip, handshake bit negotiation, `HaveAll`/`HaveNone` bitfield updates, `Suggest` and `AllowedFast` tracking, choked request rejection and allowed-fast fulfillment, block release on rejection, and choked fast downloading.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
@@ -295,7 +323,7 @@ The following enhancements are proposed for future development:
 
 2. **PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support**: Wire-level peer exchange updates for dual-stack swarms.
 
-3. **Fast Extensions (BEP 6)**: `Allowed Fast`, `Suggest Piece`, `Reject Request`, and `Have All`/`Have None` wire protocol extensions.
+3. **Super-Seeding Optimization with Suggest Piece (BEP 6 & BEP 16)**: Dynamic hint generation utilizing `Suggest Piece` during initial seeding phases.
 
 
 

@@ -1355,6 +1355,32 @@ impl TorrentContext {
         None
     }
 
+    /// Identifies and reserves the next download block from pieces in the peer's Allowed Fast set.
+    /// Used when the peer is choking us, but supports BEP 6 Fast Extensions and has granted Allowed Fast pieces.
+    pub fn next_allowed_fast_block_request_for_peer(&mut self, peer: &Peer) -> Option<(u32, u32, u32)> {
+        if self.status != TorrentStatus::Downloading {
+            return None;
+        }
+        let block_size = self.config.block_size;
+        let best = peer.allowed_fast_pieces
+            .iter()
+            .copied()
+            .filter(|&piece| (piece as usize) < self.number_of_pieces && self.is_piece_wanted(piece) && !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
+            .filter_map(|piece| {
+                self.next_pending_block(piece).map(|block| (piece, block))
+            })
+            .min_by_key(|&(piece, _)| (std::cmp::Reverse(self.get_piece_priority(piece)), self.piece_data[piece as usize].peer_count, piece));
+
+        if let Some((piece_number, (begin, length))) = best {
+            let block_index = begin / block_size as u32;
+            if self.reserve_block_request(piece_number, block_index) {
+                return Some((piece_number, begin, length));
+            }
+        }
+        None
+    }
+
+
     /// Increments the local peer availability count for a given piece.
     pub fn increment_peer_count(&mut self, piece_number: u32) {
         self.piece_data[piece_number as usize].peer_count += 1;
