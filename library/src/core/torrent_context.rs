@@ -64,6 +64,10 @@ pub struct SuperSeedingState {
     pub peer_pending_piece: HashMap<String, u32>,
     /// Counts how many times each piece has been witnessed in the swarm (from peers other than the one it was offered to).
     pub piece_swarm_count: HashMap<u32, usize>,
+    /// Cumulative count of pieces offered/suggested in super-seeding mode.
+    pub total_pieces_offered: usize,
+    /// Cumulative count of pieces verified as propagated across the swarm.
+    pub total_pieces_propagated: usize,
 }
 
 // Removed AssemblerData definition (now in assembler.rs)
@@ -853,6 +857,7 @@ impl TorrentContext {
         let chosen_piece = candidate_pieces[0];
         self.super_seeding.piece_offered_to.insert(chosen_piece, peer_ip.to_string());
         self.super_seeding.peer_pending_piece.insert(peer_ip.to_string(), chosen_piece);
+        self.super_seeding.total_pieces_offered += 1;
 
         Some(chosen_piece)
     }
@@ -876,6 +881,7 @@ impl TorrentContext {
                 // The piece was successfully uploaded by offered_peer to another peer!
                 if self.super_seeding.peer_pending_piece.get(&offered_peer_ip) == Some(&piece_index) {
                     self.super_seeding.peer_pending_piece.remove(&offered_peer_ip);
+                    self.super_seeding.total_pieces_propagated += 1;
 
                     // Fetch offered_peer's bitfield to find their next piece
                     let remote_bitfield = {
@@ -907,6 +913,28 @@ impl TorrentContext {
                 self.super_seeding.piece_offered_to.remove(&piece);
             }
         }
+    }
+
+    /// Returns the super-seeding distribution metrics: (total_pieces_offered, total_pieces_propagated).
+    pub fn super_seed_stats(&self) -> (usize, usize) {
+        (
+            self.super_seeding.total_pieces_offered,
+            self.super_seeding.total_pieces_propagated,
+        )
+    }
+
+    /// Selects the next suggested piece for a peer in sequential or advisory seeding mode.
+    pub fn suggest_next_piece_for_peer(&self, peer: &Peer) -> Option<u32> {
+        let total_pieces = self.number_of_pieces as u32;
+        if total_pieces == 0 {
+            return None;
+        }
+        for piece in 0..total_pieces {
+            if self.is_piece_local(piece) && !peer.is_piece_on_remote_peer(piece) {
+                return Some(piece);
+            }
+        }
+        None
     }
 
     /// Checks if a piece request from a peer is permissible in super-seeding mode.
@@ -1359,7 +1387,23 @@ impl TorrentContext {
                 return Some((piece_number, begin, length));
             }
         } else {
-            // Standard mode: find the rarest piece with an unrequested block, prioritizing High > Normal > Low pieces.
+            // Priority 1: Check suggested pieces from this peer (BEP 6 & BEP 16 super-seeding optimization)
+            for &suggested in &peer.suggested_pieces {
+                if (suggested as usize) < self.number_of_pieces
+                    && self.is_piece_wanted(suggested)
+                    && !self.is_piece_local(suggested)
+                    && peer.is_piece_on_remote_peer(suggested)
+                {
+                    if let Some((begin, length)) = self.next_pending_block(suggested) {
+                        let block_index = begin / block_size as u32;
+                        if self.reserve_block_request(suggested, block_index) {
+                            return Some((suggested, begin, length));
+                        }
+                    }
+                }
+            }
+
+            // Priority 2: Standard mode - rarest-first with unrequested blocks.
             let best = (0..self.number_of_pieces as u32)
                 .filter(|&piece| self.is_piece_wanted(piece) && !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
                 .filter_map(|piece| {
@@ -1384,6 +1428,25 @@ impl TorrentContext {
             return None;
         }
         let block_size = self.config.block_size;
+
+        // Priority 1: Pieces that are both suggested and allowed-fast
+        for &piece in &peer.suggested_pieces {
+            if peer.allowed_fast_pieces.contains(&piece)
+                && (piece as usize) < self.number_of_pieces
+                && self.is_piece_wanted(piece)
+                && !self.is_piece_local(piece)
+                && peer.is_piece_on_remote_peer(piece)
+            {
+                if let Some((begin, length)) = self.next_pending_block(piece) {
+                    let block_index = begin / block_size as u32;
+                    if self.reserve_block_request(piece, block_index) {
+                        return Some((piece, begin, length));
+                    }
+                }
+            }
+        }
+
+        // Priority 2: Standard allowed-fast pieces
         let best = peer.allowed_fast_pieces
             .iter()
             .copied()

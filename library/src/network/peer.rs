@@ -81,6 +81,14 @@ pub enum PeerAction {
         target_ip: String,
         piece: u32,
     },
+    SendSuggestToPeer {
+        target_ip: String,
+        piece: u32,
+    },
+    SendAllowedFastToPeer {
+        target_ip: String,
+        piece: u32,
+    },
     DiscoverPeers(Vec<PeerDetails>),
 }
 
@@ -423,6 +431,10 @@ impl Peer {
                 if tc.is_super_seeding() {
                     if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
                         actions.push(PeerAction::SendHave(piece));
+                        if self.supports_fast_extension {
+                            actions.push(PeerAction::SendSuggest(piece));
+                            actions.push(PeerAction::SendAllowedFast(piece));
+                        }
                     }
                 }
             }
@@ -442,8 +454,20 @@ impl Peer {
                         if let Some((target_ip, next_piece)) = tc.on_peer_have(&self.ip, index) {
                             if target_ip == self.ip {
                                 actions.push(PeerAction::SendHave(next_piece));
+                                if self.supports_fast_extension {
+                                    actions.push(PeerAction::SendSuggest(next_piece));
+                                    actions.push(PeerAction::SendAllowedFast(next_piece));
+                                }
                             } else {
                                 actions.push(PeerAction::SendHaveToPeer {
+                                    target_ip: target_ip.clone(),
+                                    piece: next_piece,
+                                });
+                                actions.push(PeerAction::SendSuggestToPeer {
+                                    target_ip: target_ip.clone(),
+                                    piece: next_piece,
+                                });
+                                actions.push(PeerAction::SendAllowedFastToPeer {
                                     target_ip,
                                     piece: next_piece,
                                 });
@@ -451,6 +475,10 @@ impl Peer {
                         }
                         if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
                             actions.push(PeerAction::SendHave(piece));
+                            if self.supports_fast_extension {
+                                actions.push(PeerAction::SendSuggest(piece));
+                                actions.push(PeerAction::SendAllowedFast(piece));
+                            }
                         }
                     }
                 }
@@ -463,6 +491,10 @@ impl Peer {
                         tc.set_super_seeding(false);
                     } else if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
                         actions.push(PeerAction::SendHave(piece));
+                        if self.supports_fast_extension {
+                            actions.push(PeerAction::SendSuggest(piece));
+                            actions.push(PeerAction::SendAllowedFast(piece));
+                        }
                     }
                 }
             }
@@ -493,6 +525,8 @@ impl Peer {
                 let piece_complete = tc.process_piece_block(&*storage, index, begin, block, &self.ip)?;
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
+                    self.suggested_pieces.retain(|&p| p != index);
+                    self.allowed_fast_pieces.retain(|&p| p != index);
                     let pieces_remaining = (0..tc.number_of_pieces as u32)
                         .filter(|&p| !tc.is_piece_local(p))
                         .count();
@@ -766,6 +800,38 @@ impl Peer {
                     };
                     if let Some(target_net) = target_net {
                         let _ = target_net.write_message(PeerMessage::Have(piece)).await;
+                    }
+                }
+                PeerAction::SendSuggestToPeer { target_ip, piece } => {
+                    let (target_net, supports_fast) = {
+                        let ctx_guard = context.lock().unwrap();
+                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok()) {
+                            (other_peer.network.clone(), other_peer.supports_fast_extension)
+                        } else {
+                            (None, false)
+                        }
+                    };
+                    if let Some(target_net) = target_net {
+                        if supports_fast {
+                            let _ = target_net.write_message(PeerMessage::Suggest(piece)).await;
+                        }
+                    }
+                }
+                PeerAction::SendAllowedFastToPeer { target_ip, piece } => {
+                    let (target_net, supports_fast) = {
+                        let ctx_guard = context.lock().unwrap();
+                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok()) {
+                            (other_peer.network.clone(), other_peer.supports_fast_extension)
+                        } else {
+                            (None, false)
+                        }
+                    };
+                    if let Some(target_net) = target_net {
+                        if supports_fast {
+                            let _ = target_net.write_message(PeerMessage::AllowedFast(piece)).await;
+                        }
                     }
                 }
                 PeerAction::BroadcastCancel { index, begin, length, block_index } => {

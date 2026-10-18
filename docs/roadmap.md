@@ -381,15 +381,40 @@ Implemented full BitTorrent Peer Exchange (BEP 11 / `ut_pex`) with comprehensive
 
 ---
 
+### Phase 33: Super-Seeding Optimization with Suggest Piece (BEP 6 & BEP 16)
+
+Implemented synergistic integration of BEP 6 Fast Extension (`Suggest Piece` and `Allowed Fast`) with BEP 16 Super-Seeding, dramatically accelerating initial piece distribution and eliminating stalling during unchoke intervals:
+- **Fast Extension Super-Seeding Integration**:
+  - Automatically identifies remote peers supporting BEP 6 Fast Extensions during super-seeding allocations.
+  - When offering pieces (`offer_super_seed_piece`): Emits `PeerAction::SendHave(piece)`, `PeerAction::SendSuggest(piece)`, and `PeerAction::SendAllowedFast(piece)`.
+  - The suggested piece allows BEP 6 clients to request the exact optimal piece advised by the super-seeder rather than picking randomly or waiting.
+  - The `Allowed Fast` grant enables peers to immediately request and download their assigned piece even while choked, bypassing unchoke wait times.
+  - Legacy peers (without BEP 6) continue to receive standard BEP 16 `Have` messages seamlessly.
+- **Swarm Propagation Routing**:
+  - When a piece is verified as propagated across the swarm via another peer's `Have` announcement (`on_peer_have`):
+    - Credits the original peer and calculates their next optimal piece.
+    - Routes `SendHaveToPeer`, `SendSuggestToPeer`, and `SendAllowedFastToPeer` directly to the credited peer.
+- **Downloader Request Prioritization**:
+  - `next_block_request_for_peer`: In standard downloading mode, prioritizes unrequested blocks from pieces suggested by the remote peer (`peer.suggested_pieces`) before general rarest-first selection.
+  - `next_allowed_fast_block_request_for_peer`: When choked, prioritizes pieces that are both suggested and in the `allowed_fast_pieces` set.
+  - Automatic cleanup: When a piece completes download and assembly, clears it from `suggested_pieces` and `allowed_fast_pieces`.
+- **Metrics & Advisory Helpers**:
+  - Added `total_pieces_offered` and `total_pieces_propagated` tracking in `SuperSeedingState`.
+  - Added `TorrentContext::super_seed_stats()` returning `(total_pieces_offered, total_pieces_propagated)`.
+  - Added `TorrentContext::suggest_next_piece_for_peer(&self, peer: &Peer)` helper for sequential streaming or advisory seeding.
+- **Test Suite**: Dedicated integration test suite in `library/tests/super_seeding_suggest_tests.rs` covering BEP 6 `Suggest` and `AllowedFast` emissions during initial interest, multi-peer propagation routing with `SendSuggestToPeer`, downloader block request prioritization of suggested pieces, choked request prioritization, super-seeding metrics tracking, and advisory piece suggestion.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Super-Seeding Optimization with Suggest Piece (BEP 6 & BEP 16)**: Dynamic hint generation utilizing `Suggest Piece` during initial seeding phases.
+1. **BitTorrent v2 Peer Wire Messages (BEP 52)**: Implementing `hash_request`, `hashes`, `hash_reject` messages for on-demand Merkle layer retrieval from peers.
 
-2. **BitTorrent v2 Peer Wire Messages (BEP 52)**: Implementing `hash_request`, `hashes`, `hash_reject` messages for on-demand Merkle layer retrieval from peers.
+2. **Holepunch Extension (BEP 55)**: Peer-to-peer NAT traversal via rendezvous peers using `ut_holepunch`.
 
-3. **Holepunch Extension (BEP 55)**: Peer-to-peer NAT traversal via rendezvous peers using `ut_holepunch`.
+3. **WebTorrent WebSocket Tracker Signaling & Bridge Mode**: Browser-to-desktop bridging via WebTorrent signaling channels.
 
 
 
