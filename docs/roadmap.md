@@ -349,15 +349,47 @@ Implemented the full BitTorrent v2 (BEP 52) specification, supporting pure v2 to
 
 ---
 
+### Phase 32: PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support
+
+Implemented full BitTorrent Peer Exchange (BEP 11 / `ut_pex`) with comprehensive dual-stack IPv4 and IPv6 support, peer flags, private torrent guards, and swarm differential generation:
+- **BEP 11 Dual-Stack PEX Protocol Module (`network::pex`)**:
+  - Implemented `PexMessage` handling `added` (IPv4 6-byte records), `added.f` (flags), `dropped` (IPv4), `added6` (IPv6 18-byte records), `added6.f` (flags), and `dropped6` (IPv6).
+  - Enforced strict BEP 11 lexicographical bencode dictionary key ordering (`added` < `added.f` < `added6` < `added6.f` < `dropped` < `dropped6`).
+  - Added `PexFlags` support for bit flags:
+    - `0x01` (`PREF_ENCRYPT`): encryption preferred.
+    - `0x02` (`SEED`): peer is a seed / upload only.
+    - `0x04` (`UTP`): peer supports uTP (BEP 29).
+    - `0x08` (`HOLEPUNCH`): peer supports holepunching (BEP 55).
+    - `0x10` (`OUTGOING`): connection was initiated outgoing.
+  - Implemented `parse_ipv4_octets` and `parse_ipv6_octets` supporting bracketed and plain IPv6 addresses.
+- **Swarm Differential Generation (`TorrentContext::generate_pex_message`)**:
+  - Compares the active `peer_swarm` against `sent_peers` per remote connection.
+  - Generates incremental added and dropped candidate lists with automatic flag calculation.
+  - Excludes the recipient peer from its own announcement.
+  - Enforces BEP 11 recommendation of at most 50 added and 50 dropped peers per transmission.
+- **Session & Peer Wire Integration**:
+  - `run_peer_loop`: Periodically broadcasts differential dual-stack PEX messages to connected extension-supporting peers.
+  - Incoming PEX handling (`Peer::handle_peer_message`): Decodes `ut_pex` payloads, filters out seeds when the local client is already a seed (`tc.status == TorrentStatus::Seeding` or complete), and dispatches `PeerAction::DiscoverPeers`.
+  - Records dropped peers in `TorrentContext::pex_dropped_peers` (capped circular queue) and tracks statistics (`pex_added_peers_count`, `pex_dropped_peers_count`).
+- **Privacy & Feature Gating**:
+  - Private torrents (`is_private == true`): Omit `ut_pex` from extension handshake advertising, disable periodic PEX broadcasts, and ignore all incoming PEX messages (strict BEP 27 enforcement).
+  - IPv6 gating: When `enable_ipv6 == false`, skips `added6` and `dropped6` generation and suppresses outgoing connections to discovered IPv6 endpoints.
+- **Configuration & Builder**:
+  - Added `pub enable_pex: bool` to `SessionConfig` (default: `true`) with `.with_enable_pex(bool)`.
+  - Added `.enable_pex(bool)` to `TorrentSessionBuilder`.
+- **Test Suite**: Dedicated integration test suite in `library/tests/pex_ipv6_tests.rs` covering dual-stack IPv4/IPv6 encode/decode roundtrips, canonical dictionary key order verification, BEP 11 flag bit operations, seed-to-seed connection filtering, IPv6 disabled suppression, private torrent enforcement, and differential swarm generation with capping.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **PEX (Peer Exchange — BEP 11) IPv6 (`added6` / `dropped6`) Support**: Wire-level peer exchange updates for dual-stack swarms.
+1. **Super-Seeding Optimization with Suggest Piece (BEP 6 & BEP 16)**: Dynamic hint generation utilizing `Suggest Piece` during initial seeding phases.
 
-2. **Super-Seeding Optimization with Suggest Piece (BEP 6 & BEP 16)**: Dynamic hint generation utilizing `Suggest Piece` during initial seeding phases.
+2. **BitTorrent v2 Peer Wire Messages (BEP 52)**: Implementing `hash_request`, `hashes`, `hash_reject` messages for on-demand Merkle layer retrieval from peers.
 
-3. **BitTorrent v2 Peer Wire Messages (BEP 52)**: Implementing `hash_request`, `hashes`, `hash_reject` messages for on-demand Merkle layer retrieval from peers.
+3. **Holepunch Extension (BEP 55)**: Peer-to-peer NAT traversal via rendezvous peers using `ut_holepunch`.
 
 
 

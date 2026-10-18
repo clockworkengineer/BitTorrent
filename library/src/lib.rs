@@ -173,6 +173,7 @@ pub use network::peer::Peer;
 #[cfg(feature = "std")]
 pub use network::peer_id::get as get_peer_id;
 pub use network::peer_message::PeerMessage;
+pub use network::pex::{PexFlags, PexMessage, PexPeer};
 #[cfg(feature = "std")]
 pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector, StreamingPieceSelector};
 

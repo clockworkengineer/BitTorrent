@@ -121,6 +121,12 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Enables or disables Peer Exchange (BEP 11 / ut_pex).
+    pub fn enable_pex(mut self, enable: bool) -> Self {
+        self.config.enable_pex = enable;
+        self
+    }
+
     /// Returns a reference to the configured SessionConfig.
     pub fn get_config(&self) -> &SessionConfig {
         &self.config

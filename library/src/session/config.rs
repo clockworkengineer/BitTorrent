@@ -58,6 +58,8 @@ pub struct SessionConfig {
     pub enable_ipv6: bool,
     /// Size of the in-memory block write cache in megabytes (default: 32 MB, 0 = disabled).
     pub disk_cache_size_mb: usize,
+    /// Enable Peer Exchange (BEP 11 / ut_pex) for decentralized swarm discovery (default: true).
+    pub enable_pex: bool,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -129,6 +131,7 @@ impl Default for SessionConfig {
             ipv6: None,
             enable_ipv6: true,
             disk_cache_size_mb: 32,
+            enable_pex: true,
         }
     }
 }
@@ -156,6 +159,12 @@ impl SessionConfig {
     /// Sets the in-memory block write cache size in megabytes (0 disables caching).
     pub fn with_disk_cache_size_mb(mut self, size_mb: usize) -> Self {
         self.disk_cache_size_mb = size_mb;
+        self
+    }
+
+    /// Enables or disables Peer Exchange (BEP 11 / ut_pex).
+    pub fn with_enable_pex(mut self, enable: bool) -> Self {
+        self.enable_pex = enable;
         self
     }
 }

@@ -17,6 +17,7 @@ pub mod peer_id;
 pub mod peer_message;
 #[cfg(feature = "std")]
 pub mod peer_network;
+pub mod pex;
 #[cfg(feature = "std")]
 pub mod tracker;
 #[cfg(all(feature = "std", feature = "utp"))]

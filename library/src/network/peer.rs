@@ -35,7 +35,7 @@ use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
-use crate::core::torrent_context::TorrentContext;
+use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::PeerDetails;
 use crate::manager::Manager;
 use crate::util::get_bitfield_index_and_mask;
@@ -632,48 +632,39 @@ impl Peer {
                         }
                     }
                 } else if ext_id == 2 {
-                    if let Ok(bnode) = crate::bencode::Bencode::decode(payload) {
-                        if let Some(added_node) = bnode.dict_get(b"added") {
-                            if let Some(added_bytes) = added_node.as_string() {
-                                let mut added_peers = Vec::new();
-                                for chunk in added_bytes.chunks_exact(6) {
-                                    let ip = format!("{}.{}.{}.{}", chunk[0], chunk[1], chunk[2], chunk[3]);
-                                    let port = u16::from_be_bytes([chunk[4], chunk[5]]);
-                                    added_peers.push(PeerDetails {
-                                        info_hash: tc.info_hash.clone(),
-                                        peer_id: None,
-                                        ip,
-                                        port,
-                                    });
+                    if !tc.is_pex_enabled() {
+                        return Ok(actions);
+                    }
+                    if let Ok(pex_msg) = crate::network::pex::PexMessage::decode(payload, &tc.info_hash) {
+                        let am_seed = tc.status == TorrentStatus::Seeding || tc.is_download_complete() || (tc.number_of_pieces > 0 && (0..tc.number_of_pieces as u32).all(|p| tc.is_piece_local(p)));
+                        let mut discovered = Vec::new();
+
+                        for peer in pex_msg.added_v4 {
+                            if am_seed && peer.flags.is_seed() {
+                                continue;
+                            }
+                            discovered.push(peer.details);
+                        }
+
+                        if tc.config.enable_ipv6 {
+                            for peer in pex_msg.added_v6 {
+                                if am_seed && peer.flags.is_seed() {
+                                    continue;
                                 }
-                                actions.push(PeerAction::DiscoverPeers(added_peers));
+                                discovered.push(peer.details);
                             }
                         }
-                        if let Some(added6_node) = bnode.dict_get(b"added6") {
-                            if let Some(added6_bytes) = added6_node.as_string() {
-                                let mut added_ipv6 = Vec::new();
-                                for chunk in added6_bytes.chunks_exact(18) {
-                                    let ip_addr = std::net::Ipv6Addr::new(
-                                        u16::from_be_bytes([chunk[0], chunk[1]]),
-                                        u16::from_be_bytes([chunk[2], chunk[3]]),
-                                        u16::from_be_bytes([chunk[4], chunk[5]]),
-                                        u16::from_be_bytes([chunk[6], chunk[7]]),
-                                        u16::from_be_bytes([chunk[8], chunk[9]]),
-                                        u16::from_be_bytes([chunk[10], chunk[11]]),
-                                        u16::from_be_bytes([chunk[12], chunk[13]]),
-                                        u16::from_be_bytes([chunk[14], chunk[15]]),
-                                    );
-                                    let ip = ip_addr.to_string();
-                                    let port = u16::from_be_bytes([chunk[16], chunk[17]]);
-                                    added_ipv6.push(PeerDetails {
-                                        info_hash: tc.info_hash.clone(),
-                                        peer_id: None,
-                                        ip,
-                                        port,
-                                    });
-                                }
-                                actions.push(PeerAction::DiscoverPeers(added_ipv6));
-                            }
+
+                        tc.record_pex_added(discovered.len());
+
+                        let mut dropped = pex_msg.dropped_v4;
+                        if tc.config.enable_ipv6 {
+                            dropped.extend(pex_msg.dropped_v6);
+                        }
+                        tc.record_pex_dropped(&dropped);
+
+                        if !discovered.is_empty() {
+                            actions.push(PeerAction::DiscoverPeers(discovered));
                         }
                     }
                 }
@@ -811,7 +802,10 @@ impl Peer {
                     for details in peers {
                         let should_connect = {
                             let ctx = context.lock().unwrap();
-                            !ctx.is_peer_in_swarm(&details.ip) && !ctx.is_peer_blacklisted(&details.ip)
+                            let is_v6_disabled = details.is_ipv6() && !ctx.config.enable_ipv6;
+                            !is_v6_disabled
+                                && !ctx.is_peer_in_swarm(&details.ip)
+                                && !ctx.is_peer_blacklisted(&details.ip)
                         };
                         if should_connect {
                             if let Some(mgr) = manager {

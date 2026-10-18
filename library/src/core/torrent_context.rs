@@ -7,6 +7,7 @@ use crate::constants::{BLOCK_SIZE, ENDGAME_THRESHOLD};
 use crate::error::BitTorrentError;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::metainfo::{FileDetails, FilePriority, MetaInfoFile};
+use crate::network::tracker::PeerDetails;
 use crate::peer::Peer;
 use crate::piece_buffer::PieceBuffer;
 use crate::selector::PieceSelector;
@@ -123,6 +124,9 @@ pub struct TorrentContext {
     pub piece_priority_queue: Mutex<std::collections::BinaryHeap<PieceRarity>>,
     pub unchoked_peers_count: AtomicUsize,
     pub super_seeding: SuperSeedingState,
+    pub pex_dropped_peers: Mutex<Vec<PeerDetails>>,
+    pub pex_added_peers_count: AtomicUsize,
+    pub pex_dropped_peers_count: AtomicUsize,
     #[cfg(feature = "v2")]
     pub file_merkle_trees: Mutex<HashMap<usize, crate::core::merkle::MerkleTree>>,
     #[cfg(feature = "v2")]
@@ -225,6 +229,9 @@ impl TorrentContext {
                 pq
             }),
             unchoked_peers_count: AtomicUsize::new(0),
+            pex_dropped_peers: Mutex::new(Vec::new()),
+            pex_added_peers_count: AtomicUsize::new(0),
+            pex_dropped_peers_count: AtomicUsize::new(0),
             #[cfg(feature = "v2")]
             file_merkle_trees: Mutex::new(HashMap::new()),
             #[cfg(feature = "v2")]
@@ -294,6 +301,9 @@ impl TorrentContext {
             upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
             piece_priority_queue: Mutex::new(std::collections::BinaryHeap::new()),
             unchoked_peers_count: AtomicUsize::new(0),
+            pex_dropped_peers: Mutex::new(Vec::new()),
+            pex_added_peers_count: AtomicUsize::new(0),
+            pex_dropped_peers_count: AtomicUsize::new(0),
             #[cfg(feature = "v2")]
             file_merkle_trees: Mutex::new(HashMap::new()),
             #[cfg(feature = "v2")]
@@ -1583,6 +1593,128 @@ impl TorrentContext {
     /// Retrieves the `pieces_root` hash for the specified file index, if present.
     pub fn get_file_pieces_root(&self, file_index: usize) -> Option<[u8; 32]> {
         self.files_to_download.get(file_index).and_then(|f| f.pieces_root)
+    }
+
+    /// Returns true if PEX (Peer Exchange / BEP 11) is enabled for this torrent.
+    pub fn is_pex_enabled(&self) -> bool {
+        self.config.enable_pex && !self.is_private
+    }
+
+    /// Records dropped peers received from a PEX message.
+    pub fn record_pex_dropped(&self, peers: &[PeerDetails]) {
+        if peers.is_empty() {
+            return;
+        }
+        if let Ok(mut dropped) = self.pex_dropped_peers.lock() {
+            dropped.extend_from_slice(peers);
+            if dropped.len() > 100 {
+                let overflow = dropped.len() - 100;
+                dropped.drain(0..overflow);
+            }
+        }
+        self.pex_dropped_peers_count.fetch_add(peers.len(), Ordering::Relaxed);
+    }
+
+    /// Records added peers received from a PEX message.
+    pub fn record_pex_added(&self, count: usize) {
+        self.pex_added_peers_count.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Generates a BEP 11 PEX message comparing the active swarm against `sent_peers`.
+    pub fn generate_pex_message(
+        &self,
+        sent_peers: &HashMap<String, u16>,
+        exclude_ip: Option<&str>,
+    ) -> (crate::network::pex::PexMessage, HashMap<String, u16>) {
+        use crate::network::pex::{PexFlags, PexMessage};
+
+        let mut pex_msg = PexMessage::new();
+        let mut newly_sent = HashMap::new();
+
+        if !self.is_pex_enabled() {
+            return (pex_msg, newly_sent);
+        }
+
+        let swarm = self.peer_swarm.read().unwrap();
+        let mut added_candidates = Vec::new();
+
+        for (ip, p_arc) in swarm.iter() {
+            if let Some(exc) = exclude_ip {
+                if ip == exc {
+                    continue;
+                }
+            }
+
+            if let Ok(p_guard) = p_arc.try_lock() {
+                let port = p_guard.port;
+                newly_sent.insert(ip.clone(), port);
+
+                if !sent_peers.contains_key(ip) {
+                    let mut flags = 0u8;
+                    if p_guard.is_seed(self.number_of_pieces) {
+                        flags |= PexFlags::SEED;
+                    }
+                    flags |= PexFlags::OUTGOING;
+
+                    let details = PeerDetails {
+                        info_hash: self.info_hash.clone(),
+                        peer_id: None,
+                        ip: ip.clone(),
+                        port,
+                    };
+                    added_candidates.push((details, PexFlags::new(flags)));
+                }
+            }
+        }
+
+        // Dropped peers: peers previously in sent_peers that are no longer in swarm
+        let mut dropped_candidates = Vec::new();
+        for (ip, &port) in sent_peers {
+            if !newly_sent.contains_key(ip) {
+                let details = PeerDetails {
+                    info_hash: self.info_hash.clone(),
+                    peer_id: None,
+                    ip: ip.clone(),
+                    port,
+                };
+                dropped_candidates.push(details);
+            }
+        }
+
+        // Partition into IPv4 and IPv6, applying BEP 11 maximum 50 added / 50 dropped limit
+        let mut added_count = 0;
+        for (details, flags) in added_candidates {
+            if added_count >= 50 {
+                break;
+            }
+            if details.is_ipv6() {
+                if self.config.enable_ipv6 {
+                    pex_msg.add_v6(details, flags);
+                    added_count += 1;
+                }
+            } else {
+                pex_msg.add_v4(details, flags);
+                added_count += 1;
+            }
+        }
+
+        let mut dropped_count = 0;
+        for details in dropped_candidates {
+            if dropped_count >= 50 {
+                break;
+            }
+            if details.is_ipv6() {
+                if self.config.enable_ipv6 {
+                    pex_msg.drop_v6(details);
+                    dropped_count += 1;
+                }
+            } else {
+                pex_msg.drop_v4(details);
+                dropped_count += 1;
+            }
+        }
+
+        (pex_msg, newly_sent)
     }
 }
 

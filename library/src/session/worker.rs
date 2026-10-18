@@ -212,7 +212,15 @@ pub async fn perform_handshake(
 
     // Send extension handshake advertising ut_metadata and ut_pex support
     if supports_extensions {
-        let payload = b"d1:md11:ut_metadatai1e6:ut_pexi2eee";
+        let (is_private, enable_pex) = {
+            let ctx = context.lock().unwrap();
+            (ctx.is_private, ctx.config.enable_pex)
+        };
+        let payload = if is_private || !enable_pex {
+            b"d1:md11:ut_metadatai1eee".as_slice()
+        } else {
+            b"d1:md11:ut_metadatai1e6:ut_pexi2eee".as_slice()
+        };
         if net.write_message(PeerMessage::Extended { ext_id: 0, payload }).await.is_err() {
             mark_peer_dead(manager, &peer_details.ip);
             return Err(());
@@ -469,8 +477,6 @@ async fn run_peer_loop(
     context: &Arc<Mutex<TorrentContext>>,
     manager: &Option<Arc<Manager>>,
 ) {
-    let info_hash = context.lock().unwrap().info_hash.clone();
-
     let mut static_buf_opt = crate::util::acquire_buffer();
     let mut _fallback_buf = None;
     let read_buffer_backing = match &mut static_buf_opt {
@@ -498,80 +504,25 @@ async fn run_peer_loop(
         }
 
         // ── Periodic PEX broadcast ────────────────────────────────────────
-        let (supports_extensions, is_private) = {
+        let (supports_extensions, is_pex_enabled) = {
             let ctx = context.lock().unwrap();
             let pg = peer.lock().unwrap();
-            (pg.supports_extensions, ctx.is_private)
+            (pg.supports_extensions, ctx.is_pex_enabled())
         };
-        if supports_extensions && !is_private && last_pex_sent.elapsed() > Duration::from_secs(60) {
+        if supports_extensions && is_pex_enabled && last_pex_sent.elapsed() > Duration::from_secs(60) {
             let pex_ext_id = {
                 let pg = peer.lock().unwrap();
                 pg.extension_ids.get("ut_pex").cloned()
             };
             if let Some(ext_id) = pex_ext_id {
-                let mut current_swarm = Vec::new();
-                {
+                let (pex_msg, newly_sent) = {
                     let ctx = context.lock().unwrap();
-                    let swarm = ctx.peer_swarm.read().unwrap();
-                    for (ip, p_arc) in swarm.iter() {
-                        if ip != &peer_details.ip {
-                            if let Ok(p_guard) = p_arc.try_lock() {
-                                current_swarm.push(PeerDetails {
-                                    info_hash: info_hash.clone(),
-                                    peer_id: None,
-                                    ip: ip.clone(),
-                                    port: p_guard.port,
-                                });
-                            }
-                        }
-                    }
-                }
-
-                let mut added_bytes = Vec::new();
-                let mut added6_bytes = Vec::new();
-                let mut newly_sent = std::collections::HashMap::new();
-                for detail in &current_swarm {
-                    newly_sent.insert(detail.ip.clone(), detail.port);
-                    if !sent_peers.contains_key(&detail.ip) {
-                        if let Ok(ip_addr) = detail.ip.parse::<std::net::Ipv4Addr>() {
-                            added_bytes.extend_from_slice(&ip_addr.octets());
-                            added_bytes.extend_from_slice(&detail.port.to_be_bytes());
-                        } else if let Ok(ip6_addr) = detail.ip.parse::<std::net::Ipv6Addr>() {
-                            added6_bytes.extend_from_slice(&ip6_addr.octets());
-                            added6_bytes.extend_from_slice(&detail.port.to_be_bytes());
-                        }
-                    }
-                }
-
-                let mut dropped_bytes = Vec::new();
-                let mut dropped6_bytes = Vec::new();
-                for (ip, &port) in &sent_peers {
-                    if !newly_sent.contains_key(ip) {
-                        if let Ok(ip_addr) = ip.parse::<std::net::Ipv4Addr>() {
-                            dropped_bytes.extend_from_slice(&ip_addr.octets());
-                            dropped_bytes.extend_from_slice(&port.to_be_bytes());
-                        } else if let Ok(ip6_addr) = ip.parse::<std::net::Ipv6Addr>() {
-                            dropped6_bytes.extend_from_slice(&ip6_addr.octets());
-                            dropped6_bytes.extend_from_slice(&port.to_be_bytes());
-                        }
-                    }
-                }
-
+                    ctx.generate_pex_message(&sent_peers, Some(&peer_details.ip))
+                };
                 sent_peers = newly_sent;
 
-                if !added_bytes.is_empty() || !dropped_bytes.is_empty() || !added6_bytes.is_empty() || !dropped6_bytes.is_empty() {
-                    let mut pex_items = Vec::new();
-                    pex_items.push((b"added".as_slice(), crate::bencode::BNode::String(&added_bytes)));
-                    pex_items.push((b"dropped".as_slice(), crate::bencode::BNode::String(&dropped_bytes)));
-                    if !added6_bytes.is_empty() {
-                        pex_items.push((b"added6".as_slice(), crate::bencode::BNode::String(&added6_bytes)));
-                    }
-                    if !dropped6_bytes.is_empty() {
-                        pex_items.push((b"dropped6".as_slice(), crate::bencode::BNode::String(&dropped6_bytes)));
-                    }
-                    let pex_dict = crate::bencode::BNode::Dictionary(pex_items);
-                    let pex_payload = crate::bencode::Bencode::encode(&pex_dict);
-
+                if !pex_msg.is_empty() {
+                    let pex_payload = pex_msg.encode();
                     if net.write_message(PeerMessage::Extended { ext_id, payload: &pex_payload }).await.is_ok() {
                         peer.lock().unwrap().update_last_message_sent();
                     }
