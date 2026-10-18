@@ -89,6 +89,28 @@ pub enum PeerAction {
         target_ip: String,
         piece: u32,
     },
+    SendHashRequest {
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+    },
+    SendHashes {
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+        hashes: Vec<u8>,
+    },
+    SendHashReject {
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+    },
     DiscoverPeers(Vec<PeerDetails>),
 }
 
@@ -394,6 +416,29 @@ impl Peer {
     /// Checks if the remote peer allows us to request a specific piece while choked.
     pub fn is_allowed_fast_from_remote(&self, piece: u32) -> bool {
         self.supports_fast_extension && self.allowed_fast_pieces.contains(&piece)
+    }
+
+    /// Creates a `PeerAction::SendHashRequest` to request Merkle tree hashes for a BitTorrent v2 file.
+    pub fn request_v2_hashes(
+        &self,
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+        #[allow(unused_variables)] tc: &mut TorrentContext,
+    ) -> PeerAction {
+        #[cfg(feature = "v2")]
+        {
+            tc.v2_hash_requests_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        PeerAction::SendHashRequest {
+            pieces_root,
+            base_layer,
+            index,
+            length,
+            proof_layers,
+        }
     }
 
     /// Processes an incoming protocol message from the peer, updating connection states, logging events, and writing pieces to disk.
@@ -732,6 +777,78 @@ impl Peer {
             PeerMessage::AllowedFast(index) => {
                 self.allowed_fast_pieces.push(index);
             }
+            PeerMessage::HashRequest {
+                pieces_root,
+                base_layer,
+                index,
+                length,
+                proof_layers,
+            } => {
+                #[cfg(feature = "v2")]
+                {
+                    tc.v2_hash_requests_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    match tc.handle_hash_request(pieces_root, base_layer, index, length, proof_layers) {
+                        Ok(hashes) => {
+                            tc.v2_hashes_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            actions.push(PeerAction::SendHashes {
+                                pieces_root,
+                                base_layer,
+                                index,
+                                length,
+                                proof_layers,
+                                hashes,
+                            });
+                        }
+                        Err(_) => {
+                            tc.v2_hash_rejects_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            actions.push(PeerAction::SendHashReject {
+                                pieces_root,
+                                base_layer,
+                                index,
+                                length,
+                                proof_layers,
+                            });
+                        }
+                    }
+                }
+                #[cfg(not(feature = "v2"))]
+                {
+                    actions.push(PeerAction::SendHashReject {
+                        pieces_root,
+                        base_layer,
+                        index,
+                        length,
+                        proof_layers,
+                    });
+                }
+            }
+            PeerMessage::Hashes {
+                pieces_root,
+                base_layer,
+                index,
+                length,
+                proof_layers,
+                hashes,
+            } => {
+                #[cfg(feature = "v2")]
+                {
+                    tc.v2_hashes_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let _ = tc.handle_hashes_response(
+                        pieces_root,
+                        base_layer,
+                        index,
+                        length,
+                        proof_layers,
+                        hashes,
+                    );
+                }
+            }
+            PeerMessage::HashReject { .. } => {
+                #[cfg(feature = "v2")]
+                {
+                    tc.v2_hash_rejects_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
         }
         Ok(actions)
     }
@@ -833,6 +950,59 @@ impl Peer {
                             let _ = target_net.write_message(PeerMessage::AllowedFast(piece)).await;
                         }
                     }
+                }
+                PeerAction::SendHashRequest {
+                    pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                } => {
+                    let msg = PeerMessage::HashRequest {
+                        pieces_root,
+                        base_layer,
+                        index,
+                        length,
+                        proof_layers,
+                    };
+                    net.write_message(msg).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendHashes {
+                    pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                    hashes,
+                } => {
+                    let msg = PeerMessage::Hashes {
+                        pieces_root,
+                        base_layer,
+                        index,
+                        length,
+                        proof_layers,
+                        hashes: &hashes,
+                    };
+                    net.write_message(msg).await?;
+                    peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendHashReject {
+                    pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                } => {
+                    let msg = PeerMessage::HashReject {
+                        pieces_root,
+                        base_layer,
+                        index,
+                        length,
+                        proof_layers,
+                    };
+                    net.write_message(msg).await?;
+                    peer.lock().unwrap().update_last_message_sent();
                 }
                 PeerAction::BroadcastCancel { index, begin, length, block_index } => {
                     let peers: Vec<(String, Arc<Mutex<Peer>>)> = {

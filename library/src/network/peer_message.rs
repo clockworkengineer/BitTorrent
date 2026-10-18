@@ -47,6 +47,28 @@ pub enum PeerMessage<'a> {
         length: u32,
     },
     AllowedFast(u32),
+    HashRequest {
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+    },
+    Hashes {
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+        hashes: &'a [u8],
+    },
+    HashReject {
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+    },
 }
 
 impl<'a> PeerMessage<'a> {
@@ -129,6 +151,60 @@ impl<'a> PeerMessage<'a> {
                 buffer.extend_from_slice(&5u32.to_be_bytes());
                 buffer.push(17);
                 buffer.extend_from_slice(&index.to_be_bytes());
+                buffer
+            }
+            PeerMessage::HashRequest {
+                pieces_root,
+                base_layer,
+                index,
+                length,
+                proof_layers,
+            } => {
+                let mut buffer = Vec::with_capacity(53);
+                buffer.extend_from_slice(&49u32.to_be_bytes());
+                buffer.push(21);
+                buffer.extend_from_slice(pieces_root);
+                buffer.extend_from_slice(&base_layer.to_be_bytes());
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer.extend_from_slice(&length.to_be_bytes());
+                buffer.extend_from_slice(&proof_layers.to_be_bytes());
+                buffer
+            }
+            PeerMessage::Hashes {
+                pieces_root,
+                base_layer,
+                index,
+                length,
+                proof_layers,
+                hashes,
+            } => {
+                let msg_len = (1 + 32 + 16 + hashes.len()) as u32;
+                let mut buffer = Vec::with_capacity(4 + msg_len as usize);
+                buffer.extend_from_slice(&msg_len.to_be_bytes());
+                buffer.push(22);
+                buffer.extend_from_slice(pieces_root);
+                buffer.extend_from_slice(&base_layer.to_be_bytes());
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer.extend_from_slice(&length.to_be_bytes());
+                buffer.extend_from_slice(&proof_layers.to_be_bytes());
+                buffer.extend_from_slice(hashes);
+                buffer
+            }
+            PeerMessage::HashReject {
+                pieces_root,
+                base_layer,
+                index,
+                length,
+                proof_layers,
+            } => {
+                let mut buffer = Vec::with_capacity(53);
+                buffer.extend_from_slice(&49u32.to_be_bytes());
+                buffer.push(23);
+                buffer.extend_from_slice(pieces_root);
+                buffer.extend_from_slice(&base_layer.to_be_bytes());
+                buffer.extend_from_slice(&index.to_be_bytes());
+                buffer.extend_from_slice(&length.to_be_bytes());
+                buffer.extend_from_slice(&proof_layers.to_be_bytes());
                 buffer
             }
         }
@@ -226,6 +302,62 @@ impl<'a> PeerMessage<'a> {
                 }
                 let index = u32::from_be_bytes(payload.try_into().map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?);
                 Ok(PeerMessage::AllowedFast(index))
+            }
+            21 => {
+                if payload.len() != 48 {
+                    return Err(BitTorrentError::Parse("Invalid HASH_REQUEST payload length".into()));
+                }
+                let mut pieces_root = [0u8; 32];
+                pieces_root.copy_from_slice(&payload[0..32]);
+                let base_layer = u32::from_be_bytes(payload[32..36].try_into().map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?);
+                let index = u32::from_be_bytes(payload[36..40].try_into().map_err(|_| BitTorrentError::Parse("Invalid index".into()))?);
+                let length = u32::from_be_bytes(payload[40..44].try_into().map_err(|_| BitTorrentError::Parse("Invalid length".into()))?);
+                let proof_layers = u32::from_be_bytes(payload[44..48].try_into().map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?);
+                Ok(PeerMessage::HashRequest {
+                    pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                })
+            }
+            22 => {
+                if payload.len() < 48 || (payload.len() - 48) % 32 != 0 {
+                    return Err(BitTorrentError::Parse("Invalid HASHES payload length".into()));
+                }
+                let mut pieces_root = [0u8; 32];
+                pieces_root.copy_from_slice(&payload[0..32]);
+                let base_layer = u32::from_be_bytes(payload[32..36].try_into().map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?);
+                let index = u32::from_be_bytes(payload[36..40].try_into().map_err(|_| BitTorrentError::Parse("Invalid index".into()))?);
+                let length = u32::from_be_bytes(payload[40..44].try_into().map_err(|_| BitTorrentError::Parse("Invalid length".into()))?);
+                let proof_layers = u32::from_be_bytes(payload[44..48].try_into().map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?);
+                let hashes = &payload[48..];
+                Ok(PeerMessage::Hashes {
+                    pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                    hashes,
+                })
+            }
+            23 => {
+                if payload.len() != 48 {
+                    return Err(BitTorrentError::Parse("Invalid HASH_REJECT payload length".into()));
+                }
+                let mut pieces_root = [0u8; 32];
+                pieces_root.copy_from_slice(&payload[0..32]);
+                let base_layer = u32::from_be_bytes(payload[32..36].try_into().map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?);
+                let index = u32::from_be_bytes(payload[36..40].try_into().map_err(|_| BitTorrentError::Parse("Invalid index".into()))?);
+                let length = u32::from_be_bytes(payload[40..44].try_into().map_err(|_| BitTorrentError::Parse("Invalid length".into()))?);
+                let proof_layers = u32::from_be_bytes(payload[44..48].try_into().map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?);
+                Ok(PeerMessage::HashReject {
+                    pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                })
             }
             _ => Err(BitTorrentError::Parse("Unknown peer message ID".into())),
         }

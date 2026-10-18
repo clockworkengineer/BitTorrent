@@ -137,6 +137,20 @@ pub struct TorrentContext {
     pub file_merkle_proofs: Mutex<HashMap<(usize, usize), crate::core::merkle::MerkleProof>>,
     #[cfg(feature = "v2")]
     pub piece_layers: Mutex<HashMap<[u8; 32], Vec<[u8; 32]>>>,
+    #[cfg(feature = "v2")]
+    pub verified_v2_hashes: Mutex<HashMap<([u8; 32], u32, u32), Vec<[u8; 32]>>>,
+    #[cfg(feature = "v2")]
+    pub v2_hash_requests_sent: AtomicUsize,
+    #[cfg(feature = "v2")]
+    pub v2_hash_requests_received: AtomicUsize,
+    #[cfg(feature = "v2")]
+    pub v2_hashes_sent: AtomicUsize,
+    #[cfg(feature = "v2")]
+    pub v2_hashes_received: AtomicUsize,
+    #[cfg(feature = "v2")]
+    pub v2_hash_rejects_sent: AtomicUsize,
+    #[cfg(feature = "v2")]
+    pub v2_hash_rejects_received: AtomicUsize,
 }
 
 impl TorrentContext {
@@ -242,6 +256,20 @@ impl TorrentContext {
             file_merkle_proofs: Mutex::new(HashMap::new()),
             #[cfg(feature = "v2")]
             piece_layers: Mutex::new(torrent_meta_info.get_piece_layers().clone()),
+            #[cfg(feature = "v2")]
+            verified_v2_hashes: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            v2_hash_requests_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_requests_received: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hashes_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hashes_received: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_rejects_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_rejects_received: AtomicUsize::new(0),
         };
         Ok(context)
     }
@@ -314,6 +342,20 @@ impl TorrentContext {
             file_merkle_proofs: Mutex::new(HashMap::new()),
             #[cfg(feature = "v2")]
             piece_layers: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            verified_v2_hashes: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            v2_hash_requests_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_requests_received: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hashes_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hashes_received: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_rejects_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_rejects_received: AtomicUsize::new(0),
         };
         Ok(context)
     }
@@ -1624,6 +1666,29 @@ impl TorrentContext {
                             file_details.name, expected_root, actual_hash
                         )));
                     }
+                    return Ok(());
+                }
+            }
+
+            // 4. Check if we have verified leaf hashes cached for this block
+            if let Some(expected_root) = file_details.pieces_root {
+                let verified_cache = self.verified_v2_hashes.lock().unwrap();
+                for (&(root, base_layer, chunk_index), hashes) in verified_cache.iter() {
+                    if root == expected_root && base_layer == 0 {
+                        let c_idx = chunk_index as usize;
+                        if file_block_idx >= c_idx && file_block_idx < c_idx + hashes.len() {
+                            let expected_leaf = hashes[file_block_idx - c_idx];
+                            use sha2::Digest;
+                            let actual_hash: [u8; 32] = sha2::Sha256::digest(block_data).into();
+                            if actual_hash != expected_leaf {
+                                return Err(BitTorrentError::Parse(format!(
+                                    "BEP 52 Merkle verified leaf mismatch for file {} at block {}",
+                                    file_idx, file_block_idx
+                                )));
+                            }
+                            return Ok(());
+                        }
+                    }
                 }
             }
         }
@@ -1656,6 +1721,86 @@ impl TorrentContext {
     /// Retrieves the `pieces_root` hash for the specified file index, if present.
     pub fn get_file_pieces_root(&self, file_index: usize) -> Option<[u8; 32]> {
         self.files_to_download.get(file_index).and_then(|f| f.pieces_root)
+    }
+
+    #[cfg(feature = "v2")]
+    /// Returns counts of (requests_sent, requests_received, hashes_sent, hashes_received, rejects_sent, rejects_received).
+    pub fn v2_hash_stats(&self) -> (usize, usize, usize, usize, usize, usize) {
+        (
+            self.v2_hash_requests_sent.load(Ordering::Relaxed),
+            self.v2_hash_requests_received.load(Ordering::Relaxed),
+            self.v2_hashes_sent.load(Ordering::Relaxed),
+            self.v2_hashes_received.load(Ordering::Relaxed),
+            self.v2_hash_rejects_sent.load(Ordering::Relaxed),
+            self.v2_hash_rejects_received.load(Ordering::Relaxed),
+        )
+    }
+
+    #[cfg(feature = "v2")]
+    /// Handles an incoming BEP 52 `hash_request`, attempting to generate the requested hashes response.
+    ///
+    /// Returns `Ok(hashes_bytes)` on success, or `Err(())` if the request cannot be fulfilled and must be rejected.
+    pub fn handle_hash_request(
+        &self,
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+    ) -> Result<Vec<u8>, ()> {
+        let trees = self.file_merkle_trees.lock().unwrap();
+        // 1. Check if any registered tree has this root
+        for tree in trees.values() {
+            if tree.root() == pieces_root {
+                if let Some(resp) = tree.generate_hashes_response(base_layer, index, length, proof_layers) {
+                    return Ok(resp);
+                }
+            }
+        }
+
+        // 2. Check if a file in files_to_download has this root and try file_idx
+        for (file_idx, file_details) in self.files_to_download.iter().enumerate() {
+            if file_details.pieces_root == Some(pieces_root) {
+                if let Some(tree) = trees.get(&file_idx) {
+                    if let Some(resp) = tree.generate_hashes_response(base_layer, index, length, proof_layers) {
+                        return Ok(resp);
+                    }
+                }
+            }
+        }
+
+        Err(())
+    }
+
+    #[cfg(feature = "v2")]
+    /// Handles an incoming BEP 52 `hashes` message, validating the cryptographic Merkle proof against `pieces_root`.
+    ///
+    /// On success, caches verified base hashes in `verified_v2_hashes`.
+    pub fn handle_hashes_response(
+        &self,
+        pieces_root: [u8; 32],
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+        hashes_data: &[u8],
+    ) -> Result<Vec<[u8; 32]>, BitTorrentError> {
+        let verified = crate::core::merkle::MerkleTree::verify_hashes_response(
+            &pieces_root,
+            base_layer,
+            index,
+            length,
+            proof_layers,
+            hashes_data,
+        )?;
+
+        // Cache the verified hashes
+        {
+            let mut cache = self.verified_v2_hashes.lock().unwrap();
+            cache.insert((pieces_root, base_layer, index), verified.clone());
+        }
+
+        Ok(verified)
     }
 
     /// Returns true if PEX (Peer Exchange / BEP 11) is enabled for this torrent.

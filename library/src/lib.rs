@@ -169,7 +169,7 @@ pub use storage::assembler::Assembler;
 #[cfg(feature = "std")]
 pub use storage::disk_cache::{CacheBlock, CacheMetrics, CachedBlockStorage};
 #[cfg(feature = "std")]
-pub use network::peer::Peer;
+pub use network::peer::{Peer, PeerAction};
 #[cfg(feature = "std")]
 pub use network::peer_id::get as get_peer_id;
 pub use network::peer_message::PeerMessage;

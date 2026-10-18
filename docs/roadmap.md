@@ -406,15 +406,39 @@ Implemented synergistic integration of BEP 6 Fast Extension (`Suggest Piece` and
 
 ---
 
+### Phase 34: BitTorrent v2 Peer Wire Messages (BEP 52: hash_request, hashes, hash_reject)
+
+Implemented the full BEP 52 Hash Transfer Protocol for dynamic, on-demand exchange and cryptographic verification of SHA-256 Merkle tree layers between peers:
+- **Wire Message Framing & Serialization (`PeerMessage`)**:
+  - `HashRequest` (ID `21`): 48-byte payload containing `pieces_root` (`[u8; 32]`), `base_layer` (`u32`), `index` (`u32`), `length` (`u32`), and `proof_layers` (`u32`).
+  - `Hashes` (ID `22`): 48-byte header followed by concatenated 32-byte SHA-256 hashes (`length` base hashes + ancestor uncle hashes).
+  - `HashReject` (ID `23`): 48-byte payload matching the rejected `HashRequest` structure.
+  - Zero-copy framing and decoding validation (detecting payload truncation and 32-byte alignment).
+- **Cryptographic Hash Generation & Uncle Proof Verification (`MerkleTree`)**:
+  - `MerkleTree::generate_hashes_response`: Gathers `length` base layer hashes and constructs uncle proof nodes towards the root. Omits the first $\log_2(\text{length}) - 1$ internal proof layers per BEP 52 specification.
+  - `MerkleTree::verify_hashes_response`: Cryptographically verifies received base hashes by hashing pairwise up $\log_2(\text{length})$ levels, combining with subsequent uncle proof hashes, and authenticating against `pieces_root`.
+- **Torrent Context & Block Verification Synergy (`TorrentContext`)**:
+  - `handle_hash_request`: Resolves requested Merkle trees by `pieces_root` and generates `hashes` responses; returns rejection if unavailable.
+  - `handle_hashes_response`: Authenticates incoming proof layers and registers verified base layer hashes in `verified_v2_hashes`.
+  - `verify_v2_block`: Automatically references cached verified leaf hashes from `verified_v2_hashes` to authenticate incoming 16 KiB blocks instantly on-the-fly.
+  - Metrics tracking: `v2_hash_stats()` tracks requests sent/received, hashes sent/received, and rejects sent/received.
+- **Peer Wire Dispatch & Action Execution (`Peer`)**:
+  - `handle_peer_message`: Automatically answers incoming `HashRequest` messages with `SendHashes` (when data is available) or `SendHashReject`.
+  - `request_v2_hashes`: Helper method to initiate hash requests to remote peers.
+  - `execute_actions`: Asynchronously serializes and writes `SendHashRequest`, `SendHashes`, and `SendHashReject` messages to the peer wire network.
+- **Test Suite**: Dedicated integration test suite in `library/tests/bep52_peer_wire_tests.rs` covering wire format encode/decode roundtrips, malformed packet rejections, Merkle sub-tree proof generation with uncle validation, corruption detection, block verification integration, peer wire message handling, and stats tracking.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BitTorrent v2 Peer Wire Messages (BEP 52)**: Implementing `hash_request`, `hashes`, `hash_reject` messages for on-demand Merkle layer retrieval from peers.
+1. **Holepunch Extension (BEP 55)**: Peer-to-peer NAT traversal via rendezvous peers using `ut_holepunch`.
 
-2. **Holepunch Extension (BEP 55)**: Peer-to-peer NAT traversal via rendezvous peers using `ut_holepunch`.
+2. **WebTorrent WebSocket Tracker Signaling & Bridge Mode**: Browser-to-desktop bridging via WebTorrent signaling channels.
 
-3. **WebTorrent WebSocket Tracker Signaling & Bridge Mode**: Browser-to-desktop bridging via WebTorrent signaling channels.
+3. **BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool**: CLI tooling for converting v1 torrents to hybrid/v2 format with Merkle tree generation.
 
 
 

@@ -274,6 +274,145 @@ impl MerkleTree {
         cur[0]
     }
 
+    /// Generates a binary payload of hashes answering a BEP 52 `hash_request`.
+    ///
+    /// Contains `length` base layer hashes followed by necessary ancestor uncle hashes.
+    /// In accordance with BEP 52, the first `log2(length) - 1` proof layers are omitted
+    /// because they are internal to the requested subtree.
+    pub fn generate_hashes_response(
+        &self,
+        base_layer: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+    ) -> Option<Vec<u8>> {
+        if length < 2 || (length & (length - 1)) != 0 {
+            return None;
+        }
+        if index % length != 0 {
+            return None;
+        }
+        let base = base_layer as usize;
+        if base >= self.layers.len() {
+            return None;
+        }
+
+        let layer = &self.layers[base];
+        let idx = index as usize;
+        let len = length as usize;
+        if idx + len > layer.len() {
+            return None;
+        }
+
+        let k = len.trailing_zeros() as usize; // log2(length)
+        let omitted = k.saturating_sub(1);
+        let max_uncles = (proof_layers as usize).saturating_sub(omitted);
+
+        let mut out = Vec::with_capacity((len + max_uncles) * 32);
+
+        // 1. Base layer hashes
+        for h in &layer[idx..idx + len] {
+            out.extend_from_slice(h);
+        }
+
+        // 2. Uncle hashes for proof layers
+        let mut cur_layer = base + k;
+        let mut j = idx / len;
+        let mut uncles_included = 0;
+
+        while cur_layer < self.layers.len() && self.layers.len() > 1 && cur_layer < self.layers.len() - 1 && uncles_included < max_uncles {
+            let uncle_idx = j ^ 1;
+            if uncle_idx < self.layers[cur_layer].len() {
+                out.extend_from_slice(&self.layers[cur_layer][uncle_idx]);
+            } else {
+                out.extend_from_slice(&[0u8; 32]);
+            }
+            j /= 2;
+            cur_layer += 1;
+            uncles_included += 1;
+        }
+
+        Some(out)
+    }
+
+    /// Verifies that a BEP 52 `hashes` payload correctly authenticates against the file's `expected_root`.
+    ///
+    /// Hashes the `length` base layer hashes up `log2(length)` levels and combines with subsequent
+    /// uncle hashes to verify against `expected_root`.
+    /// Returns the verified base layer hashes on success.
+    pub fn verify_hashes_response(
+        expected_root: &[u8; 32],
+        _base_layer: u32,
+        index: u32,
+        length: u32,
+        _proof_layers: u32,
+        hashes_data: &[u8],
+    ) -> Result<Vec<[u8; 32]>, BitTorrentError> {
+        if length < 2 || (length & (length - 1)) != 0 {
+            return Err(BitTorrentError::Parse("Length must be a power of two and >= 2".into()));
+        }
+        if index % length != 0 {
+            return Err(BitTorrentError::Parse("Index must be a multiple of length".into()));
+        }
+        let len = length as usize;
+        if hashes_data.len() < len * 32 || hashes_data.len() % 32 != 0 {
+            return Err(BitTorrentError::Parse("Invalid hashes data byte length".into()));
+        }
+
+        let num_hashes = hashes_data.len() / 32;
+        let mut base_hashes = Vec::with_capacity(len);
+        for chunk in hashes_data[..len * 32].chunks_exact(32) {
+            let mut h = [0u8; 32];
+            h.copy_from_slice(chunk);
+            base_hashes.push(h);
+        }
+
+        let mut uncle_hashes = Vec::with_capacity(num_hashes - len);
+        for chunk in hashes_data[len * 32..].chunks_exact(32) {
+            let mut h = [0u8; 32];
+            h.copy_from_slice(chunk);
+            uncle_hashes.push(h);
+        }
+
+        // Hash up the base hashes
+        let mut cur_level = base_hashes.clone();
+        while cur_level.len() > 1 {
+            let mut next = Vec::with_capacity(cur_level.len() / 2);
+            for pair in cur_level.chunks_exact(2) {
+                let mut hasher = Sha256::new();
+                hasher.update(&pair[0]);
+                hasher.update(&pair[1]);
+                next.push(hasher.finalize().into());
+            }
+            cur_level = next;
+        }
+
+        let mut sub_root: [u8; 32] = cur_level[0];
+        let mut j = (index / length) as usize;
+
+        for uncle in &uncle_hashes {
+            let mut hasher = Sha256::new();
+            if j % 2 == 0 {
+                hasher.update(&sub_root);
+                hasher.update(uncle);
+            } else {
+                hasher.update(uncle);
+                hasher.update(&sub_root);
+            }
+            sub_root = hasher.finalize().into();
+            j /= 2;
+        }
+
+        if sub_root != *expected_root {
+            return Err(BitTorrentError::Parse(format!(
+                "BEP 52 hashes verification failed: root mismatch (expected {:02x?}, got {:02x?})",
+                expected_root, sub_root
+            )));
+        }
+
+        Ok(base_hashes)
+    }
+
     #[cfg(feature = "std")]
     /// Constructs a `MerkleTree` from a readable stream, computing 16 KiB block hashes incrementally
     /// without loading the entire file into memory at once.
