@@ -210,16 +210,17 @@ pub async fn perform_handshake(
         pg.last_message_received = Instant::now();
     }
 
-    // Send extension handshake advertising ut_metadata and ut_pex support
+    // Send extension handshake advertising ut_metadata, ut_pex, and ut_holepunch support
     if supports_extensions {
-        let (is_private, enable_pex) = {
+        let (is_private, enable_pex, enable_holepunch) = {
             let ctx = context.lock().unwrap();
-            (ctx.is_private, ctx.config.enable_pex)
+            (ctx.is_private, ctx.config.enable_pex, ctx.config.enable_holepunch)
         };
-        let payload = if is_private || !enable_pex {
-            b"d1:md11:ut_metadatai1eee".as_slice()
-        } else {
-            b"d1:md11:ut_metadatai1e6:ut_pexi2eee".as_slice()
+        let payload: &[u8] = match (is_private || !enable_pex, enable_holepunch) {
+            (true, false) => b"d1:md11:ut_metadatai1eee",
+            (true, true) => b"d1:md12:ut_holepunchi3e11:ut_metadatai1eee",
+            (false, false) => b"d1:md11:ut_metadatai1e6:ut_pexi2eee",
+            (false, true) => b"d1:md12:ut_holepunchi3e11:ut_metadatai1e6:ut_pexi2eee",
         };
         if net.write_message(PeerMessage::Extended { ext_id: 0, payload }).await.is_err() {
             mark_peer_dead(manager, &peer_details.ip);

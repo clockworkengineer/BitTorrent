@@ -2,6 +2,7 @@
 pub mod announcer;
 #[cfg(all(feature = "std", feature = "dht"))]
 pub mod dht;
+pub mod holepunch;
 #[cfg(feature = "std")]
 pub mod host;
 #[cfg(all(feature = "std", feature = "lsd"))]

@@ -127,6 +127,12 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Enables or disables the Holepunch extension (BEP 55 / ut_holepunch).
+    pub fn enable_holepunch(mut self, enable: bool) -> Self {
+        self.config.enable_holepunch = enable;
+        self
+    }
+
     /// Returns a reference to the configured SessionConfig.
     pub fn get_config(&self) -> &SessionConfig {
         &self.config

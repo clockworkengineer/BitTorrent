@@ -78,6 +78,7 @@ fn test_piece_availability_and_swarm_rarity() {
         supports_fast_extension: true,
         allowed_fast_pieces: Vec::new(),
         suggested_pieces: Vec::new(),
+        supports_holepunch: true,
         connection_type: "TCP".to_string(),
     }));
 
@@ -111,6 +112,7 @@ fn test_piece_availability_and_swarm_rarity() {
         supports_fast_extension: false,
         allowed_fast_pieces: Vec::new(),
         suggested_pieces: Vec::new(),
+        supports_holepunch: false,
         connection_type: "WebRTC".to_string(),
     }));
 

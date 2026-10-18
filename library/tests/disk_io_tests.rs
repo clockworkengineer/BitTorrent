@@ -150,7 +150,7 @@ fn test_write_piece_across_multiple_files() {
     let file_two = download_path.join("downloads").join("part2.bin");
 
     let piece_bytes = piece_data;
-    use bittorrent_rs::{BlockReader, BlockWriter};
+    use bittorrent_rs::BlockWriter;
     disk_io.write_block(0, &piece_bytes).unwrap();
 
     let mut first = Vec::new();

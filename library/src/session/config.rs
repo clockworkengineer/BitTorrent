@@ -60,6 +60,8 @@ pub struct SessionConfig {
     pub disk_cache_size_mb: usize,
     /// Enable Peer Exchange (BEP 11 / ut_pex) for decentralized swarm discovery (default: true).
     pub enable_pex: bool,
+    /// Enable Holepunch extension (BEP 55 / ut_holepunch) for NAT traversal (default: true).
+    pub enable_holepunch: bool,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -132,6 +134,7 @@ impl Default for SessionConfig {
             enable_ipv6: true,
             disk_cache_size_mb: 32,
             enable_pex: true,
+            enable_holepunch: true,
         }
     }
 }
@@ -165,6 +168,12 @@ impl SessionConfig {
     /// Enables or disables Peer Exchange (BEP 11 / ut_pex).
     pub fn with_enable_pex(mut self, enable: bool) -> Self {
         self.enable_pex = enable;
+        self
+    }
+
+    /// Enables or disables the Holepunch extension (BEP 55 / ut_holepunch).
+    pub fn with_enable_holepunch(mut self, enable: bool) -> Self {
+        self.enable_holepunch = enable;
         self
     }
 }

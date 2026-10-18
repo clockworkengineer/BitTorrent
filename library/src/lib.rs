@@ -174,6 +174,7 @@ pub use network::peer::{Peer, PeerAction};
 pub use network::peer_id::get as get_peer_id;
 pub use network::peer_message::PeerMessage;
 pub use network::pex::{PexFlags, PexMessage, PexPeer};
+pub use network::holepunch::{HolepunchErrorCode, HolepunchMessage, HolepunchMessageType};
 #[cfg(feature = "std")]
 pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector, StreamingPieceSelector};
 

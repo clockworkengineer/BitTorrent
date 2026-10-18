@@ -430,15 +430,49 @@ Implemented the full BEP 52 Hash Transfer Protocol for dynamic, on-demand exchan
 
 ---
 
+### Phase 35: Holepunch Extension (BEP 55: ut_holepunch NAT Traversal)
+
+Implemented the complete BEP 55 `ut_holepunch` extension for peer-to-peer NAT and firewall traversal via intermediate rendezvous relay peers:
+- **Binary Wire Framing & Serialization (`HolepunchMessage`)**:
+  - Implemented BEP 55 binary packet encoding and decoding:
+    - 1-byte `msg_type`: `Rendezvous` (`0x00`), `Connect` (`0x01`), `Error` (`0x02`).
+    - 1-byte `addr_type`: `IPv4` (`0x00`, 4 octets) and `IPv6` (`0x01`, 16 octets).
+    - 2-byte `port` (big-endian `u16`).
+    - 4-byte `err_code` (big-endian `u32`): `None` (`0x00`), `NoSuchPeer` (`0x01`), `NotConnected` (`0x02`), `NoSupport` (`0x03`), `NoSelf` (`0x04`).
+  - Total payload: 12 bytes for IPv4 endpoints, 24 bytes for IPv6 endpoints.
+  - Strict input validation rejecting truncated payloads, unknown message types, invalid address types, and malformed error codes.
+- **Relay Coordination & Validation (`TorrentContext`)**:
+  - `handle_holepunch_rendezvous`: Validates rendezvous requests when acting as an intermediate relay peer:
+    - `NoSelf`: Rejects requests where the target endpoint is the relay peer itself (local loopback/all-interfaces address with listen port).
+    - `NotConnected`: Rejects requests if target peer is not currently connected in `peer_swarm`.
+    - `NoSupport`: Rejects requests if connected target peer does not advertise `ut_holepunch` support.
+    - On validation success: Generates dual `Connect` messages for both the initiator and the target peer with each other's endpoints.
+  - Performance metrics: Added atomic counters `holepunch_rendezvous_sent`, `holepunch_rendezvous_received`, `holepunch_connect_sent`, `holepunch_connect_received`, `holepunch_error_sent`, and `holepunch_error_received`.
+  - Added `TorrentContext::holepunch_stats()` returning snapshot of all holepunch telemetry.
+- **Peer Wire Protocol & Worker Integration (`Peer`, `worker.rs`)**:
+  - Advertises `"ut_holepunch": 3` in extension handshake dictionary `m` during connection negotiation (configurable via `enable_holepunch`).
+  - Detects remote peer `ut_holepunch` support in incoming extension handshake dictionary.
+  - Dispatches incoming `ext_id == 3` messages:
+    - `Rendezvous`: Invokes relay logic and emits `PeerAction::SendHolepunch` containing dual `Connect` messages or an `Error` response.
+    - `Connect`: Checks swarm presence and dispatches `PeerAction::HolepunchConnect(addr)` to asynchronously initiate connection if not already in swarm.
+    - `Error`: Updates telemetry metrics.
+  - Added `Peer::initiate_holepunch(target_addr, tc)` helper to request rendezvous through a connected peer.
+  - Handled `PeerAction::SendHolepunch` and `PeerAction::HolepunchConnect` in `execute_actions`.
+- **Configuration & Builder Options**:
+  - Added `enable_holepunch: bool` (default `true`) to `SessionConfig` and `TorrentSessionBuilder::enable_holepunch(bool)`.
+- **Test Suite**: Dedicated integration test suite in `library/tests/holepunch_tests.rs` (11/11 tests passing) covering dual-stack IPv4/IPv6 message encode/decode, malformed input rejection, relay rendezvous validation and error code handling, message dispatching and metrics tracking, duplicate connection suppression, and builder configuration.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Holepunch Extension (BEP 55)**: Peer-to-peer NAT traversal via rendezvous peers using `ut_holepunch`.
+1. **WebTorrent WebSocket Tracker Signaling & Bridge Mode**: Browser-to-desktop bridging via WebTorrent signaling channels and WebRTC data channels.
 
-2. **WebTorrent WebSocket Tracker Signaling & Bridge Mode**: Browser-to-desktop bridging via WebTorrent signaling channels.
+2. **BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool**: CLI tooling for converting v1 torrents to hybrid/v2 format with Merkle tree generation.
 
-3. **BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool**: CLI tooling for converting v1 torrents to hybrid/v2 format with Merkle tree generation.
+3. **uTP SACK Dynamic Out-of-Order Packet Pipeline**: Enhanced SACK bitmap reassembly optimization and burst loss recovery in high-latency network conditions.
 
 
 

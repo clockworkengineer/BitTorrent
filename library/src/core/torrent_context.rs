@@ -151,6 +151,12 @@ pub struct TorrentContext {
     pub v2_hash_rejects_sent: AtomicUsize,
     #[cfg(feature = "v2")]
     pub v2_hash_rejects_received: AtomicUsize,
+    pub holepunch_rendezvous_sent: AtomicUsize,
+    pub holepunch_rendezvous_received: AtomicUsize,
+    pub holepunch_connect_sent: AtomicUsize,
+    pub holepunch_connect_received: AtomicUsize,
+    pub holepunch_error_sent: AtomicUsize,
+    pub holepunch_error_received: AtomicUsize,
 }
 
 impl TorrentContext {
@@ -270,6 +276,12 @@ impl TorrentContext {
             v2_hash_rejects_sent: AtomicUsize::new(0),
             #[cfg(feature = "v2")]
             v2_hash_rejects_received: AtomicUsize::new(0),
+            holepunch_rendezvous_sent: AtomicUsize::new(0),
+            holepunch_rendezvous_received: AtomicUsize::new(0),
+            holepunch_connect_sent: AtomicUsize::new(0),
+            holepunch_connect_received: AtomicUsize::new(0),
+            holepunch_error_sent: AtomicUsize::new(0),
+            holepunch_error_received: AtomicUsize::new(0),
         };
         Ok(context)
     }
@@ -356,6 +368,12 @@ impl TorrentContext {
             v2_hash_rejects_sent: AtomicUsize::new(0),
             #[cfg(feature = "v2")]
             v2_hash_rejects_received: AtomicUsize::new(0),
+            holepunch_rendezvous_sent: AtomicUsize::new(0),
+            holepunch_rendezvous_received: AtomicUsize::new(0),
+            holepunch_connect_sent: AtomicUsize::new(0),
+            holepunch_connect_received: AtomicUsize::new(0),
+            holepunch_error_sent: AtomicUsize::new(0),
+            holepunch_error_received: AtomicUsize::new(0),
         };
         Ok(context)
     }
@@ -1806,6 +1824,68 @@ impl TorrentContext {
     /// Returns true if PEX (Peer Exchange / BEP 11) is enabled for this torrent.
     pub fn is_pex_enabled(&self) -> bool {
         self.config.enable_pex && !self.is_private
+    }
+
+    /// Returns true if the Holepunch extension (BEP 55 / ut_holepunch) is enabled.
+    pub fn is_holepunch_enabled(&self) -> bool {
+        self.config.enable_holepunch
+    }
+
+    /// Returns counts of (rendezvous_sent, rendezvous_rcv, connect_sent, connect_rcv, error_sent, error_rcv).
+    pub fn holepunch_stats(&self) -> (usize, usize, usize, usize, usize, usize) {
+        (
+            self.holepunch_rendezvous_sent.load(Ordering::Relaxed),
+            self.holepunch_rendezvous_received.load(Ordering::Relaxed),
+            self.holepunch_connect_sent.load(Ordering::Relaxed),
+            self.holepunch_connect_received.load(Ordering::Relaxed),
+            self.holepunch_error_sent.load(Ordering::Relaxed),
+            self.holepunch_error_received.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Handles an incoming BEP 55 Rendezvous message from an initiator peer requesting a connection bridge to `target`.
+    ///
+    /// Validates that:
+    /// 1. Target is not the relay itself (returns `NoSelf`).
+    /// 2. Target peer is currently connected in `peer_swarm` (returns `NotConnected`).
+    /// 3. Target peer supports the `ut_holepunch` extension (returns `NoSupport`).
+    ///
+    /// If valid, generates a pair of `Connect` messages for the initiator and target peers.
+    pub fn handle_holepunch_rendezvous(
+        &self,
+        initiator_ip: &str,
+        initiator_port: u16,
+        target: core::net::SocketAddr,
+    ) -> Result<(crate::network::holepunch::HolepunchMessage, crate::network::holepunch::HolepunchMessage), crate::network::holepunch::HolepunchErrorCode> {
+        use crate::network::holepunch::{HolepunchErrorCode, HolepunchMessage};
+
+        let target_ip_str = target.ip().to_string();
+
+        // 1. Check NoSelf: target cannot be the relaying peer itself
+        if target.port() == self.config.listen_port && (target_ip_str == "127.0.0.1" || target_ip_str == "0.0.0.0" || target_ip_str == "::1") {
+            return Err(HolepunchErrorCode::NoSelf);
+        }
+
+        // 2. Check if target peer is connected in the swarm
+        let swarm = self.peer_swarm.read().unwrap();
+        let target_peer_arc = swarm.get(&target_ip_str).ok_or(HolepunchErrorCode::NotConnected)?;
+        let target_peer = target_peer_arc.lock().map_err(|_| HolepunchErrorCode::NotConnected)?;
+
+        // 3. Check if target peer supports ut_holepunch
+        if !target_peer.supports_holepunch && !target_peer.extension_ids.contains_key("ut_holepunch") {
+            return Err(HolepunchErrorCode::NoSupport);
+        }
+
+        // 4. Construct dual Connect messages
+        let initiator_addr: core::net::SocketAddr = match initiator_ip.parse() {
+            Ok(ip) => core::net::SocketAddr::new(ip, initiator_port),
+            Err(_) => return Err(HolepunchErrorCode::NoSuchPeer),
+        };
+
+        let connect_to_initiator = HolepunchMessage::connect(target);
+        let connect_to_target = HolepunchMessage::connect(initiator_addr);
+
+        Ok((connect_to_initiator, connect_to_target))
     }
 
     /// Records dropped peers received from a PEX message.

@@ -111,6 +111,11 @@ pub enum PeerAction {
         length: u32,
         proof_layers: u32,
     },
+    SendHolepunch {
+        target_ip: String,
+        message: crate::network::holepunch::HolepunchMessage,
+    },
+    HolepunchConnect(core::net::SocketAddr),
     DiscoverPeers(Vec<PeerDetails>),
 }
 
@@ -144,6 +149,7 @@ pub struct Peer {
     pub supports_fast_extension: bool,
     pub allowed_fast_pieces: Vec<u32>,
     pub suggested_pieces: Vec<u32>,
+    pub supports_holepunch: bool,
     pub connection_type: String,
 }
 
@@ -191,6 +197,7 @@ impl Peer {
             supports_fast_extension: false,
             allowed_fast_pieces: Vec::new(),
             suggested_pieces: Vec::new(),
+            supports_holepunch: false,
             connection_type,
         }
     }
@@ -441,6 +448,20 @@ impl Peer {
         }
     }
 
+    /// Initiates a BEP 55 Holepunch Rendezvous request to this peer (acting as relay) targeting `target_endpoint`.
+    pub fn initiate_holepunch(
+        &self,
+        target_endpoint: core::net::SocketAddr,
+        tc: &mut TorrentContext,
+    ) -> PeerAction {
+        tc.holepunch_rendezvous_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let message = crate::network::holepunch::HolepunchMessage::rendezvous(target_endpoint);
+        PeerAction::SendHolepunch {
+            target_ip: self.ip.clone(),
+            message,
+        }
+    }
+
     /// Processes an incoming protocol message from the peer, updating connection states, logging events, and writing pieces to disk.
     pub fn handle_peer_message(
         &mut self,
@@ -639,6 +660,9 @@ impl Peer {
                                             if let Ok(id) = num_str.parse::<u8>() {
                                                 if let Ok(key_str) = core::str::from_utf8(key_bytes) {
                                                     self.extension_ids.insert(key_str.to_string(), id);
+                                                    if key_str == "ut_holepunch" {
+                                                        self.supports_holepunch = true;
+                                                    }
                                                 }
                                             }
                                         }
@@ -744,6 +768,48 @@ impl Peer {
 
                         if !discovered.is_empty() {
                             actions.push(PeerAction::DiscoverPeers(discovered));
+                        }
+                    }
+                } else if ext_id == 3 {
+                    if !tc.is_holepunch_enabled() {
+                        return Ok(actions);
+                    }
+                    if let Ok(hp_msg) = crate::network::holepunch::HolepunchMessage::decode(payload) {
+                        match hp_msg.msg_type {
+                            crate::network::holepunch::HolepunchMessageType::Rendezvous => {
+                                tc.holepunch_rendezvous_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                match tc.handle_holepunch_rendezvous(&self.ip, self.port, hp_msg.endpoint) {
+                                    Ok((connect_initiator, connect_target)) => {
+                                        tc.holepunch_connect_sent.fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+                                        actions.push(PeerAction::SendHolepunch {
+                                            target_ip: self.ip.clone(),
+                                            message: connect_initiator,
+                                        });
+                                        actions.push(PeerAction::SendHolepunch {
+                                            target_ip: hp_msg.endpoint.ip().to_string(),
+                                            message: connect_target,
+                                        });
+                                    }
+                                    Err(err_code) => {
+                                        tc.holepunch_error_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        let err_msg = crate::network::holepunch::HolepunchMessage::error(hp_msg.endpoint, err_code);
+                                        actions.push(PeerAction::SendHolepunch {
+                                            target_ip: self.ip.clone(),
+                                            message: err_msg,
+                                        });
+                                    }
+                                }
+                            }
+                            crate::network::holepunch::HolepunchMessageType::Connect => {
+                                tc.holepunch_connect_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                let endpoint_ip = hp_msg.endpoint.ip().to_string();
+                                if !tc.is_peer_in_swarm(&endpoint_ip) {
+                                    actions.push(PeerAction::HolepunchConnect(hp_msg.endpoint));
+                                }
+                            }
+                            crate::network::holepunch::HolepunchMessageType::Error => {
+                                tc.holepunch_error_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
                         }
                     }
                 }
@@ -1003,6 +1069,57 @@ impl Peer {
                     };
                     net.write_message(msg).await?;
                     peer.lock().unwrap().update_last_message_sent();
+                }
+                PeerAction::SendHolepunch { target_ip, message } => {
+                    let target_info = {
+                        let ctx_guard = context.lock().unwrap();
+                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        swarm.get(&target_ip)
+                            .and_then(|p| p.lock().ok())
+                            .and_then(|p| {
+                                p.network.clone().map(|n| (n, *p.extension_ids.get("ut_holepunch").unwrap_or(&3)))
+                            })
+                    };
+                    if let Some((target_net, ext_id)) = target_info {
+                        let payload = message.encode();
+                        let msg = PeerMessage::Extended { ext_id, payload: &payload };
+                        let _ = target_net.write_message(msg).await;
+                    }
+                }
+                PeerAction::HolepunchConnect(addr) => {
+                    let ip = addr.ip().to_string();
+                    let port = addr.port();
+                    let (details, should_connect) = {
+                        let ctx = context.lock().unwrap();
+                        let details = crate::network::tracker::PeerDetails {
+                            ip: ip.clone(),
+                            port,
+                            peer_id: None,
+                            info_hash: ctx.info_hash.clone(),
+                        };
+                        let is_v6_disabled = details.is_ipv6() && !ctx.config.enable_ipv6;
+                        let should = !is_v6_disabled
+                            && !ctx.is_peer_in_swarm(&ip)
+                            && !ctx.is_peer_blacklisted(&ip);
+                        (details, should)
+                    };
+                    if should_connect {
+                        let is_dead = manager.as_ref().map(|m| m.is_peer_dead(&ip)).unwrap_or(false);
+                        if !is_dead {
+                            let tc_arc = {
+                                let p = peer.lock().unwrap();
+                                p.tc.clone()
+                            };
+                            if let Some(ctx2) = tc_arc {
+                                let mgr2 = manager.clone();
+                                std::thread::spawn(move || {
+                                    futures::executor::block_on(crate::session::worker::handle_peer_session(
+                                        details, ctx2, mgr2,
+                                    ));
+                                });
+                            }
+                        }
+                    }
                 }
                 PeerAction::BroadcastCancel { index, begin, length, block_index } => {
                     let peers: Vec<(String, Arc<Mutex<Peer>>)> = {
