@@ -7,7 +7,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
-eframe = { version = "0.28", features = ["glow"] }
+eframe = { version = "0.28", features = ["glow", "wgpu"] }
 bittorrent_rs = { path = "../../library", package = "bittorrent-rs" }
 torrent_client_shared = { path = "../torrent_client_shared" }
 rfd = "0.14"
