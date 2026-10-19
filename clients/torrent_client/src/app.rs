@@ -209,6 +209,7 @@ impl eframe::App for TorrentClientApp {
         let mut toggle_pause = false;
         let mut trigger_delete = false;
 
+        let wants_keyboard = ctx.wants_keyboard_input();
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 trigger_browse = true;
@@ -216,7 +217,7 @@ impl eframe::App for TorrentClientApp {
             if i.modifiers.command && i.key_pressed(egui::Key::Comma) {
                 self.show_settings_dialog = true;
             }
-            if !ctx.wants_keyboard_input() {
+            if !wants_keyboard {
                 if i.key_pressed(egui::Key::Delete) {
                     trigger_delete = true;
                 }
