@@ -16,6 +16,7 @@ members = [
     "clients/bt_webui",
     "clients/sync_hub",
 ]
+default-members = ["clients/torrent_client"]
 
 [workspace.lints.clippy]
 collapsible_if = "allow"
