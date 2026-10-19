@@ -51,6 +51,8 @@ pub struct TorrentClientApp {
     pub settings: AppSettings,
     /// In-app media streaming server for the desktop GUI.
     pub stream_server: Option<std::sync::Arc<crate::stream_server::StreamServer>>,
+    /// Whether initial persistent state has been restored on the first render frame.
+    pub state_loaded: bool,
 }
 
 impl TorrentClientApp {
@@ -79,6 +81,7 @@ impl TorrentClientApp {
             sort_ascending: true,
             settings: AppSettings::default(),
             stream_server,
+            state_loaded: false,
         }
     }
 
@@ -190,6 +193,14 @@ impl eframe::App for TorrentClientApp {
 
     /// Primary UI draw and events update loop called by the egui framework backend.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.state_loaded {
+            self.state_loaded = true;
+            self.load_state();
+            if !self.torrent_path.is_empty() && !self.download_dir.is_empty() {
+                self.create_session();
+            }
+        }
+
         // Repaint every 500 ms so progress updates live
         ctx.request_repaint_after(Duration::from_millis(500));
 

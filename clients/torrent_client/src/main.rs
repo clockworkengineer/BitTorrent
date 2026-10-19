@@ -40,7 +40,6 @@ fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([960.0, 620.0])
-            .with_min_inner_size([800.0, 500.0])
             .with_title("BitTorrent Desktop Client"),
         ..Default::default()
     };
@@ -50,13 +49,11 @@ fn main() {
         Box::new(move |cc| {
             configure_visuals(&cc.egui_ctx);
             let mut app = TorrentClientApp::new(log_rx, log_tx);
-            app.load_state();
             if let (Some(torrent_path), Some(download_dir)) =
                 (initial_torrent_path, initial_download_dir)
             {
                 app.torrent_path = torrent_path;
                 app.download_dir = download_dir;
-                app.create_session();
             }
             Ok(Box::new(app))
         }),
