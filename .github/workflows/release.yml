@@ -1,0 +1,107 @@
+name: Release & Packaging
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact_name: bittorrent-windows-x86_64.zip
+            ext: .exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: bittorrent-linux-x86_64.tar.gz
+            ext: ""
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact_name: bittorrent-macos-x86_64.tar.gz
+            ext: ""
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact_name: bittorrent-macos-aarch64.tar.gz
+            ext: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binaries
+        run: cargo build --workspace --release --target ${{ matrix.target }}
+
+      - name: Package Windows Artifacts
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p package
+          cp target/${{ matrix.target }}/release/torrent_client${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/bt_daemon${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/bt_webui${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/bt_cli${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/sync_hub${{ matrix.ext }} package/
+          cp README.md LICENSE-MIT LICENSE-APACHE package/
+          cd package
+          7z a ../${{ matrix.artifact_name }} *
+
+      - name: Package Unix Artifacts
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p package
+          cp target/${{ matrix.target }}/release/torrent_client${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/bt_daemon${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/bt_webui${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/bt_cli${{ matrix.ext }} package/
+          cp target/${{ matrix.target }}/release/sync_hub${{ matrix.ext }} package/
+          cp README.md LICENSE-MIT LICENSE-APACHE package/
+          tar -czvf ${{ matrix.artifact_name }} -C package .
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.artifact_name }}
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Generate Checksums
+        shell: bash
+        run: |
+          mkdir -p dist
+          find release-artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} dist/ \;
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
