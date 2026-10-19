@@ -273,7 +273,7 @@ pub struct WebTorrentScrapeRequest {
 pub struct WebTorrentScrapeResponse {
     pub action: Option<String>,
     #[serde(default)]
-    pub files: HashMap<String, WebTorrentScrapeFile>,
+    pub files: alloc::collections::BTreeMap<String, WebTorrentScrapeFile>,
     #[serde(rename = "failure reason")]
     pub failure_reason: Option<String>,
 }

@@ -48,6 +48,8 @@ pub struct TorrentSessionBuilder {
     pub(super) selector: Arc<dyn PieceSelector>,
     pub(super) fast_resume: Option<FastResumeData>,
     pub(super) fast_resume_file: Option<PathBuf>,
+    pub(super) web_seeds: Vec<String>,
+    pub(super) auto_inject_webtorrent: bool,
 }
 
 impl TorrentSessionBuilder {
@@ -62,6 +64,8 @@ impl TorrentSessionBuilder {
             selector: Arc::new(RarestFirstSelector),
             fast_resume: None,
             fast_resume_file: None,
+            web_seeds: Vec::new(),
+            auto_inject_webtorrent: true,
         }
     }
 
@@ -76,6 +80,8 @@ impl TorrentSessionBuilder {
             selector: Arc::new(RarestFirstSelector),
             fast_resume: None,
             fast_resume_file: None,
+            web_seeds: Vec::new(),
+            auto_inject_webtorrent: true,
         }
     }
 
@@ -181,6 +187,32 @@ impl TorrentSessionBuilder {
     }
 
 
+    /// Adds an HTTP/HTTPS WebSeed mirror URL (BEP 19) to be used alongside peer downloads.
+    pub fn with_web_seed(mut self, url: impl Into<String>) -> Self {
+        let u = url.into();
+        if !self.web_seeds.contains(&u) {
+            self.web_seeds.push(u);
+        }
+        self
+    }
+
+    /// Adds multiple HTTP/HTTPS WebSeed mirror URLs (BEP 19) to be used alongside peer downloads.
+    pub fn with_web_seeds(mut self, urls: impl IntoIterator<Item = String>) -> Self {
+        for u in urls {
+            if !self.web_seeds.contains(&u) {
+                self.web_seeds.push(u);
+            }
+        }
+        self
+    }
+
+    /// Configures whether canonical public WebTorrent WebSocket trackers are automatically
+    /// injected when bootstrapping a magnet session with WebTorrent enabled (default: `true`).
+    pub fn auto_inject_webtorrent_trackers(mut self, auto_inject: bool) -> Self {
+        self.auto_inject_webtorrent = auto_inject;
+        self
+    }
+
     /// Consumes the builder and constructs the `TorrentSession`.
     ///
     /// # Errors
@@ -197,14 +229,18 @@ impl TorrentSessionBuilder {
 
         let mut session = match &self.source {
             TorrentSource::File(path) => {
-                TorrentSession::new_with_options_internal(
+                let mut sess = TorrentSession::new_with_options_internal(
                     path,
                     &self.download_path,
                     self.seeding,
                     self.config,
                     self.selector,
                     fast_resume,
-                )?
+                )?;
+                if !self.web_seeds.is_empty() {
+                    sess.inject_web_seeds(self.web_seeds);
+                }
+                sess
             }
             TorrentSource::Magnet(link) => {
                 TorrentSession::new_magnet_with_options_internal(
@@ -212,6 +248,8 @@ impl TorrentSessionBuilder {
                     &self.download_path,
                     self.config,
                     self.selector,
+                    self.web_seeds,
+                    self.auto_inject_webtorrent,
                 )?
             }
         };

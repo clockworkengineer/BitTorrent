@@ -192,18 +192,31 @@ impl TorrentSession {
         download_path: impl AsRef<Path>,
         config: SessionConfig,
         selector: Arc<dyn PieceSelector>,
+        custom_web_seeds: Vec<String>,
+        auto_inject_webtorrent: bool,
     ) -> Result<Self, BitTorrentError> {
-        let magnet = MagnetLink::parse(magnet_link)?;
+        let mut magnet = MagnetLink::parse(magnet_link)?;
         let download_path = download_path.as_ref().to_path_buf();
         fs::create_dir_all(&download_path)?;
 
+        for ws in custom_web_seeds {
+            magnet.add_web_seed(ws);
+        }
+
         let context = Arc::new(Mutex::new(TorrentContext::new_magnet_bootstrap(
-            magnet.info_hash,
-            magnet.trackers,
+            magnet.info_hash.clone(),
+            magnet.trackers.clone(),
             selector,
             &download_path,
             config.clone(),
         )?));
+
+        // Inject WebSeeds and WebTorrent WebSocket trackers
+        crate::network::webtorrent_injector::WebTorrentMagnetInjector::inject_into_shared_context(
+            &magnet,
+            &context,
+            auto_inject_webtorrent && (config.enable_webtorrent || config.webtorrent_bridge_mode),
+        );
 
         let (task_tx, task_rx) = std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
         let executor_thread = spawn_executor(context.clone(), task_rx);
@@ -225,6 +238,74 @@ impl TorrentSession {
         config.choking_strategy.spawn_choking_loop(session.context.clone(), session.task_tx.clone(), None);
 
         Ok(session)
+    }
+
+    /// Dynamically injects one or more BEP 19 WebSeed mirror URLs into the active session.
+    ///
+    /// If the WebSeed download loop is not yet running and the session is downloading,
+    /// it will automatically start the background WebSeed download loop.
+    /// Returns the number of newly added WebSeeds.
+    pub fn inject_web_seeds(&mut self, web_seeds: Vec<String>) -> usize {
+        let mut added = 0;
+        let mut should_spawn_webseed = false;
+        {
+            let mut ctx = self.context.lock().unwrap();
+            for ws in web_seeds {
+                if ctx.add_web_seed(ws) {
+                    added += 1;
+                }
+            }
+            if added > 0 && ctx.status == TorrentStatus::Downloading && !ctx.web_seeds.is_empty() {
+                should_spawn_webseed = true;
+            }
+        }
+        #[cfg(feature = "webseed")]
+        if should_spawn_webseed {
+            let active_seeds = self.context.lock().unwrap().web_seeds.clone();
+            let handle = crate::webseed::start_webseed_loop(self.context.clone(), active_seeds);
+            self.peer_workers.lock().unwrap().push(handle);
+        }
+        added
+    }
+
+    /// Dynamically injects WebTorrent WebSocket tracker URLs into the active session.
+    ///
+    /// If WebTorrent bridge mode is active, triggers initial offer generation.
+    /// Returns the number of newly added WebSocket trackers.
+    pub fn inject_websocket_trackers(&mut self, trackers: Vec<String>) -> usize {
+        let mut added = 0;
+        {
+            let mut ctx = self.context.lock().unwrap();
+            for tr in trackers {
+                if crate::network::webtorrent_injector::WebTorrentMagnetInjector::is_websocket_tracker(&tr) {
+                    if ctx.add_tracker_url(tr) {
+                        added += 1;
+                    }
+                }
+            }
+            #[cfg(feature = "webrtc")]
+            if added > 0 && ctx.config.webtorrent_bridge_mode {
+                let _ = ctx.webrtc_bridge.generate_offers(4);
+            }
+        }
+        added
+    }
+
+    /// Returns a list of currently active WebSeed mirror URLs registered with this session.
+    pub fn web_seeds(&self) -> Vec<String> {
+        self.context.lock().unwrap().web_seeds.clone()
+    }
+
+    /// Returns a list of currently active WebTorrent WebSocket tracker URLs registered with this session.
+    pub fn websocket_trackers(&self) -> Vec<String> {
+        self.context
+            .lock()
+            .unwrap()
+            .tracker_urls
+            .iter()
+            .filter(|u| crate::network::webtorrent_injector::WebTorrentMagnetInjector::is_websocket_tracker(u))
+            .cloned()
+            .collect()
     }
 
     /// Returns a reference-counted mutex guarding the active torrent's context.

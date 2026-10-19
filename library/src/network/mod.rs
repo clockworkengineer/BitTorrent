@@ -25,3 +25,5 @@ pub mod tracker;
 pub mod utp;
 #[cfg(all(feature = "std", feature = "webrtc"))]
 pub mod webrtc;
+#[cfg(feature = "std")]
+pub mod webtorrent_injector;

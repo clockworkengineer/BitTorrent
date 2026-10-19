@@ -408,6 +408,33 @@ impl TorrentContext {
         }
     }
 
+    /// Adds a BEP 19 WebSeed mirror URL to the context if not already present.
+    /// Returns `true` if the URL was newly added.
+    pub fn add_web_seed(&mut self, url: impl Into<String>) -> bool {
+        let u = url.into();
+        if !self.web_seeds.contains(&u) {
+            self.web_seeds.push(u);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Adds an announce tracker URL to the context if not already present.
+    /// Returns `true` if the URL was newly added.
+    pub fn add_tracker_url(&mut self, url: impl Into<String>) -> bool {
+        let u = url.into();
+        if !self.tracker_urls.contains(&u) {
+            if self.tracker_url.is_empty() {
+                self.tracker_url = u.clone();
+            }
+            self.tracker_urls.push(u);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Transitions a magnet bootstrap context to a standard torrent download session once metadata is fetched.
     ///
     /// # Errors

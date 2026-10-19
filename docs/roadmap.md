@@ -529,17 +529,39 @@ Implemented advanced SACK-driven fast loss detection, RFC 6298 microsecond RTT/R
   - Accessible via `UtpSocketAdapter::pipeline_metrics()`.
 - **Test Suite**: Dedicated integration test suite in `library/tests/utp_pipeline_tests.rs` (5/5 tests passing) covering circular wraparound gap detection, burst loss scaling, RFC 6298 RTO exponential backoff, bounded OOO buffer capacity enforcement, and end-to-end SACK fast retransmission over loopback UDP sockets.
 
+### Phase 39: WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector
+
+Implemented automated extraction of BEP 19 WebSeeds (`ws=`), exact sources (`xs=`), acceptable sources (`as=`), and WebSocket trackers (`wss://`/`ws://`) from Magnet URIs, along with automated public WebTorrent signaling injection for instant browser-to-desktop bridging:
+- **Enhanced Magnet URI Parser & Serializer (`MagnetLink`, `MagnetUriBuilder`)**:
+  - Full dual-hash support: Parses both v1 (`urn:btih:`) and BEP 52 v2 SHA-256 (`urn:btmh:1220...`) info-hashes simultaneously in hybrid swarms.
+  - BEP 19 HTTP/HTTPS WebSeed extraction: Parses multiple `ws=` parameters directly into `magnet.web_seeds`, alongside `xs=` (exact source) and `as=` (acceptable source).
+  - Categorization helpers: `websocket_trackers()`, `udp_trackers()`, `http_trackers()`, `is_hybrid()`, `is_v2()`, `is_v2_only()`, `is_v1_only()`, `is_webtorrent()`, and `has_web_seeds()`.
+  - Canonical RFC 3986 percent-encoding serializer (`to_uri()`) preserving unreserved characters while encoding parameters.
+  - Programmatic `MagnetUriBuilder` with `.with_webtorrent_defaults()` chaining canonical WebTorrent trackers.
+- **WebTorrent Magnet & WebSeed Injector Service (`WebTorrentMagnetInjector`)**:
+  - `extract_trackers`: Produces structured `TrackerExtractionReport` breaking down WebSocket, UDP, HTTP, and WebSeed mirrors.
+  - `inject_websocket_trackers` & `inject_web_seeds`: Appends trackers or mirrors while strictly preventing duplicates.
+  - `inject_into_uri`: Direct utility rewriting any raw magnet URI string with injected mirrors or public WebTorrent trackers (`DEFAULT_WEBTORRENT_TRACKERS`).
+  - `inject_into_context`: Injects extracted WebSeeds into `TorrentContext.web_seeds`, wires WebSocket trackers into `tracker_urls`, and when bridge mode is active, pre-generates WebTorrent SDP offers for instant browser bridging without delay.
+- **Session & Builder Integration**:
+  - `TorrentSessionBuilder::from_magnet` now automatically populates WebSeeds and auto-injects WebTorrent trackers when `webtorrent_bridge_mode` or `enable_webtorrent` is set.
+  - Added builder methods `.with_web_seed(url)` and `.with_web_seeds(urls)` allowing custom WebSeeds to be attached to file or magnet sessions.
+  - Dynamic runtime injection on `TorrentSession`: `inject_web_seeds()` (auto-spawns WebSeed download worker if downloading) and `inject_websocket_trackers()` (updates bridge coordinator).
+- **CLI Tooling (`bt-cli`)**:
+  - Added `bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]` command displaying detailed inspection tables (Display Name, v1/v2 Infohashes, Format, WebTorrent capability, WebSocket/UDP/HTTP tracker breakdowns, WebSeeds) and outputting the updated canonical Magnet URI.
+- **Test Suite**: Dedicated integration test suite in `library/tests/webtorrent_magnet_injector_tests.rs` (7/7 tests passing) covering hybrid/v2 multihash parsing, tracker categorization, duplicate prevention, context offer pre-generation, builder with defaults, and session runtime injection.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector**: Automated extraction of `ws=` and `wss=` trackers from Magnet links for instant browser bridge bootstrapping.
+1. **BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving**: Persistent on-disk caching of intermediate Merkle tree layers to serve incoming BEP 52 `hash_request` messages with minimal I/O overhead.
 
-2. **BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving**: Persistent on-disk caching of intermediate Merkle tree layers to serve incoming BEP 52 `hash_request` messages with minimal I/O overhead.
+2. **Asynchronous Piece Hash Verification Worker Pool**: Multi-threaded background piece hashing offloading CPU-intensive SHA-1/SHA-256 verifications from the main async loop.
 
-3. **Asynchronous Piece Hash Verification Worker Pool**: Multi-threaded background piece hashing offloading CPU-intensive SHA-1/SHA-256 verifications from the main async loop.
+3. **BEP 53 Selective Magnet Download & Range-Based Metadata Fetching**: Fine-grained selection indices and expedited partial file metadata resolution over peer connections.
 
 
 

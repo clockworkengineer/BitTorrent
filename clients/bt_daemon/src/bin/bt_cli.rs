@@ -65,6 +65,7 @@ fn print_usage() {
     println!("  bt-cli resume-info <path-to-fastresume-file>");
     println!("  bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]");
     println!("  bt-cli v2-info <torrent-path>");
+    println!("  bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]");
     println!("  bt-cli shutdown");
 }
 
@@ -329,6 +330,103 @@ fn main() {
         if !is_v2 {
             println!("\n  Notice: This is a legacy v1 torrent. You can upgrade it to Hybrid or Pure v2 using:");
             println!("    bt-cli upgrade \"{}\" <data-dir>", torrent_path.display());
+        }
+
+        return;
+    }
+
+    if command == "magnet-info" {
+        if args.len() < 3 {
+            eprintln!("Error: 'magnet-info' command requires a magnet URI.");
+            eprintln!("Usage: bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]");
+            return;
+        }
+        let magnet_uri = &args[2];
+        let mut magnet = match bittorrent_rs::MagnetLink::parse(magnet_uri) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Failed to parse magnet URI: {}", e);
+                return;
+            }
+        };
+
+        let mut inject_webtorrent = false;
+        let mut custom_web_seeds = Vec::new();
+        let mut idx = 3;
+        while idx < args.len() {
+            if args[idx] == "--inject-webtorrent" {
+                inject_webtorrent = true;
+            } else if args[idx] == "--web-seed" && idx + 1 < args.len() {
+                custom_web_seeds.push(args[idx + 1].clone());
+                idx += 1;
+            }
+            idx += 1;
+        }
+
+        println!("BitTorrent Magnet URI Inspection:");
+        println!("  Display Name:     {}", magnet.display_name.as_deref().unwrap_or("Unknown"));
+
+        let mut v1_hex = String::with_capacity(40);
+        for b in &magnet.info_hash {
+            v1_hex.push_str(&format!("{:02x}", b));
+        }
+        println!("  v1 Infohash:      {}", v1_hex);
+
+        if let Some(ref v2) = magnet.v2_info_hash {
+            let mut v2_hex = String::with_capacity(64);
+            for b in v2 {
+                v2_hex.push_str(&format!("{:02x}", b));
+            }
+            println!("  v2 Infohash:      {}", v2_hex);
+        } else {
+            println!("  v2 Infohash:      N/A");
+        }
+
+        let format_str = if magnet.is_hybrid() {
+            "Hybrid (v1 + v2)"
+        } else if magnet.is_v2_only() {
+            "Pure v2 (BEP 52)"
+        } else {
+            "v1 (Legacy SHA-1)"
+        };
+        println!("  Format:           {}", format_str);
+        println!("  WebTorrent Cap:   {}", if magnet.is_webtorrent() { "Yes (WebSocket trackers present)" } else { "No" });
+
+        let report = bittorrent_rs::WebTorrentMagnetInjector::extract_trackers(&magnet);
+        println!("\n  Trackers ({} total):", report.total_trackers);
+        println!("    WebSocket ({}):", report.websocket_trackers.len());
+        for t in &report.websocket_trackers {
+            println!("      - {}", t);
+        }
+        println!("    UDP ({}):", report.udp_trackers.len());
+        for t in &report.udp_trackers {
+            println!("      - {}", t);
+        }
+        println!("    HTTP/HTTPS ({}):", report.http_trackers.len());
+        for t in &report.http_trackers {
+            println!("      - {}", t);
+        }
+
+        println!("\n  WebSeeds ({}):", magnet.web_seeds.len());
+        for ws in &magnet.web_seeds {
+            println!("    - {}", ws);
+        }
+
+        if inject_webtorrent || !custom_web_seeds.is_empty() {
+            let injected_ws = bittorrent_rs::WebTorrentMagnetInjector::inject_web_seeds(&mut magnet, &custom_web_seeds);
+            let injected_trackers = if inject_webtorrent {
+                bittorrent_rs::WebTorrentMagnetInjector::inject_websocket_trackers(&mut magnet, None)
+            } else {
+                0
+            };
+            println!("\n  Injected:");
+            println!("    WebSeeds Added:       {}", injected_ws);
+            println!("    WS Trackers Added:    {}", injected_trackers);
+            println!("\n  Updated Magnet URI:");
+            println!("    {}", magnet.to_uri());
+        } else {
+            println!("\n  Canonical Magnet URI:");
+            println!("    {}", magnet.to_uri());
         }
 
         return;

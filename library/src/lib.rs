@@ -162,7 +162,12 @@ pub use utils::io_traits::SocketFactory;
 pub use utils::io_traits::{HttpClient, UreqHttpClient};
 #[cfg(feature = "std")]
 pub use session::manager::Manager;
-pub use core::magnet::MagnetLink;
+pub use core::magnet::{percent_decode, percent_encode, MagnetLink, MagnetUriBuilder};
+#[cfg(feature = "std")]
+pub use network::webtorrent_injector::{
+    DEFAULT_WEBTORRENT_TRACKERS, InjectionSummary, TrackerExtractionReport,
+    WebTorrentMagnetInjector,
+};
 pub use core::metainfo::{FileDetails, FilePriority, MetaInfoFile};
 #[cfg(feature = "std")]
 pub use storage::assembler::Assembler;
