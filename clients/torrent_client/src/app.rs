@@ -249,20 +249,11 @@ impl eframe::App for TorrentClientApp {
                 let mut total_up_bps = 0u64;
                 let mut active_count = 0;
                 for s in &self.sessions {
-                    if s.last_status == "Downloading" {
-                        total_down_bps += s.last_bps;
+                    if s.last_status == "Downloading" || s.last_status == "Seeding" {
                         active_count += 1;
                     }
-                    let context_arc = s.session.context.clone();
-                    if let Ok(ctx_guard) = context_arc.try_lock() {
-                        if let Ok(swarm) = ctx_guard.peer_swarm.read() {
-                            for peer_arc in swarm.values() {
-                                if let Ok(peer) = peer_arc.try_lock() {
-                                    total_up_bps += peer.rolling_upload_rate as u64;
-                                }
-                            }
-                        }
-                    }
+                    total_down_bps += s.last_bps;
+                    total_up_bps += s.last_upload_bps;
                 }
 
                 ui.label(format!("Active Torrents: {}", active_count));

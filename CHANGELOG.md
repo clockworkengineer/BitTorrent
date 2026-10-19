@@ -42,3 +42,18 @@ All notable changes to this project will be documented in this file.
 - Introduced `SwarmReadAccess`, `PieceWriteAccess`, and `SessionStatusQuery` trait views on `TorrentContext`.
 - Extracted `Announcer` trait to support extensible tracker announcer implementations (OCP).
 - Added comprehensive SOLID refactoring plan in `docs/solid-refactor-plan.md`.
+
+### Fixed
+- Fixed transfer rate flickering to 0 B/s in `TorrentContext` by applying Exponential Moving Average (EMA) smoothing (70% previous, 30% sample) and graceful rate decay rather than instantaneous resets when no block completed in an update interval.
+- Fixed peer discovery staying at 0 peers:
+  - Fixed premature state check in `Tracker::queue_new_peers` that was silently discarding all peers discovered on initial announce because `TorrentSession::start_download` had not yet transitioned `TorrentContext` status from `Initialised` to `Downloading`.
+  - Moved `context.start_downloading()` to the start of `TorrentSession::start_download()` so the session is in active downloading state before peer worker receivers, DHT, and tracker announcers start.
+  - Relaxed worker candidate receiver in `session.rs` to accept peers unless the session is explicitly paused or ended.
+  - Enhanced `Tracker::announce_with_fallback` to accumulate and deduplicate peer candidates across all configured tier trackers instead of stopping prematurely at the first tracker if it returned 0 peers.
+  - Fixed `TorrentContext::add_peer` return value when inserting into `peer_swarm` and added handshake read retries in `peer_network.rs`.
+- Fixed peer connections dropping and resetting:
+  - Expanded `worker.rs` peer message buffer from 16 KiB to 128 KiB to support large bitfields and extended handshakes without parse errors.
+  - Increased block request timeout from 2s to 15s to prevent premature cancellations and choking.
+  - Fixed premature peer loop breakout in `worker.rs` when downloads complete, allowing seed connections to remain active.
+  - Added partial-frame retry in `peer_network.rs` (`read_exact` and `read_message`) on `WouldBlock`/`TimedOut` to prevent stream framing desynchronization.
+  - Added peer count retention grace period in `SessionState` and stabilized UI status bar speed aggregation in `app.rs`.

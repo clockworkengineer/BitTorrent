@@ -402,7 +402,9 @@ impl Tracker {
     }
 
     /// Performs the announce request, falling back to alternate URLs if the primary fails.
+    /// Performs the announce request, falling back to alternate URLs if the primary fails.
     fn announce_with_fallback(&mut self) -> Result<AnnounceResponse, BitTorrentError> {
+        let mut combined_response: Option<AnnounceResponse> = None;
         let mut last_error = None;
         let original_tracker_url = self.tracker_url.clone();
         for tracker_url in &self.tracker_urls.clone() {
@@ -426,7 +428,16 @@ impl Tracker {
                                 continue;
                             }
                         } else {
-                            return Ok(response);
+                            if let Some(ref mut comb) = combined_response {
+                                for p in response.peer_list {
+                                    if !comb.peer_list.iter().any(|existing| existing.ip == p.ip && existing.port == p.port) {
+                                        comb.peer_list.push(p);
+                                    }
+                                }
+                            } else {
+                                combined_response = Some(response);
+                            }
+                            break;
                         }
                     }
                     Err(err) => {
@@ -439,6 +450,14 @@ impl Tracker {
                     }
                 }
             }
+            if let Some(ref comb) = combined_response {
+                if comb.peer_list.len() >= self.num_wanted {
+                    break;
+                }
+            }
+        }
+        if let Some(resp) = combined_response {
+            return Ok(resp);
         }
         Err(last_error.unwrap_or_else(|| {
             BitTorrentError::Parse("No tracker URLs could be reached.".to_string())
@@ -471,9 +490,7 @@ impl Tracker {
         }
 
         let status = self.tc.lock().unwrap().status;
-        if status != crate::core::torrent_context::TorrentStatus::Downloading
-            && status != crate::core::torrent_context::TorrentStatus::Seeding
-        {
+        if status == crate::core::torrent_context::TorrentStatus::Ended {
             return;
         }
 

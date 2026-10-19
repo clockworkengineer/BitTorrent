@@ -395,13 +395,17 @@ impl TorrentSession {
     /// # }
     /// ```
     pub fn start_download(&mut self) -> Result<(), BitTorrentError> {
-        let context = self.context.lock().unwrap();
-        if context.status == TorrentStatus::Seeding {
-            return Err(BitTorrentError::Parse(
-                "Cannot start download while torrent is configured for seeding.".into(),
-            ));
+        {
+            let mut context = self.context.lock().unwrap();
+            if context.status == TorrentStatus::Seeding {
+                return Err(BitTorrentError::Parse(
+                    "Cannot start download while torrent is configured for seeding.".into(),
+                ));
+            }
+            context.start_downloading()?;
         }
 
+        let context = self.context.lock().unwrap();
         let config = context.config.clone();
         let info_hash = context.info_hash.clone();
         drop(context);
@@ -415,7 +419,7 @@ impl TorrentSession {
         thread::spawn(move || {
             while let Ok(peer_details) = peer_rx.recv() {
                 let pg = context_clone.lock().unwrap();
-                if pg.status == TorrentStatus::Downloading || pg.status == TorrentStatus::Seeding {
+                if pg.status != TorrentStatus::Ended && pg.status != TorrentStatus::Paused {
                     if !pg.peer_swarm.read().unwrap().contains_key(&peer_details.ip) {
                         // Prune finished worker handles and enforce connection limit
                         {
@@ -516,8 +520,7 @@ impl TorrentSession {
         let _ = tracker.start_announcing();
         let _ = self.start_reannounce_loop(tracker);
 
-        let mut context = self.context.lock().unwrap();
-        context.start_downloading()
+        Ok(())
     }
 
     /// Pauses the torrent download session.

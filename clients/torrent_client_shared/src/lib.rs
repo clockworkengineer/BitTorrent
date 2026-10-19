@@ -15,6 +15,7 @@ pub struct SessionState {
     pub last_downloaded: u64,
     pub last_total: u64,
     pub last_uploaded: u64,
+    pub last_peer_seen_time: Option<std::time::Instant>,
 }
 
 impl SessionState {
@@ -32,6 +33,7 @@ impl SessionState {
             last_downloaded: 0,
             last_total: 0,
             last_uploaded: 0,
+            last_peer_seen_time: None,
         };
         if let Ok(ctx_guard) = state.session.context().lock() {
             state.update_fields(&ctx_guard);
@@ -47,8 +49,26 @@ impl SessionState {
             .unwrap_or_else(|| ctx_guard.file_name.clone());
         self.last_progress = ctx_guard.progress_percent() / 100.0;
         self.last_status = format!("{:?}", ctx_guard.status);
-        self.last_peers_connected = ctx_guard.peer_swarm.read().unwrap().len();
-        self.last_peers_active = ctx_guard.number_of_unchoked_peers();
+
+        let current_peers = ctx_guard.peer_swarm.read().unwrap().len();
+        if current_peers > 0 {
+            self.last_peers_connected = current_peers;
+            self.last_peer_seen_time = Some(std::time::Instant::now());
+        } else if let Some(last_seen) = self.last_peer_seen_time {
+            // Retain the last known positive peer count for a 2.5-second grace period
+            // to prevent flickering to 0 during momentary reconnect/handshake transitions
+            if last_seen.elapsed() > std::time::Duration::from_millis(2500) {
+                self.last_peers_connected = 0;
+            }
+        } else {
+            self.last_peers_connected = 0;
+        }
+
+        let active_peers = ctx_guard.number_of_unchoked_peers();
+        if active_peers > 0 || self.last_peers_connected == 0 {
+            self.last_peers_active = active_peers;
+        }
+
         self.last_bps = ctx_guard.bytes_per_second() as u64;
         self.last_upload_bps = ctx_guard.upload_bytes_per_second() as u64;
         self.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);

@@ -1541,7 +1541,8 @@ impl TorrentContext {
             return false;
         }
         if self.is_space_in_swarm(&ip) {
-            self.peer_swarm.write().unwrap().insert(ip, peer).is_none()
+            self.peer_swarm.write().unwrap().insert(ip, peer);
+            true
         } else {
             false
         }
@@ -1871,7 +1872,7 @@ impl TorrentContext {
         (false, current_piece)
     }
 
-    /// Estimates the current download transfer rate in bytes per second.
+    /// Estimates the current download transfer rate in bytes per second with EMA smoothing.
     pub fn bytes_per_second(&self) -> i64 {
         let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
             if let Ok(guard) = self.download_speed_tracker.lock() {
@@ -1889,7 +1890,20 @@ impl TorrentContext {
         };
 
         if needs_update {
-            let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+            let instant_bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+            let bps = if delta_bytes > 0 {
+                if old_bps > 0 {
+                    ((old_bps as f64 * 0.7) + (instant_bps as f64 * 0.3)).round() as i64
+                } else {
+                    instant_bps
+                }
+            } else if old_bps > 0 {
+                let decayed = (old_bps as f64 * 0.75).round() as i64;
+                if decayed < 50 { 0 } else { decayed }
+            } else {
+                0
+            };
+
             if let Ok(mut guard) = self.download_speed_tracker.lock() {
                 *guard = (now, current_bytes, bps);
             }
@@ -1899,7 +1913,7 @@ impl TorrentContext {
         }
     }
 
-    /// Estimates the current upload transfer rate in bytes per second.
+    /// Estimates the current upload transfer rate in bytes per second with EMA smoothing.
     pub fn upload_bytes_per_second(&self) -> i64 {
         let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
             if let Ok(guard) = self.upload_speed_tracker.lock() {
@@ -1917,7 +1931,20 @@ impl TorrentContext {
         };
 
         if needs_update {
-            let bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+            let instant_bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
+            let bps = if delta_bytes > 0 {
+                if old_bps > 0 {
+                    ((old_bps as f64 * 0.7) + (instant_bps as f64 * 0.3)).round() as i64
+                } else {
+                    instant_bps
+                }
+            } else if old_bps > 0 {
+                let decayed = (old_bps as f64 * 0.75).round() as i64;
+                if decayed < 50 { 0 } else { decayed }
+            } else {
+                0
+            };
+
             if let Ok(mut guard) = self.upload_speed_tracker.lock() {
                 *guard = (now, current_bytes, bps);
             }

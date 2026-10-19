@@ -32,7 +32,7 @@ pub async fn delay(duration: Duration) {
     }
 }
 
-/// Checks outstanding block requests for a peer and releases/cancels them on timeout (> 2 seconds).
+/// Checks outstanding block requests for a peer and releases/cancels them on timeout (> 15 seconds).
 async fn check_request_timeouts(
     peer: &Mutex<Peer>,
     context: &Mutex<TorrentContext>,
@@ -41,7 +41,7 @@ async fn check_request_timeouts(
         let mut pg = peer.lock().unwrap();
         let mut timed_out = Vec::new();
         pg.reserved_blocks.retain(|&(pn, bi, time)| {
-            if time.elapsed() > Duration::from_secs(2) {
+            if time.elapsed() > Duration::from_secs(15) {
                 timed_out.push((pn, bi));
                 false
             } else {
@@ -526,15 +526,9 @@ async fn run_peer_loop(
     context: &Arc<Mutex<TorrentContext>>,
     manager: &Option<Arc<Manager>>,
 ) {
-    let mut static_buf_opt = crate::util::acquire_buffer();
-    let mut _fallback_buf = None;
-    let read_buffer_backing = match &mut static_buf_opt {
-        Some(buf) => buf.as_mut(),
-        None => {
-            _fallback_buf = Some(vec![0u8; crate::util::BUFFER_SIZE]);
-            _fallback_buf.as_mut().unwrap().as_mut_slice()
-        }
-    };
+    // Allocate a generous 128 KiB buffer to comfortably fit large bitfields, extended handshakes, and piece blocks without truncation
+    let mut heap_buf = vec![0u8; 131072];
+    let read_buffer_backing = heap_buf.as_mut_slice();
     let mut last_pex_sent = Instant::now();
     let mut sent_peers: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
 
@@ -677,9 +671,7 @@ async fn run_peer_loop(
             }
         }
 
-        if context.lock().unwrap().is_download_complete() {
-            break;
-        }
+        // If download completed, we continue running in the loop to seed pieces to peers
     }
 }
 

@@ -123,13 +123,34 @@ impl PeerNetwork {
     /// Reads exactly enough bytes from the socket to fill the provided buffer.
     pub async fn read_exact(&self, buffer: &mut [u8]) -> Result<(), BitTorrentError> {
         let mut offset = 0;
+        let mut retries = 0;
         while offset < buffer.len() {
             let limit = buffer.len() - offset;
-            let n = self.read(&mut buffer[offset..], limit).await?;
-            if n == 0 {
-                return Err(BitTorrentError::Parse("Unexpected EOF reading socket".into()));
+            match self.read(&mut buffer[offset..], limit).await {
+                Ok(0) => {
+                    return Err(BitTorrentError::Parse("Unexpected EOF reading socket".into()));
+                }
+                Ok(n) => {
+                    offset += n;
+                    retries = 0;
+                }
+                Err(err) => {
+                    let is_timeout_or_wouldblock = match &err {
+                        BitTorrentError::Io(e) => {
+                            e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut
+                        }
+                        _ => false,
+                    };
+                    if is_timeout_or_wouldblock && offset > 0 && retries < 15 {
+                        retries += 1;
+                        #[cfg(feature = "std")]
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        continue;
+                    }
+                    return Err(err);
+                }
             }
-            offset += n;
         }
         Ok(())
     }
@@ -147,7 +168,36 @@ impl PeerNetwork {
     /// Reads and decodes a BitTorrent connection handshake from the network stream.
     pub async fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>, [u8; 8]), BitTorrentError> {
         let mut buffer = [0u8; crate::constants::INITIAL_HANDSHAKE_LENGTH];
-        self.read_exact(&mut buffer).await?;
+        let mut offset = 0;
+        let mut retries = 0;
+        while offset < buffer.len() {
+            let limit = buffer.len() - offset;
+            match self.read(&mut buffer[offset..], limit).await {
+                Ok(0) => {
+                    return Err(BitTorrentError::Parse("Unexpected EOF reading handshake".into()));
+                }
+                Ok(n) => {
+                    offset += n;
+                    retries = 0;
+                }
+                Err(err) => {
+                    let is_timeout_or_wouldblock = match &err {
+                        BitTorrentError::Io(e) => {
+                            e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut
+                        }
+                        _ => false,
+                    };
+                    if is_timeout_or_wouldblock && retries < 3 {
+                        retries += 1;
+                        #[cfg(feature = "std")]
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
         PeerMessage::handshake_decode(&buffer)
     }
 
@@ -174,10 +224,48 @@ impl PeerNetwork {
                 read_buffer.len()
             )));
         }
-        let mut id_buf = [0u8; 1];
-        self.read_exact(&mut id_buf).await?;
-        let id = id_buf[0];
 
+        // Once the 4-byte length prefix has been read, the connection framing has committed
+        // to a message of `length` bytes. Read the full payload into `read_buffer[..length]`.
+        // If timeouts occur while reading the payload, retry so packet delivery delay
+        // doesn't tear down framing.
+        let mut offset = 0;
+        let mut retries = 0;
+        while offset < length {
+            let limit = length - offset;
+            match self.read(&mut read_buffer[offset..length], limit).await {
+                Ok(0) => {
+                    return Err(BitTorrentError::Parse("Unexpected EOF reading message payload".into()));
+                }
+                Ok(n) => {
+                    offset += n;
+                    retries = 0;
+                }
+                Err(err) => {
+                    let is_timeout_or_wouldblock = match &err {
+                        BitTorrentError::Io(e) => {
+                            e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut
+                        }
+                        _ => false,
+                    };
+                    if is_timeout_or_wouldblock && retries < 15 {
+                        retries += 1;
+                        #[cfg(feature = "std")]
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        continue;
+                    }
+                    return Err(BitTorrentError::Parse(alloc::format!(
+                        "Failed to read full message payload (got {} of {} bytes): {}",
+                        offset,
+                        length,
+                        err
+                    )));
+                }
+            }
+        }
+
+        let id = read_buffer[0];
         // Enforce strict length limits by message ID
         match id {
             0..=3 | 14 | 15 => {
@@ -235,10 +323,6 @@ impl PeerNetwork {
             }
         }
 
-        read_buffer[0] = id;
-        if length > 1 {
-            self.read_exact(&mut read_buffer[1..length]).await?;
-        }
         PeerMessage::decode(&read_buffer[..length])
     }
 
