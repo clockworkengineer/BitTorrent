@@ -143,6 +143,8 @@ impl eframe::App for TorrentClientApp {
         for state in &mut self.sessions {
             let _ = state.session.stop();
         }
+
+        std::process::exit(0);
     }
 
     /// Primary UI draw and events update loop called by the egui framework backend.

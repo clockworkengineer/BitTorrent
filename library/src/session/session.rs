@@ -517,7 +517,6 @@ impl TorrentSession {
         if let Some(ref mgr) = self.manager {
             tracker.set_peer_manager(mgr.clone());
         }
-        let _ = tracker.start_announcing();
         let _ = self.start_reannounce_loop(tracker);
 
         Ok(())
@@ -996,6 +995,7 @@ impl TorrentSession {
         let manager = self.manager.clone();
 
         let _ = self.task_tx.send(Box::pin(async move {
+            let _ = tracker.start_announcing();
             let mut announced_completed = false;
             loop {
                 let min_reannounce = {

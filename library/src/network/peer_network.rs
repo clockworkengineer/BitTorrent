@@ -341,7 +341,7 @@ impl PeerNetwork {
 #[cfg(feature = "std")]
 #[derive(Debug)]
 pub struct TcpSocket {
-    stream: Arc<Mutex<TcpStream>>,
+    stream: Arc<TcpStream>,
 }
 
 #[cfg(feature = "std")]
@@ -352,7 +352,7 @@ impl TcpSocket {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
         TcpSocket {
-            stream: Arc::new(Mutex::new(stream)),
+            stream: Arc::new(stream),
         }
     }
 }
@@ -360,30 +360,21 @@ impl TcpSocket {
 #[cfg(feature = "std")]
 impl AsyncSocket for TcpSocket {
     async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError> {
-        let read_res = {
-            let mut lock = self.stream.lock().unwrap();
-            lock.read(buf)
-        };
-        match read_res {
+        match (&*self.stream).read(buf) {
             Ok(n) => Ok(n),
             Err(e) => Err(BitTorrentError::Io(e)),
         }
     }
 
     async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
-        let write_res = {
-            let mut lock = self.stream.lock().unwrap();
-            lock.write_all(buf)
-        };
-        match write_res {
+        match (&*self.stream).write_all(buf) {
             Ok(_) => Ok(buf.len()),
             Err(e) => Err(BitTorrentError::Io(e)),
         }
     }
 
     fn close(&self) {
-        let lock = self.stream.lock().unwrap();
-        let _ = lock.shutdown(std::net::Shutdown::Both);
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
 }
 

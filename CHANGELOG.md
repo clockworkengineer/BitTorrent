@@ -57,3 +57,9 @@ All notable changes to this project will be documented in this file.
   - Fixed premature peer loop breakout in `worker.rs` when downloads complete, allowing seed connections to remain active.
   - Added partial-frame retry in `peer_network.rs` (`read_exact` and `read_message`) on `WouldBlock`/`TimedOut` to prevent stream framing desynchronization.
   - Added peer count retention grace period in `SessionState` and stabilized UI status bar speed aggregation in `app.rs`.
+- Fixed 15-second delay when adding or restoring torrent connections:
+  - Offloaded initial tracker announcement from `TorrentSession::start_download` into the background asynchronous executor task spawned by `start_reannounce_loop`, allowing session creation and UI addition to return instantly in < 1ms without blocking on external tracker network round-trips.
+  - Streamlined `Tracker::announce_with_fallback` failover by avoiding redundant multi-attempt retry delays per tracker endpoint, failing over immediately to secondary tiers when a tracker is unreachable.
+- Fixed 10-second hang when closing the client application window:
+  - Replaced `Arc<Mutex<TcpStream>>` in `TcpSocket` with `Arc<TcpStream>`, allowing `close()` to trigger an immediate `shutdown(Shutdown::Both)` on the underlying OS socket. This unblocks active peer worker `read` calls immediately without waiting for mutex locks or 5-second socket read timeouts.
+  - Added clean termination (`std::process::exit(0)`) in desktop client `on_exit` handler after stopping active sessions and saving application configuration, instantly halting daemon UDP/DHT listeners without delaying window closure.

@@ -43,7 +43,7 @@ fn main() {
             .with_position(egui::pos2(100.0, 100.0)),
         ..Default::default()
     };
-    eframe::run_native(
+    let _ = eframe::run_native(
         "BitTorrent Client",
         options,
         Box::new(move |cc| {
@@ -59,6 +59,6 @@ fn main() {
             }
             Ok(Box::new(app))
         }),
-    )
-    .unwrap();
+    );
+    std::process::exit(0);
 }
