@@ -74,6 +74,12 @@ pub struct SessionConfig {
     pub v2_piece_layers_cache_dir: Option<std::path::PathBuf>,
     /// Maximum in-memory size in megabytes for cached Merkle tree layers (default: 64 MB).
     pub v2_piece_layers_cache_max_mb: usize,
+    /// Enable asynchronous multi-threaded piece hash verification worker pool (default: true).
+    pub enable_async_verification: bool,
+    /// Number of worker threads for background piece hashing (default: available CPUs, clamped 2..=8).
+    pub verification_workers: usize,
+    /// Maximum number of piece verification jobs queued in the worker pool (default: 1024).
+    pub verification_queue_capacity: usize,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -153,6 +159,20 @@ impl Default for SessionConfig {
             v2_piece_layers_cache_enabled: true,
             v2_piece_layers_cache_dir: None,
             v2_piece_layers_cache_max_mb: 64,
+            enable_async_verification: false,
+            verification_workers: {
+                #[cfg(feature = "std")]
+                {
+                    std::thread::available_parallelism()
+                        .map(|n| n.get().clamp(2, 8))
+                        .unwrap_or(2)
+                }
+                #[cfg(not(feature = "std"))]
+                {
+                    1
+                }
+            },
+            verification_queue_capacity: 1024,
         }
     }
 }
@@ -228,6 +248,24 @@ impl SessionConfig {
     /// Sets the maximum in-memory cache size in megabytes for cached Merkle tree layers.
     pub fn with_v2_piece_layers_cache_max_mb(mut self, size_mb: usize) -> Self {
         self.v2_piece_layers_cache_max_mb = size_mb;
+        self
+    }
+
+    /// Enables or disables the asynchronous multi-threaded piece hash verification worker pool.
+    pub fn with_async_verification(mut self, enable: bool) -> Self {
+        self.enable_async_verification = enable;
+        self
+    }
+
+    /// Configures the number of worker threads for background piece hashing.
+    pub fn with_verification_workers(mut self, workers: usize) -> Self {
+        self.verification_workers = workers.clamp(1, 32);
+        self
+    }
+
+    /// Configures the maximum number of verification jobs queued in the worker pool.
+    pub fn with_verification_queue_capacity(mut self, capacity: usize) -> Self {
+        self.verification_queue_capacity = capacity.max(16);
         self
     }
 }

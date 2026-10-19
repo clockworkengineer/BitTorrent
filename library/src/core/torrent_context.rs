@@ -161,6 +161,9 @@ pub struct TorrentContext {
     pub webrtc_bridge: Arc<crate::network::webrtc::WebTorrentBridge>,
     #[cfg(all(feature = "std", feature = "v2"))]
     pub piece_layers_disk_cache: Arc<crate::storage::piece_layers_cache::PieceLayersDiskCache>,
+    #[cfg(feature = "std")]
+    pub verification_pool: Arc<crate::storage::verification_pool::HashVerificationPool>,
+    pub pieces_verifying: Mutex<std::collections::HashSet<u32>>,
 }
 
 impl TorrentContext {
@@ -309,6 +312,12 @@ impl TorrentContext {
                 }
                 cache
             },
+            #[cfg(feature = "std")]
+            verification_pool: Arc::new(crate::storage::verification_pool::HashVerificationPool::new(
+                config.verification_workers,
+                config.verification_queue_capacity,
+            )),
+            pieces_verifying: Mutex::new(std::collections::HashSet::new()),
         };
         Ok(context)
     }
@@ -418,6 +427,12 @@ impl TorrentContext {
                     ).unwrap()
                 }))
             },
+            #[cfg(feature = "std")]
+            verification_pool: Arc::new(crate::storage::verification_pool::HashVerificationPool::new(
+                config.verification_workers,
+                config.verification_queue_capacity,
+            )),
+            pieces_verifying: Mutex::new(std::collections::HashSet::new()),
         };
         Ok(context)
     }
@@ -1207,6 +1222,42 @@ impl TorrentContext {
         drop(piece_buffers);
 
         if piece_complete {
+            #[cfg(feature = "std")]
+            if self.config.enable_async_verification {
+                let piece_offset = (piece_number as u64) * (self.piece_length as u64);
+                let expected_v1_hash = if (piece_number as usize * 20 + 20) <= self.pieces_info_hash.len() {
+                    let start = piece_number as usize * 20;
+                    let mut h = [0u8; 20];
+                    h.copy_from_slice(&self.pieces_info_hash[start..start + 20]);
+                    Some(h)
+                } else {
+                    None
+                };
+
+                self.mark_piece_verifying(piece_number, true);
+
+                let job = crate::storage::verification_pool::PieceVerificationJob {
+                    piece_number,
+                    piece_length,
+                    piece_offset,
+                    expected_v1_hash,
+                    expected_v2_root: None,
+                    storage: Some(self.storage.clone()),
+                    direct_buffer: None,
+                    block_sources: block_sources.clone(),
+                };
+
+                if let Err(e) = self.verification_pool.submit(job) {
+                    crate::log_debug!(
+                        "[pool] failed to submit verification job: {}, falling back to sync",
+                        e
+                    );
+                    self.mark_piece_verifying(piece_number, false);
+                } else {
+                    return Ok(true);
+                }
+            }
+
             if self.check_piece_hash_streaming(storage, piece_number, piece_length) {
                 crate::log_debug!(
                     "[piece] {} passed hash verification ({} bytes)",
@@ -1837,6 +1888,128 @@ impl TorrentContext {
     /// Returns a snapshot of current telemetry metrics from the persistent piece layers cache.
     pub fn piece_layers_cache_metrics(&self) -> crate::storage::piece_layers_cache::PieceLayersCacheMetrics {
         self.piece_layers_disk_cache.metrics()
+    }
+
+    /// Checks whether a piece is currently in flight undergoing background hash verification.
+    pub fn is_piece_verifying(&self, piece_number: u32) -> bool {
+        if let Ok(guard) = self.pieces_verifying.lock() {
+            guard.contains(&piece_number)
+        } else {
+            false
+        }
+    }
+
+    /// Marks or unmarks a piece as currently undergoing background verification.
+    pub fn mark_piece_verifying(&self, piece_number: u32, verifying: bool) {
+        if let Ok(mut guard) = self.pieces_verifying.lock() {
+            if verifying {
+                guard.insert(piece_number);
+            } else {
+                guard.remove(&piece_number);
+            }
+        }
+    }
+
+    /// Applies a completed background piece verification result.
+    ///
+    /// Updates the local bitfield, flushes storage, and broadcasts Have messages if valid.
+    /// Discards cached storage range and reports bad peers if corrupted.
+    pub fn apply_piece_verification_result(
+        &mut self,
+        result: &crate::storage::verification_pool::PieceVerificationResult,
+        storage: &dyn crate::io_traits::BlockStorage,
+    ) -> bool {
+        let piece_number = result.piece_number;
+        let piece_length = result.piece_length;
+        self.mark_piece_verifying(piece_number, false);
+
+        if result.is_valid {
+            crate::log_debug!(
+                "[piece] {} passed async hash verification ({} bytes, {} us)",
+                piece_number,
+                piece_length,
+                result.elapsed_us
+            );
+            let _ = storage.flush();
+            self.update_bitfield_status(piece_number, true, piece_length);
+            // Broadcast Have to all connected peers
+            {
+                let swarm = self.peer_swarm.read().unwrap();
+                for peer_arc in swarm.values() {
+                    if let Ok(peer_guard) = peer_arc.try_lock() {
+                        let _ = peer_guard.send_have(piece_number);
+                    }
+                }
+            }
+            self.try_complete_download();
+            self.clear_piece_requests(piece_number);
+            true
+        } else {
+            crate::log_debug!(
+                "[piece] {} failed async hash verification ({:?})",
+                piece_number,
+                result.error
+            );
+            self.clear_piece_requests(piece_number);
+
+            // Discard failed piece dirty blocks from cache so corrupt data never touches disk
+            let piece_offset = (piece_number as u64) * (self.piece_length as u64);
+            storage.discard_range(piece_offset, piece_length as u64);
+
+            // Report all peers that contributed blocks to this piece
+            for source_ip_opt in &result.block_sources {
+                if let Some(ip) = source_ip_opt {
+                    self.report_bad_peer(ip);
+                }
+            }
+
+            self.mark_piece_missing(piece_number, true);
+            false
+        }
+    }
+
+    /// Drains all completed verification results currently in the worker pool results queue,
+    /// applying their status to bitfields, disk cache, and swarm Have broadcasts.
+    ///
+    /// Returns the number of verification results processed.
+    pub fn drain_verification_results(&mut self, storage: &dyn crate::io_traits::BlockStorage) -> usize {
+        #[cfg(feature = "std")]
+        {
+            let results = self.verification_pool.poll_results();
+            let count = results.len();
+            for res in results {
+                self.apply_piece_verification_result(&res, storage);
+            }
+            count
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            0
+        }
+    }
+
+    /// Captures a snapshot of current verification pool telemetry metrics.
+    #[cfg(feature = "std")]
+    pub fn verification_metrics(&self) -> crate::storage::verification_pool::VerificationPoolMetrics {
+        self.verification_pool.metrics()
+    }
+
+    /// Triggers parallel multi-threaded rechecking of all pieces in this torrent.
+    #[cfg(feature = "std")]
+    pub fn recheck_all_pieces(&mut self) -> Result<Arc<crate::storage::verification_pool::RecheckProgress>, BitTorrentError> {
+        let storage = self.storage.clone();
+        let num_pieces = self.number_of_pieces as u32;
+        let piece_length = self.piece_length;
+        let total_bytes = self.total_bytes_to_download;
+        let pieces_info_hash = self.pieces_info_hash.clone();
+
+        self.verification_pool.recheck_pieces_parallel(
+            num_pieces,
+            piece_length,
+            total_bytes,
+            &pieces_info_hash,
+            storage,
+        )
     }
 
     #[cfg(feature = "v2")]

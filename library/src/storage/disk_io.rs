@@ -80,6 +80,53 @@ impl DiskIO {
         Ok(())
     }
 
+    /// Scans and verifies local files using the multi-threaded verification worker pool in parallel,
+    /// updating the context bitfield and returning the completed progress tracker.
+    pub fn create_torrent_bitfield_parallel(
+        &self,
+        tc: &mut TorrentContext,
+        pool: &crate::storage::verification_pool::HashVerificationPool,
+    ) -> Result<std::sync::Arc<crate::storage::verification_pool::RecheckProgress>, BitTorrentError> {
+        use std::sync::atomic::Ordering;
+        let storage = tc.storage.clone();
+        let (bitfield, progress) = pool.recheck_pieces_blocking(
+            tc.number_of_pieces as u32,
+            self.piece_length,
+            tc.total_bytes_to_download,
+            &tc.pieces_info_hash,
+            storage,
+        )?;
+
+        tc.bitfield = bitfield;
+        tc.pieces_missing = vec![0u8; tc.bitfield.len()];
+        let mut downloaded = 0u64;
+        let mut missing_count = 0usize;
+
+        for p in 0..tc.number_of_pieces as u32 {
+            let (b_idx, mask) = crate::util::get_bitfield_index_and_mask(p);
+            let local = tc.bitfield[b_idx] & mask != 0;
+            let len = if p == tc.number_of_pieces as u32 - 1 {
+                let rem = (tc.total_bytes_to_download % self.piece_length as u64) as u32;
+                if rem == 0 { self.piece_length } else { rem }
+            } else {
+                self.piece_length
+            };
+            tc.set_piece_length(p, len);
+            if local {
+                downloaded += len as u64;
+            } else {
+                tc.pieces_missing[b_idx] |= mask;
+                missing_count += 1;
+            }
+        }
+
+        tc.missing_pieces_count = missing_count;
+        tc.total_bytes_downloaded.store(downloaded, Ordering::Relaxed);
+        tc.initial_bytes_downloaded = downloaded;
+
+        Ok(progress)
+    }
+
     /// Marks all pieces of the torrent as locally complete in the context (forcing a fully downloaded state).
     pub fn fully_downloaded_torrent_bitfield(
         &self,

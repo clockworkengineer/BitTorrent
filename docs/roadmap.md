@@ -578,13 +578,38 @@ Implemented high-throughput persistent on-disk caching, two-tier in-memory LRU c
 
 ---
 
+### Phase 41: Asynchronous Piece Hash Verification Worker Pool
+
+Implemented multi-threaded background piece hash verification worker pool offloading CPU-intensive cryptographic SHA-1 and SHA-256 Merkle root checks from the cooperative async event loop:
+- **Dedicated Multi-Threaded Verification Worker Pool (`HashVerificationPool`)**:
+  - Thread pool architecture using bounded crossbeam channels (`PieceVerificationJob` / `PieceVerificationResult`) with worker load balancing.
+  - Non-blocking job submission (`submit`) with immediate queue depth tracking and thread-safe graceful shutdown.
+  - Detailed telemetry metrics (`VerificationPoolMetrics`): submitted jobs, completed jobs, verified pieces, failed pieces, active worker threads, and queue depth.
+- **Parallel Whole-Torrent Rechecking**:
+  - `recheck_pieces_parallel`, `recheck_pieces_blocking`, and `create_torrent_bitfield_parallel`: Chunks torrent piece verification across worker threads, utilizing atomic tracking (`RecheckProgress`) for real-time progress monitoring and throughput calculation.
+  - High-throughput parallel validation of existing downloaded torrent files against piece hashes on startup or manual recheck.
+- **In-Flight Verification Guard in Piece Selectors**:
+  - `pieces_verifying` concurrent tracking in `TorrentContext`.
+  - Integrated into `RarestFirstSelector`, `SequentialSelector`, and `StreamingPieceSelector` to skip pieces currently being hashed in worker threads, preventing duplicate block requests and redundant bandwidth consumption.
+- **Context & Session Lifecycle Integration**:
+  - `SessionConfig` parameters: `enable_async_verification`, `verification_workers`, `verification_queue_capacity`.
+  - `TorrentSessionBuilder` chaining: `.enable_async_verification(bool)`, `.verification_workers(usize)`, `.verification_queue_capacity(usize)`.
+  - `TorrentContext`: Integrated `verification_pool`, `pieces_verifying`, `process_piece_block` async job offloading, `drain_verification_results`, `apply_piece_verification_result`, `recheck_all_pieces`, and `verification_metrics`.
+  - `TorrentSession`: Added `drain_verification_results()`, `verification_metrics()`, and `recheck_pieces()`.
+  - Peer loop integration in `session/worker.rs` for automatic periodic result draining and piece completion events.
+- **CLI Recheck Tooling (`bt-cli`)**:
+  - Added `bt-cli recheck <torrent-path> <data-dir> [--workers <N>]` command with multi-threaded verification, real-time progress bar, bitfield status, elapsed duration, and MB/s throughput reporting.
+- **Test Suite**: Dedicated integration test suite in `library/tests/hash_verification_pool_tests.rs` (6/6 tests passing) validating async background SHA-1/v2 verification, multi-worker load balancing, parallel rechecking with atomic progress, in-flight piece selector guards, graceful pool shutdown, and session builder integration.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Asynchronous Piece Hash Verification Worker Pool**: Multi-threaded background piece hashing offloading CPU-intensive SHA-1/SHA-256 verifications from the main async loop.
+1. **BEP 53 Selective Magnet Download & Range-Based Metadata Fetching**: Fine-grained selection indices and expedited partial file metadata resolution over peer connections.
 
-2. **BEP 53 Selective Magnet Download & Range-Based Metadata Fetching**: Fine-grained selection indices and expedited partial file metadata resolution over peer connections.
+2. **Endgame Mode Multi-Source Adaptive Erasure Caching**: Predictive erasure block staging and swarm latency profiling to eliminate tail completion stalls on slow peer pipelines.
 
 
 

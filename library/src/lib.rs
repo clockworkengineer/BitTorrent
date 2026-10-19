@@ -200,6 +200,11 @@ pub use core::torrent_builder::TorrentBuilder;
 pub use core::torrent_upgrader::{TorrentExportFormat, TorrentUpgradeReport, TorrentUpgrader};
 #[cfg(all(feature = "std", feature = "v2"))]
 pub use storage::piece_layers_cache::{PieceLayersCacheMetrics, PieceLayersDiskCache};
+#[cfg(feature = "std")]
+pub use storage::verification_pool::{
+    HashVerificationPool, PieceVerificationJob, PieceVerificationResult, RecheckProgress,
+    VerificationPoolMetrics,
+};
 #[cfg(all(feature = "std", feature = "mse"))]
 pub use network::peer_network::EncryptedSocket;
 #[cfg(all(feature = "std", feature = "webrtc"))]

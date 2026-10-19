@@ -61,11 +61,11 @@ fn print_usage() {
     println!("  bt-cli set-priority <info-hash> <file-index> <skip|low|normal|high>");
     println!("  bt-cli super-seed <info-hash> <on|off>");
     println!("  bt-cli peers <info-hash>");
-    println!("  bt-cli pieces <info-hash>");
     println!("  bt-cli resume-info <path-to-fastresume-file>");
     println!("  bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]");
     println!("  bt-cli v2-info <torrent-path>");
     println!("  bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]");
+    println!("  bt-cli recheck <torrent-path> <data-dir> [--workers <N>]");
     println!("  bt-cli shutdown");
 }
 
@@ -444,6 +444,121 @@ fn main() {
             println!("\n  Canonical Magnet URI:");
             println!("    {}", magnet.to_uri());
         }
+
+        return;
+    }
+
+    if command == "recheck" {
+        if args.len() < 4 {
+            eprintln!("Error: 'recheck' command requires a path to a torrent file and download directory.");
+            eprintln!("Usage: bt-cli recheck <path-to-torrent-file> <data-dir> [--workers <N>]");
+            return;
+        }
+        let torrent_path = std::path::Path::new(&args[2]);
+        let data_dir = std::path::Path::new(&args[3]);
+
+        let mut workers = std::thread::available_parallelism()
+            .map(|n| n.get().clamp(2, 8))
+            .unwrap_or(4);
+        let mut idx = 4;
+        while idx < args.len() {
+            if args[idx] == "--workers" && idx + 1 < args.len() {
+                if let Ok(w) = args[idx + 1].parse::<usize>() {
+                    workers = w.clamp(1, 32);
+                }
+                idx += 1;
+            }
+            idx += 1;
+        }
+
+        println!("Asynchronous Piece Hash Verification (Worker Pool):");
+        println!("  Torrent File:     {}", torrent_path.display());
+        println!("  Data Directory:   {}", data_dir.display());
+        println!("  Worker Threads:   {}", workers);
+
+        let mut metainfo = match bittorrent_rs::MetaInfoFile::new(torrent_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Failed to open torrent file: {}", e);
+                return;
+            }
+        };
+        if let Err(e) = metainfo.parse() {
+            eprintln!("Failed to parse torrent file: {}", e);
+            return;
+        }
+
+        let piece_length = match metainfo.get_piece_length() {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Failed to determine piece length: {}", e);
+                return;
+            }
+        };
+        let total_size = metainfo.get_total_size().unwrap_or(0);
+        let pieces_hash = match metainfo.get_pieces_info_hash() {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("Failed to retrieve piece hashes: {}", e);
+                return;
+            }
+        };
+        let num_pieces = pieces_hash.len() / 20;
+
+        let (_size, files) = match metainfo.local_files_to_download_list(data_dir) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Failed to resolve file paths: {}", e);
+                return;
+            }
+        };
+
+        let disk_io = std::sync::Arc::new(bittorrent_rs::storage::disk_io::DiskIO::new(
+            data_dir,
+            files,
+            piece_length,
+        ));
+
+        let pool = bittorrent_rs::HashVerificationPool::new(workers, 1024);
+
+        println!("  Total Pieces:     {} ({} total)", num_pieces, fmt_bytes(total_size));
+        println!("  Piece Length:     {}", fmt_bytes(piece_length as u64));
+        println!("\nCommencing parallel multi-threaded verification...");
+
+        let start_time = std::time::Instant::now();
+        let (_bitfield, progress) = match pool.recheck_pieces_blocking(
+            num_pieces as u32,
+            piece_length,
+            total_size,
+            &pieces_hash,
+            disk_io,
+        ) {
+            Ok(res) => res,
+            Err(e) => {
+                eprintln!("Verification failed: {}", e);
+                return;
+            }
+        };
+
+        let elapsed = start_time.elapsed();
+        let valid = progress.valid_pieces.load(std::sync::atomic::Ordering::Relaxed);
+        let corrupt = progress.corrupt_pieces.load(std::sync::atomic::Ordering::Relaxed);
+        let metrics = pool.metrics();
+
+        println!("\nVerification Complete:");
+        println!("  Valid Pieces:     {} / {}", valid, num_pieces);
+        println!("  Corrupted Pieces: {}", corrupt);
+        println!("  Bytes Hashed:     {}", fmt_bytes(metrics.total_bytes_verified));
+        println!("  Elapsed Time:     {:.2?}", elapsed);
+        println!("  Throughput:       {:.2} MB/s", metrics.throughput_mb_s());
+        println!(
+            "  Integrity Status: {}",
+            if corrupt == 0 {
+                "100% Passed (All pieces intact)"
+            } else {
+                "Incomplete/Corrupt (Pieces missing or modified)"
+            }
+        );
 
         return;
     }

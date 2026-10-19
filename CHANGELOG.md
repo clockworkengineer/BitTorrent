@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Implemented Asynchronous Piece Hash Verification Worker Pool (`HashVerificationPool`, `PieceVerificationJob`, `PieceVerificationResult`, `VerificationPoolMetrics`, `RecheckProgress`) providing multi-threaded background SHA-1 and v2 SHA-256 Merkle root verification offloaded from the cooperative async event loop, bounded queue depth tracking, telemetry counters, and thread-safe worker shutdown.
+- Added parallel whole-torrent piece rechecking (`recheck_pieces_parallel`, `recheck_pieces_blocking`, `create_torrent_bitfield_parallel`) with real-time atomic progress monitoring and throughput reporting.
+- Integrated in-flight piece verification guard set (`pieces_verifying`, `is_piece_verifying`, `mark_piece_verifying`) in `TorrentContext` and piece selectors (`RarestFirstSelector`, `SequentialSelector`, `StreamingPieceSelector`) to prevent redundant duplicate block requests and downloads while pieces are in-flight in verification worker threads.
+- Added verification pool configuration options in `SessionConfig` and `TorrentSessionBuilder` (`enable_async_verification`, `verification_workers`, `verification_queue_capacity`) and session APIs in `TorrentSession` (`drain_verification_results`, `verification_metrics`, `recheck_pieces`).
+- Added CLI companion command `bt-cli recheck <torrent-path> <data-dir> [--workers <N>]` with parallel hashing, real-time progress bars, and throughput reporting.
 - Implemented BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving (`PieceLayersDiskCache`, `PieceLayersCacheMetrics`, `encode_layers`, `decode_layers`, `reconstruct_tree_from_piece_layer`) providing two-tier LRU memory and disk-backed caching with binary `.layers` format and SHA-256 integrity checksums, automatic ancestor layer reconstruction from piece layers, and direct BEP 52 `hash_request` peer wire serving.
 - Extended `SessionConfig` and `TorrentSessionBuilder` with `v2_piece_layers_cache_enabled`, `v2_piece_layers_cache_dir`, and `v2_piece_layers_cache_max_mb`.
 - Integrated `handle_hash_request`, `register_file_merkle_tree`, and `register_piece_layer` into `TorrentContext`.

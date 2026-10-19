@@ -779,6 +779,28 @@ impl TorrentSession {
         Ok(())
     }
 
+    /// Drains all completed background piece hash verification results and applies them
+    /// to the session context, updating bitfields, flushing storage, and broadcasting Have messages.
+    ///
+    /// Returns the number of results applied.
+    pub fn drain_verification_results(&self) -> usize {
+        let mut ctx = self.context.lock().unwrap();
+        let storage = ctx.storage.clone();
+        ctx.drain_verification_results(&*storage)
+    }
+
+    /// Returns a snapshot of current telemetry metrics from the piece hash verification worker pool.
+    pub fn verification_metrics(&self) -> Option<crate::storage::verification_pool::VerificationPoolMetrics> {
+        let ctx = self.context.lock().unwrap();
+        Some(ctx.verification_metrics())
+    }
+
+    /// Triggers parallel multi-threaded rechecking of all torrent pieces on disk using the worker pool.
+    pub fn recheck_pieces(&mut self) -> Result<Arc<crate::storage::verification_pool::RecheckProgress>, BitTorrentError> {
+        let mut ctx = self.context.lock().unwrap();
+        ctx.recheck_all_pieces()
+    }
+
     /// Returns the root download directory path.
     pub fn download_path(&self) -> &Path {
         &self.download_path

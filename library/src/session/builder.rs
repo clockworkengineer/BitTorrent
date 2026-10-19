@@ -175,6 +175,24 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Enables or disables the asynchronous multi-threaded piece hash verification worker pool.
+    pub fn enable_async_verification(mut self, enable: bool) -> Self {
+        self.config.enable_async_verification = enable;
+        self
+    }
+
+    /// Sets the number of worker threads for background piece hash verification.
+    pub fn verification_workers(mut self, workers: usize) -> Self {
+        self.config.verification_workers = workers.clamp(1, 32);
+        self
+    }
+
+    /// Sets the maximum queue capacity for the piece hash verification worker pool.
+    pub fn verification_queue_capacity(mut self, capacity: usize) -> Self {
+        self.config.verification_queue_capacity = capacity.max(16);
+        self
+    }
+
     /// Returns a reference to the configured SessionConfig.
     pub fn get_config(&self) -> &SessionConfig {
         &self.config

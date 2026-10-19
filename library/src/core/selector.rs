@@ -37,8 +37,8 @@ impl PieceSelector for RarestFirstSelector {
                 pq.pop();
                 continue;
             }
-            // Check if this entry is stale (piece already completed locally)
-            if context.is_piece_local(piece) {
+            // Check if this entry is stale (piece already completed locally or currently verifying)
+            if context.is_piece_local(piece) || context.is_piece_verifying(piece) {
                 pq.pop();
                 continue;
             }
@@ -73,8 +73,12 @@ pub struct SequentialSelector;
 
 impl PieceSelector for SequentialSelector {
     fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32> {
-        (0..context.number_of_pieces as u32)
-            .find(|&piece| context.is_piece_wanted(piece) && !context.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
+        (0..context.number_of_pieces as u32).find(|&piece| {
+            context.is_piece_wanted(piece)
+                && !context.is_piece_local(piece)
+                && !context.is_piece_verifying(piece)
+                && peer.is_piece_on_remote_peer(piece)
+        })
     }
 }
 
@@ -130,21 +134,33 @@ impl PieceSelector for StreamingPieceSelector {
 
         // 1. Check lookahead window [cursor .. cursor + lookahead_window)
         for piece in cursor..window_end {
-            if context.is_piece_wanted(piece) && !context.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece) {
+            if context.is_piece_wanted(piece)
+                && !context.is_piece_local(piece)
+                && !context.is_piece_verifying(piece)
+                && peer.is_piece_on_remote_peer(piece)
+            {
                 return Some(piece);
             }
         }
 
         // 2. Check remaining pieces from window_end to end of torrent
         for piece in window_end..total_pieces {
-            if context.is_piece_wanted(piece) && !context.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece) {
+            if context.is_piece_wanted(piece)
+                && !context.is_piece_local(piece)
+                && !context.is_piece_verifying(piece)
+                && peer.is_piece_on_remote_peer(piece)
+            {
                 return Some(piece);
             }
         }
 
         // 3. Wrap around [0 .. cursor)
         for piece in 0..cursor.min(total_pieces) {
-            if context.is_piece_wanted(piece) && !context.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece) {
+            if context.is_piece_wanted(piece)
+                && !context.is_piece_local(piece)
+                && !context.is_piece_verifying(piece)
+                && peer.is_piece_on_remote_peer(piece)
+            {
                 return Some(piece);
             }
         }

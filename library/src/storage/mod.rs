@@ -14,9 +14,16 @@ pub mod piece_request;
 pub mod stream;
 #[cfg(all(feature = "std", feature = "v2"))]
 pub mod piece_layers_cache;
+#[cfg(feature = "std")]
+pub mod verification_pool;
 
 #[cfg(feature = "std")]
 pub use disk_cache::{CacheBlock, CacheMetrics, CachedBlockStorage};
 #[cfg(all(feature = "std", feature = "v2"))]
 pub use piece_layers_cache::{PieceLayersCacheMetrics, PieceLayersDiskCache};
+#[cfg(feature = "std")]
+pub use verification_pool::{
+    HashVerificationPool, PieceVerificationJob, PieceVerificationResult, RecheckProgress,
+    VerificationPoolMetrics,
+};
 

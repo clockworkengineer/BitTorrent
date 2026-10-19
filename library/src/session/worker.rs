@@ -616,6 +616,13 @@ async fn run_peer_loop(
             break;
         }
 
+        // Drain any completed background piece hash verification results
+        {
+            let mut ctx = context.lock().unwrap();
+            let storage = ctx.storage.clone();
+            ctx.drain_verification_results(&*storage);
+        }
+
         check_request_timeouts(peer, context).await;
 
         let (peer_choking_set, outstanding_requests_count, number_of_missing_pieces, can_request_fast) = {
