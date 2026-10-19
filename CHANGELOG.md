@@ -2,9 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-19
 
 ### Added
+- **Release Automation & CI/CD Pipeline**:
+  - Implemented multi-OS GitHub Actions CI workflow (`.github/workflows/ci.yml`) testing Linux, Windows, and macOS with strict formatting (`cargo fmt --check`), clippy (`-D warnings`), `#![no_std]` compilation (`cargo check -p bittorrent-rs --no-default-features`), and all workspace tests.
+  - Implemented automated cross-platform release workflow (`.github/workflows/release.yml`) producing pre-compiled archive bundles (`.zip` for Windows, `.tar.gz` for Linux/macOS) with SHA-256 checksums (`SHA256SUMS.txt`) and automatic GitHub Release drafting on version tags.
+- **Desktop Client Polish (`torrent_client`)**:
+  - Native application window & taskbar icon dynamically generated at 64x64 RGBA.
+  - Interactive sortable columns (`Name`, `Progress`, `Size`, `Status`, `↓ Speed`, `↑ Speed`, `Peers`) with ascending/descending toggle indicators.
+  - Preferences & Settings modal (`AppSettings`) with storage configuration, listening port adjustments, DHT/LSD/uTP protocol toggles, and Message Stream Encryption (MSE).
+  - Safe removal confirmation modal with optional permanent file deletion from disk.
+  - Global keyboard shortcuts (`Ctrl+O`/`Cmd+O` for opening files, `Ctrl+,`/`Cmd+,` for Settings, `Space` for pause/resume, `Delete` for removing torrents).
+- **Daemon & WebUI Hardening**:
+  - Added Linux `systemd` service unit template (`clients/bt_daemon/bt-daemon.service`) with sandboxing protections (`NoNewPrivileges`, `ProtectSystem=strict`).
+  - Added `/api/health` JSON endpoint and `--host` / `-H` custom IPv4 address binding support to `bt_webui`.
+- **Project Governance & Legal Assets**:
+  - Dual open-source licensing: `LICENSE-MIT` and `LICENSE-APACHE`.
+  - Added `SECURITY.md` vulnerability reporting guidelines, `CONTRIBUTING.md` developer workflow, and `CODE_OF_CONDUCT.md` Contributor Covenant v2.1.
+  - Created comprehensive `docs/user-guide.md` covering CLI, daemon, web dashboard, and desktop GUI client.
+- **Code Hygiene & #![no_std] Hardening**:
+  - Extracted `PeerDetails` into dedicated `library/src/network/peer_details.rs` module, resolving all `#![no_std]` compilation errors.
+  - Standardized workspace clippy lints in root `Cargo.toml` and fixed all clippy warnings across all 14 crates in the workspace.
 - Implemented BEP 38 / WebTorrent Dynamic WebSeed Failover & Mirror Health Tracker (`WebSeedMirrorTracker`, `MirrorHealthProfile`, `MirrorHealthSummary`), providing multi-source HTTP fallback routing, exponential circuit-breaker cooldown backoff, real-time EMA latency smoothing, and dynamic health-based mirror ranking across WebSeed endpoints.
 - Integrated dynamic mirror selection and runtime fallback in `webseed::start_webseed_loop`, automatically routing requests to fastest healthy mirrors, bypassing failing endpoints, and probing recovering endpoints.
 - Added WebSeed health tracker configuration in `SessionConfig` and `TorrentSessionBuilder` (`enable_webseed_health_tracker`, `webseed_failure_threshold`, `webseed_base_cooldown_secs`, `webseed_max_cooldown_secs`, `webseed_timeout_secs`) and runtime management APIs in `TorrentSession` (`webseed_mirror_summary`, `add_webseed`, `remove_webseed`).

@@ -458,8 +458,16 @@ async fn serve_js() -> impl IntoResponse {
     )
 }
 
+async fn health_check() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "ok", "service": "bt_webui" })),
+    )
+}
+
 #[tokio::main]
 async fn main() {
+    let mut host = [127, 0, 0, 1];
     let mut port = 8080;
     let mut stream_port = 8081;
 
@@ -470,6 +478,11 @@ async fn main() {
         if (args[i] == "--port" || args[i] == "-p") && i + 1 < args.len() {
             if let Ok(p) = args[i + 1].parse::<u16>() {
                 port = p;
+            }
+            i += 2;
+        } else if (args[i] == "--host" || args[i] == "-H") && i + 1 < args.len() {
+            if let Ok(ip) = args[i + 1].parse::<std::net::Ipv4Addr>() {
+                host = ip.octets();
             }
             i += 2;
         } else if (args[i] == "--stream-port" || args[i] == "-s") && i + 1 < args.len() {
@@ -493,6 +506,8 @@ async fn main() {
         .route("/", get(serve_html))
         .route("/style.css", get(serve_css))
         .route("/app.js", get(serve_js))
+        // Health check endpoint
+        .route("/api/health", get(health_check))
         // API routes
         .route("/api/ws", get(ws_handler))
         .route("/api/torrents/add", post(add_torrent))
@@ -521,7 +536,7 @@ async fn main() {
         )
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from((host, port));
     println!("WebUI Server running at http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
