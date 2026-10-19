@@ -647,17 +647,40 @@ Implemented predictive erasure block staging, RFC 6298 swarm latency profiling, 
   - `TorrentSession` methods: `.endgame_metrics()` and `.swarm_latency_summary()`.
 - **Test Suite**: Dedicated integration test suite in `library/tests/endgame_erasure_tests.rs` (6/6 tests passing) validating RFC 6298 smoothing, ECT peer ranking, straggler preemption, redundant erasure duplicate absorption, context pipeline integration, and session builder configuration.
 
+### Phase 44: BEP 38 / WebTorrent Dynamic WebSeed Failover & Mirror Health Tracker
+
+Implemented multi-source HTTP fallback routing, circuit-breaker backoff penalties, real-time latency/error rate health scoring, and dynamic mirror ranking across WebSeed endpoints:
+- **Mirror Health Profile & Dynamic Scoring (`MirrorHealthProfile`, `MirrorHealthSummary`)**:
+  - RFC 6298 Exponential Moving Average (EMA) smoothed latency and variance/jitter tracking per mirror.
+  - Rolling download transfer rate measurement and total bytes delivered.
+  - Circuit-breaker exponential backoff cooldowns triggered on consecutive failures (`webseed_failure_threshold`).
+  - Automatic canary recovery upon cooldown expiry, restoring mirror health score and clearing failure penalties.
+  - Composite health score calculation (0–100) combining success rates, latency factors, and penalty state.
+- **Swarm WebSeed Mirror Tracker (`WebSeedMirrorTracker`)**:
+  - Multi-endpoint management and dynamic candidate ranking (`select_ranked_mirrors`) prioritizing healthy low-latency mirrors.
+  - Fallback canary probing when all endpoints are penalized.
+  - Summary telemetry generation (`summaries()`) for CLI and UI monitoring.
+- **Session & WebSeed Engine Pipeline Integration**:
+  - `webseed::start_webseed_loop`: Automatically routes requests to candidate mirrors in ranked order, measures per-request latency, records successes and failures into the mirror tracker, and attributes block sources accurately.
+  - `TorrentContext`: Integrated `webseed_tracker`, runtime `add_webseed` / `remove_webseed`, and `webseed_mirror_summary`.
+  - `TorrentSession`: Added runtime APIs: `.webseed_mirror_summary()`, `.add_webseed()`, and `.remove_webseed()`.
+- **Configuration & Builder**:
+  - `SessionConfig` parameters: `enable_webseed_health_tracker` (default: `true`), `webseed_failure_threshold` (default: `3`), `webseed_base_cooldown_secs` (default: `10`), `webseed_max_cooldown_secs` (default: `300`), `webseed_timeout_secs` (default: `15`).
+  - `TorrentSessionBuilder` chaining: `.enable_webseed_health_tracker(bool)`, `.webseed_failure_threshold(usize)`, `.webseed_cooldowns(u64, u64)`, `.webseed_timeout(u64)`.
+- **Test Suite**: Dedicated integration test suite in `library/tests/webseed_failover_tests.rs` (6/6 tests passing) validating latency smoothing, circuit breaker penalties, canary recovery, dynamic ranking, runtime addition/removal, and session builder configuration.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BEP 38 / WebTorrent Dynamic WebSeed Failover & Mirror Health Tracker**: Multi-source HTTP fallback routing and real-time latency/error rate health scoring across WebSeed endpoints.
+1. **BEP 21 / Extension Protocol Dynamic Capability Registry**: Fine-grained per-peer extension dictionary indexing, runtime feature gating, and structured telemetry for custom extended messages.
 
-2. **BEP 21 / Extension Protocol Dynamic Capability Registry**: Fine-grained per-peer extension dictionary indexing, runtime feature gating, and structured telemetry for custom extended messages.
+2. **Adaptive Token-Bucket Bandwidth Shaper & Swarm Rate Governor**: Per-torrent and global hierarchical token bucket rate limiting with burst allowance and fair-share peer bandwidth allocation.
 
-3. **Adaptive Token-Bucket Bandwidth Shaper & Swarm Rate Governor**: Per-torrent and global hierarchical token bucket rate limiting with burst allowance and fair-share peer bandwidth allocation.
+3. **Cross-Swarm Predictive Cache Pre-warming & Dynamic Memory Paging**: Anticipatory block read staging and shared cross-torrent memory cache for multi-session streaming workloads.
+
 
 
 

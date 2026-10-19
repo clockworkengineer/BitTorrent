@@ -859,6 +859,24 @@ impl TorrentSession {
         ctx.swarm_latency_summary()
     }
 
+    /// Returns a list of health summaries for all registered WebSeed mirror endpoints.
+    pub fn webseed_mirror_summary(&self) -> Vec<crate::network::webseed_tracker::MirrorHealthSummary> {
+        let ctx = self.context.lock().unwrap();
+        ctx.webseed_mirror_summary()
+    }
+
+    /// Registers a new WebSeed mirror URL dynamically at runtime.
+    pub fn add_webseed(&mut self, url: impl Into<String>) {
+        let mut ctx = self.context.lock().unwrap();
+        ctx.add_webseed(url);
+    }
+
+    /// Removes a WebSeed mirror URL from active tracking and routing.
+    pub fn remove_webseed(&mut self, url: &str) -> bool {
+        let mut ctx = self.context.lock().unwrap();
+        ctx.remove_webseed(url)
+    }
+
     /// Identifies the next missing block to download and transmits a Request packet to the specified peer.
     pub async fn request_next_block_from_peer(
         &mut self,

@@ -1,22 +1,34 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use crate::error::BitTorrentError;
 use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::constants::BLOCK_SIZE;
 
+/// Starts a background thread driving WebSeed HTTP mirror block requests.
 pub fn start_webseed_loop(
     context: Arc<Mutex<TorrentContext>>,
     web_seeds: Vec<String>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        if web_seeds.is_empty() {
-            return;
+        // Register initial WebSeeds into the context's mirror tracker if not already present
+        {
+            let ctx = context.lock().unwrap();
+            let mut tracker = ctx.webseed_tracker.lock().unwrap();
+            for ws in &web_seeds {
+                tracker.register_mirror(ws);
+            }
         }
 
         loop {
-            let (status, num_pieces, piece_length) = {
+            let (status, num_pieces, piece_length, enable_tracker, timeout_secs) = {
                 let ctx = context.lock().unwrap();
-                (ctx.status, ctx.number_of_pieces, ctx.piece_length)
+                (
+                    ctx.status,
+                    ctx.number_of_pieces,
+                    ctx.piece_length,
+                    ctx.config.enable_webseed_health_tracker,
+                    ctx.config.webseed_timeout_secs,
+                )
             };
 
             if status == TorrentStatus::Ended {
@@ -50,19 +62,49 @@ pub fn start_webseed_loop(
                 let global_offset = (piece as u64) * (piece_length as u64) + begin as u64;
                 let mut success = false;
 
-                // Try downloading from each web seed mirror
-                for url in &web_seeds {
-                    match download_block_from_webseed(&context, url, global_offset, length) {
+                // Select ranked mirrors dynamically based on health scores and latency
+                let candidate_mirrors = {
+                    let ctx = context.lock().unwrap();
+                    if enable_tracker {
+                        let ranked = ctx.webseed_tracker.lock().unwrap().select_ranked_mirrors();
+                        if ranked.is_empty() {
+                            ctx.web_seeds.clone()
+                        } else {
+                            ranked
+                        }
+                    } else {
+                        ctx.web_seeds.clone()
+                    }
+                };
+
+                // Try downloading from candidate web seed mirrors in ranked order
+                for url in &candidate_mirrors {
+                    let req_start = Instant::now();
+                    match download_block_from_webseed(&context, url, global_offset, length, timeout_secs) {
                         Ok(data) => {
+                            let req_duration = req_start.elapsed();
                             let mut ctx = context.lock().unwrap();
+                            if enable_tracker {
+                                ctx.webseed_tracker
+                                    .lock()
+                                    .unwrap()
+                                    .record_success(url, req_duration, data.len());
+                            }
                             let storage = ctx.storage.clone();
-                            if ctx.process_piece_block(&*storage, piece, begin, &data, "webseed").is_ok() {
+                            if ctx.process_piece_block(&*storage, piece, begin, &data, url).is_ok() {
                                 success = true;
                                 break;
                             }
                         }
                         Err(e) => {
                             crate::log_debug!("WebSeed download failed from {}: {}", url, e);
+                            let ctx = context.lock().unwrap();
+                            if enable_tracker {
+                                ctx.webseed_tracker
+                                    .lock()
+                                    .unwrap()
+                                    .record_failure(url);
+                            }
                         }
                     }
                 }
@@ -87,6 +129,7 @@ fn download_block_from_webseed(
     web_seed_url: &str,
     global_offset: u64,
     length: u32,
+    timeout_secs: u64,
 ) -> Result<Vec<u8>, BitTorrentError> {
     let (files, is_multi_file) = {
         let ctx = context.lock().unwrap();
@@ -109,14 +152,14 @@ fn download_block_from_webseed(
             let file_segment_len = std::cmp::min(remaining as u64, file_end - current_offset) as u32;
             let file_offset = current_offset - file_start;
 
-            // Use the pre-computed torrent-relative path (e.g. "Sintel/Sintel.mp4").
-            // This avoids any absolute-path or UNC-prefix issues on Windows.
+            // Use pre-computed torrent-relative path (e.g. "Sintel/Sintel.mp4").
             let segment_data = download_segment(
                 web_seed_url,
                 &file.torrent_path,
                 is_multi_file,
                 file_offset,
                 file_segment_len,
+                timeout_secs,
             )?;
             block_data.extend_from_slice(&segment_data);
 
@@ -141,6 +184,7 @@ fn download_segment(
     is_multi_file: bool,
     file_offset: u64,
     length: u32,
+    timeout_secs: u64,
 ) -> Result<Vec<u8>, BitTorrentError> {
     let target_url = if is_multi_file {
         // BEP 19: base URL + '/' + relative path (no leading slash)
@@ -153,6 +197,7 @@ fn download_segment(
     };
 
     let response = ureq::get(&target_url)
+        .timeout(Duration::from_secs(timeout_secs.max(1)))
         .set("Range", &format!("bytes={}-{}", file_offset, file_offset + length as u64 - 1))
         .call()
         .map_err(|e| BitTorrentError::Parse(format!("WebSeed HTTP error: {}: {}", target_url, e)))?;

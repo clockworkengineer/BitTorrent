@@ -304,6 +304,31 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Enables or disables BEP 38 WebSeed health tracking and dynamic failover.
+    pub fn enable_webseed_health_tracker(mut self, enable: bool) -> Self {
+        self.config.enable_webseed_health_tracker = enable;
+        self
+    }
+
+    /// Configures the consecutive failure threshold before a WebSeed mirror is penalized.
+    pub fn webseed_failure_threshold(mut self, threshold: usize) -> Self {
+        self.config.webseed_failure_threshold = threshold.max(1);
+        self
+    }
+
+    /// Configures the base and maximum cooldown in seconds for WebSeed circuit-breaker backoff.
+    pub fn webseed_cooldowns(mut self, base_secs: u64, max_secs: u64) -> Self {
+        self.config.webseed_base_cooldown_secs = base_secs.max(1);
+        self.config.webseed_max_cooldown_secs = max_secs.max(self.config.webseed_base_cooldown_secs);
+        self
+    }
+
+    /// Configures the WebSeed HTTP request timeout in seconds.
+    pub fn webseed_timeout(mut self, secs: u64) -> Self {
+        self.config.webseed_timeout_secs = secs.max(1);
+        self
+    }
+
     /// Consumes the builder and constructs the `TorrentSession`.
     ///
     /// # Errors

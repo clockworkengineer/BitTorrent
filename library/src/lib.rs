@@ -122,6 +122,8 @@ pub use network::tracker;
 pub use network::utp;
 #[cfg(all(feature = "std", feature = "webrtc"))]
 pub use network::webrtc;
+#[cfg(feature = "std")]
+pub use network::webseed_tracker::{MirrorHealthProfile, MirrorHealthSummary, WebSeedMirrorTracker};
 
 #[cfg(feature = "std")]
 pub use storage::assembler;

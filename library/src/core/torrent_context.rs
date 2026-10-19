@@ -172,6 +172,8 @@ pub struct TorrentContext {
     pub endgame_staging: Mutex<crate::storage::erasure_staging::AdaptiveErasureStaging>,
     /// Swarm-wide latency profiler tracking smoothed RTT and ECT for connected peers.
     pub latency_profiler: Mutex<crate::network::latency_profiler::SwarmLatencyProfiler>,
+    /// BEP 38 WebSeed mirror health tracker managing dynamic endpoint scoring and fallback routing.
+    pub webseed_tracker: Mutex<crate::network::webseed_tracker::WebSeedMirrorTracker>,
 }
 
 impl TorrentContext {
@@ -252,7 +254,7 @@ impl TorrentContext {
             },
             config: config.clone(),
             download_path: download_path.to_path_buf(),
-            web_seeds,
+            web_seeds: web_seeds.clone(),
             is_private,
             metadata_size: None,
             metadata_pieces: alloc::collections::BTreeMap::new(),
@@ -333,6 +335,17 @@ impl TorrentContext {
                 config.endgame_straggler_ratio,
             )),
             latency_profiler: Mutex::new(crate::network::latency_profiler::SwarmLatencyProfiler::new()),
+            webseed_tracker: {
+                let mut tracker = crate::network::webseed_tracker::WebSeedMirrorTracker::new(
+                    config.webseed_failure_threshold,
+                    config.webseed_base_cooldown_secs,
+                    config.webseed_max_cooldown_secs,
+                );
+                for ws in &web_seeds {
+                    tracker.register_mirror(ws);
+                }
+                Mutex::new(tracker)
+            },
         };
         Ok(context)
     }
@@ -455,6 +468,11 @@ impl TorrentContext {
                 config.endgame_straggler_ratio,
             )),
             latency_profiler: Mutex::new(crate::network::latency_profiler::SwarmLatencyProfiler::new()),
+            webseed_tracker: Mutex::new(crate::network::webseed_tracker::WebSeedMirrorTracker::new(
+                config.webseed_failure_threshold,
+                config.webseed_base_cooldown_secs,
+                config.webseed_max_cooldown_secs,
+            )),
         };
         Ok(context)
     }
@@ -2536,6 +2554,26 @@ impl TorrentContext {
     /// Returns a swarm latency profile summary for all connected peers.
     pub fn swarm_latency_summary(&self) -> Vec<crate::network::latency_profiler::PeerLatencySummary> {
         self.latency_profiler.lock().unwrap().summary(self.config.endgame_straggler_ratio)
+    }
+
+    /// Returns a list of health summaries for all registered WebSeed mirrors.
+    pub fn webseed_mirror_summary(&self) -> Vec<crate::network::webseed_tracker::MirrorHealthSummary> {
+        self.webseed_tracker.lock().unwrap().summaries()
+    }
+
+    /// Registers a new WebSeed mirror URL at runtime.
+    pub fn add_webseed(&mut self, url: impl Into<String>) {
+        let u = url.into();
+        if !self.web_seeds.contains(&u) {
+            self.web_seeds.push(u.clone());
+        }
+        self.webseed_tracker.lock().unwrap().register_mirror(u);
+    }
+
+    /// Removes a WebSeed mirror URL from active tracking and routing.
+    pub fn remove_webseed(&mut self, url: &str) -> bool {
+        self.web_seeds.retain(|ws| ws != url);
+        self.webseed_tracker.lock().unwrap().remove_mirror(url)
     }
 }
 

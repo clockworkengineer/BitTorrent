@@ -90,6 +90,16 @@ pub struct SessionConfig {
     pub endgame_straggler_ratio: f64,
     /// Maximum redundant duplicate requests allowed per tail block in endgame mode (default: 2).
     pub endgame_max_clones_per_block: usize,
+    /// Enable BEP 38 WebSeed health tracking, latency scoring, and dynamic failover (default: true).
+    pub enable_webseed_health_tracker: bool,
+    /// Number of consecutive failed requests before triggering circuit-breaker backoff (default: 3).
+    pub webseed_failure_threshold: usize,
+    /// Base cooldown duration in seconds for WebSeed mirror backoff (default: 10).
+    pub webseed_base_cooldown_secs: u64,
+    /// Maximum cooldown duration in seconds for WebSeed mirror backoff (default: 300).
+    pub webseed_max_cooldown_secs: u64,
+    /// WebSeed HTTP request timeout in seconds (default: 15).
+    pub webseed_timeout_secs: u64,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -188,6 +198,11 @@ impl Default for SessionConfig {
             enable_adaptive_endgame: true,
             endgame_straggler_ratio: 1.8,
             endgame_max_clones_per_block: 2,
+            enable_webseed_health_tracker: true,
+            webseed_failure_threshold: 3,
+            webseed_base_cooldown_secs: 10,
+            webseed_max_cooldown_secs: 300,
+            webseed_timeout_secs: 15,
         }
     }
 }
@@ -311,6 +326,31 @@ impl SessionConfig {
     /// Configures the maximum redundant clone requests allowed per block in endgame mode.
     pub fn with_endgame_max_clones_per_block(mut self, max_clones: usize) -> Self {
         self.endgame_max_clones_per_block = max_clones.clamp(1, 8);
+        self
+    }
+
+    /// Enables or disables BEP 38 WebSeed health tracking and dynamic failover.
+    pub fn with_webseed_health_tracker(mut self, enable: bool) -> Self {
+        self.enable_webseed_health_tracker = enable;
+        self
+    }
+
+    /// Configures the consecutive failure threshold before a WebSeed mirror is penalized.
+    pub fn with_webseed_failure_threshold(mut self, threshold: usize) -> Self {
+        self.webseed_failure_threshold = threshold.max(1);
+        self
+    }
+
+    /// Configures the base and maximum cooldown in seconds for WebSeed circuit-breaker backoff.
+    pub fn with_webseed_cooldowns(mut self, base_secs: u64, max_secs: u64) -> Self {
+        self.webseed_base_cooldown_secs = base_secs.max(1);
+        self.webseed_max_cooldown_secs = max_secs.max(self.webseed_base_cooldown_secs);
+        self
+    }
+
+    /// Configures the WebSeed HTTP request timeout in seconds.
+    pub fn with_webseed_timeout(mut self, secs: u64) -> Self {
+        self.webseed_timeout_secs = secs.max(1);
         self
     }
 }

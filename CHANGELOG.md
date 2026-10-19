@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Implemented BEP 38 / WebTorrent Dynamic WebSeed Failover & Mirror Health Tracker (`WebSeedMirrorTracker`, `MirrorHealthProfile`, `MirrorHealthSummary`), providing multi-source HTTP fallback routing, exponential circuit-breaker cooldown backoff, real-time EMA latency smoothing, and dynamic health-based mirror ranking across WebSeed endpoints.
+- Integrated dynamic mirror selection and runtime fallback in `webseed::start_webseed_loop`, automatically routing requests to fastest healthy mirrors, bypassing failing endpoints, and probing recovering endpoints.
+- Added WebSeed health tracker configuration in `SessionConfig` and `TorrentSessionBuilder` (`enable_webseed_health_tracker`, `webseed_failure_threshold`, `webseed_base_cooldown_secs`, `webseed_max_cooldown_secs`, `webseed_timeout_secs`) and runtime management APIs in `TorrentSession` (`webseed_mirror_summary`, `add_webseed`, `remove_webseed`).
+- Created dedicated integration test suite `library/tests/webseed_failover_tests.rs` (6/6 tests passing).
 - Implemented Endgame Mode Multi-Source Adaptive Erasure Caching (`AdaptiveErasureStaging`, `StagedBlock`, `BlockArrivalOutcome`, `EndgameStagingMetrics`, `SwarmLatencyProfiler`, `PeerLatencyProfile`, `PeerLatencySummary`) providing predictive erasure block staging, RFC 6298 EMA RTT/jitter latency profiling, and Expected Completion Time (ECT) tracking to eliminate tail completion stalls on slow peer pipelines.
 - Integrated straggler detection and predictive preemption in `TorrentContext::next_block_request_for_peer`, proactively detecting in-flight blocks exceeding their completion window and cloning them to faster peers.
 - Added in-memory redundant duplicate block absorption in `TorrentContext::process_piece_block` and targeted `Cancel` broadcasting, preventing redundant disk writes and hash verifications when late duplicate blocks arrive from preempted peers.

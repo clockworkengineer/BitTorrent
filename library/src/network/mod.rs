@@ -31,3 +31,5 @@ pub mod webtorrent_injector;
 pub mod metadata_fetcher;
 #[cfg(feature = "std")]
 pub mod latency_profiler;
+#[cfg(feature = "std")]
+pub mod webseed_tracker;
