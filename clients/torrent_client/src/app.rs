@@ -3,7 +3,7 @@
 //! Orchestrates app startup, window repaint loop timing, sidebar selection updates,
 //! status metrics tracking, and mapping background messages to the main UI logger.
 
-use crate::state::{DetailTab, SidebarFilter, matches_filter};
+use crate::state::{AppSettings, DetailTab, SidebarFilter, SortColumn, matches_filter};
 use eframe::egui;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -37,6 +37,18 @@ pub struct TorrentClientApp {
     pub log_search_query: String,
     /// Visibility state of the About modal dialog.
     pub show_about_dialog: bool,
+    /// Visibility state of the Preferences / Settings modal dialog.
+    pub show_settings_dialog: bool,
+    /// Session index pending user confirmation for removal.
+    pub delete_confirm_idx: Option<usize>,
+    /// Checkbox state for deleting files from disk during removal.
+    pub delete_files_checked: bool,
+    /// Active column used to sort the torrent list.
+    pub sort_column: SortColumn,
+    /// Sort direction (ascending if true, descending if false).
+    pub sort_ascending: bool,
+    /// User configurable application settings.
+    pub settings: AppSettings,
     /// In-app media streaming server for the desktop GUI.
     pub stream_server: Option<std::sync::Arc<crate::stream_server::StreamServer>>,
 }
@@ -60,6 +72,12 @@ impl TorrentClientApp {
             active_detail_tab: DetailTab::Overview,
             log_search_query: String::new(),
             show_about_dialog: false,
+            show_settings_dialog: false,
+            delete_confirm_idx: None,
+            delete_files_checked: false,
+            sort_column: SortColumn::default(),
+            sort_ascending: true,
+            settings: AppSettings::default(),
             stream_server,
         }
     }
@@ -175,6 +193,55 @@ impl eframe::App for TorrentClientApp {
         // Repaint every 500 ms so progress updates live
         ctx.request_repaint_after(Duration::from_millis(500));
 
+        // Global keyboard shortcuts
+        let mut trigger_browse = false;
+        let mut toggle_pause = false;
+        let mut trigger_delete = false;
+
+        ctx.input(|i| {
+            if i.modifiers.command && i.key_pressed(egui::Key::O) {
+                trigger_browse = true;
+            }
+            if i.modifiers.command && i.key_pressed(egui::Key::Comma) {
+                self.show_settings_dialog = true;
+            }
+            if !ctx.wants_keyboard_input() {
+                if i.key_pressed(egui::Key::Delete) {
+                    trigger_delete = true;
+                }
+                if i.key_pressed(egui::Key::Space) {
+                    toggle_pause = true;
+                }
+            }
+        });
+
+        if trigger_browse
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("Torrent Files", &["torrent"])
+                .pick_file()
+        {
+            self.torrent_path = path.to_string_lossy().to_string();
+        }
+
+        if trigger_delete
+            && let Some(idx) = self.selected_session_index
+            && idx < self.sessions.len()
+        {
+            self.delete_confirm_idx = Some(idx);
+            self.delete_files_checked = false;
+        }
+
+        if toggle_pause
+            && let Some(idx) = self.selected_session_index
+            && let Some(s) = self.sessions.get_mut(idx)
+        {
+            if s.last_status == "Paused" {
+                let _ = s.session.resume();
+            } else if s.last_status != "Ended" {
+                let _ = s.session.pause();
+            }
+        }
+
         // Drain log messages from background threads
         while let Ok(msg) = self.log_rx.try_recv() {
             self.messages.push(msg);
@@ -229,6 +296,10 @@ impl eframe::App for TorrentClientApp {
                     ui.add_space(8.0);
                     if ui.button("ℹ About").clicked() {
                         self.show_about_dialog = true;
+                    }
+                    ui.add_space(6.0);
+                    if ui.button("⚙ Settings").clicked() {
+                        self.show_settings_dialog = true;
                     }
                 });
             });
@@ -285,8 +356,10 @@ impl eframe::App for TorrentClientApp {
             });
         }
 
-        // About Dialog Window
+        // Modal Dialog Windows
         self.draw_about_dialog(ctx);
+        self.draw_settings_dialog(ctx);
+        self.draw_delete_confirm_dialog(ctx);
 
         // Bottom Status Bar
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
@@ -414,14 +487,49 @@ impl eframe::App for TorrentClientApp {
                 });
             });
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
             ui.separator();
-            ui.add_space(8.0);
+            ui.add_space(4.0);
+
+            // Sorting bar
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Sort by:").strong().size(12.0));
+                let mut sort_btn = |ui: &mut egui::Ui, col: SortColumn, name: &str| {
+                    let arrow = if self.sort_column == col {
+                        if self.sort_ascending { " ⬆" } else { " ⬇" }
+                    } else {
+                        ""
+                    };
+                    let is_active = self.sort_column == col;
+                    let text = format!("{}{}", name, arrow);
+                    let resp = if is_active {
+                        ui.button(egui::RichText::new(text).strong())
+                    } else {
+                        ui.button(text)
+                    };
+                    if resp.clicked() {
+                        if self.sort_column == col {
+                            self.sort_ascending = !self.sort_ascending;
+                        } else {
+                            self.sort_column = col;
+                            self.sort_ascending = true;
+                        }
+                    }
+                };
+                sort_btn(ui, SortColumn::Name, "Name");
+                sort_btn(ui, SortColumn::Progress, "Progress");
+                sort_btn(ui, SortColumn::Size, "Size");
+                sort_btn(ui, SortColumn::Status, "Status");
+                sort_btn(ui, SortColumn::DownSpeed, "↓ Speed");
+                sort_btn(ui, SortColumn::UpSpeed, "↑ Speed");
+                sort_btn(ui, SortColumn::Peers, "Peers");
+            });
+
+            ui.add_space(6.0);
 
             egui::ScrollArea::vertical()
                 .id_source("sessions_scroll")
                 .show(ui, |ui| {
-                    let mut delete_indices = vec![];
                     let mut select_idx = None;
                     let mut stream_torrent_idx = None;
 
@@ -484,11 +592,7 @@ impl eframe::App for TorrentClientApp {
                     }
 
                     let mut should_save_progress = false;
-                    for (i, session_state) in self.sessions.iter_mut().enumerate() {
-                        if !matches_filter(session_state, self.active_filter) {
-                            continue;
-                        }
-
+                    for session_state in &mut self.sessions {
                         let context_arc = session_state.session.context.clone();
                         if let Ok(ctx_guard) = context_arc.try_lock() {
                             let old_progress = session_state.last_progress;
@@ -497,7 +601,42 @@ impl eframe::App for TorrentClientApp {
                                 should_save_progress = true;
                             }
                         }
+                    }
 
+                    let mut visible_indices: Vec<usize> = self
+                        .sessions
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| matches_filter(s, self.active_filter))
+                        .map(|(idx, _)| idx)
+                        .collect();
+
+                    visible_indices.sort_by(|&a, &b| {
+                        let sa = &self.sessions[a];
+                        let sb = &self.sessions[b];
+                        let ord = match self.sort_column {
+                            SortColumn::Name => sa
+                                .last_file_name
+                                .to_lowercase()
+                                .cmp(&sb.last_file_name.to_lowercase()),
+                            SortColumn::Size => sa.last_total.cmp(&sb.last_total),
+                            SortColumn::Progress => sa.last_progress.total_cmp(&sb.last_progress),
+                            SortColumn::DownSpeed => sa.last_bps.cmp(&sb.last_bps),
+                            SortColumn::UpSpeed => sa.last_upload_bps.cmp(&sb.last_upload_bps),
+                            SortColumn::Peers => {
+                                sa.last_peers_connected.cmp(&sb.last_peers_connected)
+                            }
+                            SortColumn::Status => sa.last_status.cmp(&sb.last_status),
+                        };
+                        if self.sort_ascending {
+                            ord
+                        } else {
+                            ord.reverse()
+                        }
+                    });
+
+                    for &i in &visible_indices {
+                        let session_state = &mut self.sessions[i];
                         let is_selected = self.selected_session_index == Some(i);
 
                         ui.group(|ui| {
@@ -520,7 +659,8 @@ impl eframe::App for TorrentClientApp {
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
                                         if ui.button("🗑 Delete").clicked() {
-                                            delete_indices.push(i);
+                                            self.delete_confirm_idx = Some(i);
+                                            self.delete_files_checked = false;
                                         }
                                         ui.add_space(6.0);
                                         if session_state.last_status == "Paused" {
@@ -574,20 +714,7 @@ impl eframe::App for TorrentClientApp {
                         self.start_streaming(idx, None);
                     }
 
-                    if !delete_indices.is_empty() {
-                        for idx in delete_indices.into_iter().rev() {
-                            let mut state = self.sessions.remove(idx);
-                            let _ = state.session.stop();
-                            if self.selected_session_index == Some(idx) {
-                                self.selected_session_index = None;
-                            } else if let Some(s_idx) = self.selected_session_index
-                                && s_idx > idx
-                            {
-                                self.selected_session_index = Some(s_idx - 1);
-                            }
-                        }
-                        self.save_state();
-                    } else if should_save_progress {
+                    if should_save_progress {
                         self.save_state();
                     }
                 });

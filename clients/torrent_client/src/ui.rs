@@ -587,4 +587,188 @@ impl TorrentClientApp {
             self.show_about_dialog = false;
         }
     }
+
+    /// Renders an interactive Settings / Preferences dialog window.
+    pub fn draw_settings_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_settings_dialog {
+            return;
+        }
+
+        let mut is_open = self.show_settings_dialog;
+        let mut save_clicked = false;
+
+        egui::Window::new("⚙ Preferences & Settings")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut is_open)
+            .show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                ui.add_space(4.0);
+
+                ui.group(|ui| {
+                    ui.strong("📁 Storage & Downloads");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Default Folder:");
+                        ui.add_sized(
+                            [220.0, 18.0],
+                            egui::TextEdit::singleline(&mut self.settings.default_download_dir),
+                        );
+                        if ui.button("Browse").clicked()
+                            && let Some(folder) = rfd::FileDialog::new().pick_folder()
+                        {
+                            self.settings.default_download_dir =
+                                folder.to_string_lossy().to_string();
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Max Active Downloads:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.settings.max_active_downloads)
+                                .range(1..=50),
+                        );
+                    });
+                });
+
+                ui.add_space(6.0);
+
+                ui.group(|ui| {
+                    ui.strong("🌐 Network & Protocols");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Listening Port:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.settings.listen_port)
+                                .range(1024..=65535),
+                        );
+                    });
+                    ui.checkbox(&mut self.settings.enable_dht, "Enable Kademlia DHT (BEP 5)");
+                    ui.checkbox(
+                        &mut self.settings.enable_lsd,
+                        "Enable Local Service Discovery (BEP 14)",
+                    );
+                    ui.checkbox(
+                        &mut self.settings.enable_utp,
+                        "Enable uTP Transport Protocol (BEP 29)",
+                    );
+                });
+
+                ui.add_space(6.0);
+
+                ui.group(|ui| {
+                    ui.strong("🔒 Privacy & Encryption");
+                    ui.add_space(4.0);
+                    ui.checkbox(
+                        &mut self.settings.enable_mse,
+                        "Enable Message Stream Encryption (MSE / PE)",
+                    );
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("✔ Save & Apply").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.show_settings_dialog = false;
+                    }
+                });
+            });
+
+        if save_clicked {
+            if self.download_dir.is_empty() && !self.settings.default_download_dir.is_empty() {
+                self.download_dir = self.settings.default_download_dir.clone();
+            }
+            self.save_state();
+            self.show_settings_dialog = false;
+        } else if !is_open {
+            self.show_settings_dialog = false;
+        }
+    }
+
+    /// Renders a confirmation dialog before removing a torrent session.
+    pub fn draw_delete_confirm_dialog(&mut self, ctx: &egui::Context) {
+        let Some(del_idx) = self.delete_confirm_idx else {
+            return;
+        };
+
+        if del_idx >= self.sessions.len() {
+            self.delete_confirm_idx = None;
+            return;
+        }
+
+        let torrent_name = self.sessions[del_idx].last_file_name.clone();
+        let mut is_open = true;
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new("🗑 Remove Torrent")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut is_open)
+            .show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.add_space(4.0);
+                ui.label(format!(
+                    "Are you sure you want to remove \"{}\"?",
+                    torrent_name
+                ));
+                ui.add_space(8.0);
+                ui.checkbox(
+                    &mut self.delete_files_checked,
+                    "Also delete downloaded data files from disk",
+                );
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(
+                            egui::RichText::new("Remove")
+                                .color(egui::Color32::from_rgb(231, 76, 60))
+                                .strong(),
+                        )
+                        .clicked()
+                    {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed {
+            let mut state = self.sessions.remove(del_idx);
+            let _ = state.session.stop();
+
+            if self.delete_files_checked
+                && let Ok(ctx_guard) = state.session.context.lock()
+            {
+                let download_dir = ctx_guard.download_path.clone();
+                for file in &ctx_guard.files_to_download {
+                    let file_path = download_dir.join(&file.torrent_path);
+                    let _ = std::fs::remove_file(file_path);
+                }
+            }
+
+            if self.selected_session_index == Some(del_idx) {
+                self.selected_session_index = None;
+            } else if let Some(s_idx) = self.selected_session_index
+                && s_idx > del_idx
+            {
+                self.selected_session_index = Some(s_idx - 1);
+            }
+            self.save_state();
+            self.delete_confirm_idx = None;
+        } else if cancelled || !is_open {
+            self.delete_confirm_idx = None;
+        }
+    }
 }

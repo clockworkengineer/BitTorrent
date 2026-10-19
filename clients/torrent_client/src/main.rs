@@ -28,6 +28,58 @@ fn configure_visuals(ctx: &egui::Context) {
     ctx.set_visuals(visuals);
 }
 
+/// Generates an embedded application icon for the desktop window and taskbar.
+fn create_app_icon() -> egui::IconData {
+    const SIZE: usize = 64;
+    let mut rgba = Vec::with_capacity(SIZE * SIZE * 4);
+    let center = 31.5f32;
+    let radius = 28.0f32;
+
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let dist = (dx * dx + dy * dy).sqrt();
+
+            if dist <= radius {
+                let t = (y as f32) / (SIZE as f32);
+                let r = (25.0 * (1.0 - t) + 41.0 * t) as u8;
+                let g = (42.0 * (1.0 - t) + 128.0 * t) as u8;
+                let b = (86.0 * (1.0 - t) + 185.0 * t) as u8;
+
+                // Central download arrow shaft
+                let in_shaft = (27..=36).contains(&x) && (16..=36).contains(&y);
+                // Arrow head
+                let in_head = (36..=47).contains(&y) && {
+                    let head_width = 18.0 - (y - 36) as f32 * 1.3;
+                    dx.abs() <= head_width.max(1.0)
+                };
+                // Horizontal base line
+                let in_base = (20..=43).contains(&x) && (50..=53).contains(&y);
+
+                if in_shaft || in_head || in_base {
+                    rgba.extend_from_slice(&[255, 255, 255, 255]);
+                } else if dist >= radius - 1.5 {
+                    rgba.extend_from_slice(&[52, 152, 219, 255]);
+                } else {
+                    rgba.extend_from_slice(&[r, g, b, 255]);
+                }
+            } else if dist < radius + 1.0 {
+                let alpha = ((radius + 1.0 - dist) * 255.0).clamp(0.0, 255.0) as u8;
+                rgba.extend_from_slice(&[41, 128, 185, alpha]);
+            } else {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+
+    egui::IconData {
+        rgba,
+        width: SIZE as u32,
+        height: SIZE as u32,
+    }
+}
+
 /// The main entry point for the desktop GUI client application.
 fn main() {
     let mut args = env::args_os().skip(1);
@@ -39,12 +91,15 @@ fn main() {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 600.0])
+            .with_inner_size([1100.0, 750.0])
+            .with_min_inner_size([850.0, 520.0])
+            .with_title("BitTorrent Desktop Client")
+            .with_icon(create_app_icon())
             .with_position(egui::pos2(100.0, 100.0)),
         ..Default::default()
     };
     let _ = eframe::run_native(
-        "BitTorrent Client",
+        "BitTorrent Desktop Client",
         options,
         Box::new(move |cc| {
             configure_visuals(&cc.egui_ctx);

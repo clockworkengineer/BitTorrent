@@ -34,6 +34,51 @@ pub enum DetailTab {
     Logs,
 }
 
+/// Sorting criteria for torrent sessions in the main list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortColumn {
+    #[default]
+    Name,
+    Size,
+    Progress,
+    DownSpeed,
+    UpSpeed,
+    Peers,
+    Status,
+}
+
+/// User configurable application settings.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AppSettings {
+    pub default_download_dir: String,
+    pub listen_port: u16,
+    pub max_active_downloads: usize,
+    pub enable_dht: bool,
+    pub enable_lsd: bool,
+    pub enable_utp: bool,
+    pub enable_mse: bool,
+    pub max_download_speed_kib: u64,
+    pub max_upload_speed_kib: u64,
+    pub dark_mode: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            default_download_dir: String::new(),
+            listen_port: 6881,
+            max_active_downloads: 5,
+            enable_dht: true,
+            enable_lsd: true,
+            enable_utp: true,
+            enable_mse: false,
+            max_download_speed_kib: 0,
+            max_upload_speed_kib: 0,
+            dark_mode: true,
+        }
+    }
+}
+
 /// Structure representing a saved torrent session details on disk.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SavedTorrent {
@@ -46,6 +91,8 @@ pub struct SavedTorrent {
 pub struct ClientState {
     pub download_dir: String,
     pub torrents: Vec<SavedTorrent>,
+    #[serde(default)]
+    pub settings: AppSettings,
 }
 
 /// Legacy client state layout for backward compatibility support.
@@ -116,6 +163,7 @@ impl TorrentClientApp {
         let state = ClientState {
             download_dir: self.download_dir.clone(),
             torrents,
+            settings: self.settings.clone(),
         };
         let state_path = get_config_path();
         if let Ok(content) = serde_json::to_string_pretty(&state) {
@@ -135,6 +183,10 @@ impl TorrentClientApp {
         if let Some(content) = content {
             if let Ok(state) = serde_json::from_str::<ClientState>(&content) {
                 self.download_dir = state.download_dir;
+                self.settings = state.settings;
+                if self.download_dir.is_empty() && !self.settings.default_download_dir.is_empty() {
+                    self.download_dir = self.settings.default_download_dir.clone();
+                }
                 for t in state.torrents {
                     self.add_session_by_path(
                         t.torrent_path,
@@ -203,6 +255,7 @@ impl TorrentClientApp {
         self.save_state();
 
         let bitfield_hex_clone = bitfield_hex.clone();
+        let settings_clone = self.settings.clone();
         std::thread::spawn(move || {
             let torrent_path_buf = PathBuf::from(&torrent_path);
             let download_dir_buf = PathBuf::from(&download_dir);
@@ -228,6 +281,9 @@ impl TorrentClientApp {
             };
 
             let mut config = bittorrent_rs::session::SessionConfig::default();
+            config.listen_port = settings_clone.listen_port;
+            config.dht_enabled = settings_clone.enable_dht;
+            config.mse_enabled = settings_clone.enable_mse;
             if bitfield_hex_clone.is_some() {
                 config.skip_hash_check = true;
             }
