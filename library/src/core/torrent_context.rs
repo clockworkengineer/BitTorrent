@@ -164,6 +164,10 @@ pub struct TorrentContext {
     #[cfg(feature = "std")]
     pub verification_pool: Arc<crate::storage::verification_pool::HashVerificationPool>,
     pub pieces_verifying: Mutex<std::collections::HashSet<u32>>,
+    /// BEP 53: 0-based file indices selected for download (`so=`).
+    pub selected_file_indices: Option<Vec<usize>>,
+    /// Expedited partial metadata manifest parsed early from initial metadata pieces.
+    pub expedited_manifest: Option<crate::network::metadata_fetcher::PartialMetadataManifest>,
 }
 
 impl TorrentContext {
@@ -318,6 +322,8 @@ impl TorrentContext {
                 config.verification_queue_capacity,
             )),
             pieces_verifying: Mutex::new(std::collections::HashSet::new()),
+            selected_file_indices: None,
+            expedited_manifest: None,
         };
         Ok(context)
     }
@@ -433,6 +439,8 @@ impl TorrentContext {
                 config.verification_queue_capacity,
             )),
             pieces_verifying: Mutex::new(std::collections::HashSet::new()),
+            selected_file_indices: None,
+            expedited_manifest: None,
         };
         Ok(context)
     }
@@ -569,12 +577,28 @@ impl TorrentContext {
         let _ = std::fs::write(torrent_path, &torrent_bytes);
         
         self.info_dict_bytes = Some(info_dict_bytes.to_vec());
+
+        if self.expedited_manifest.is_none() {
+            self.expedited_manifest = crate::network::metadata_fetcher::PartialMetadataManifest::try_parse_partial(info_dict_bytes);
+        }
+
+        if let Some(ref selected) = self.selected_file_indices {
+            for (idx, file) in self.files_to_download.iter_mut().enumerate() {
+                if selected.contains(&idx) {
+                    file.priority = FilePriority::Normal;
+                } else {
+                    file.priority = FilePriority::Skip;
+                }
+            }
+        }
         
         {
             let mut pq = self.piece_priority_queue.lock().unwrap();
             pq.clear();
             for piece_index in 0..number_of_pieces as u32 {
-                pq.push(PieceRarity { peer_count: 0, piece_index });
+                if self.is_piece_wanted(piece_index) && !self.is_piece_local(piece_index) {
+                    pq.push(PieceRarity { peer_count: 0, piece_index });
+                }
             }
         }
 
@@ -939,6 +963,98 @@ impl TorrentContext {
         }
 
         Ok(())
+    }
+
+    /// Sets the list of selected 0-based file indices (BEP 53 `so=`).
+    ///
+    /// If files are already populated in this context, applies the selection immediately,
+    /// setting unselected files to [`FilePriority::Skip`] and selected files to [`FilePriority::Normal`].
+    pub fn set_selected_files(&mut self, indices: &[usize]) {
+        let mut sorted = indices.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        self.selected_file_indices = Some(sorted.clone());
+        if !self.files_to_download.is_empty() {
+            self.apply_bep53_file_selection(&sorted);
+        }
+    }
+
+    /// Applies BEP 53 file selection to existing files in this context.
+    ///
+    /// Elevates selected files to [`FilePriority::Normal`] if currently skipped,
+    /// sets unselected files to [`FilePriority::Skip`], clears pending reservations
+    /// for pieces that are no longer wanted, and re-seeds the piece priority queue.
+    pub fn apply_bep53_file_selection(&mut self, selected_indices: &[usize]) {
+        for (idx, file) in self.files_to_download.iter_mut().enumerate() {
+            if selected_indices.contains(&idx) {
+                if file.priority == FilePriority::Skip {
+                    file.priority = FilePriority::Normal;
+                }
+            } else {
+                file.priority = FilePriority::Skip;
+            }
+        }
+
+        // Clear requests for pieces that became unwanted
+        for piece in 0..self.number_of_pieces as u32 {
+            if !self.is_piece_wanted(piece) {
+                self.clear_piece_requests(piece);
+            }
+        }
+
+        // Re-seed piece priority queue with wanted missing pieces
+        if let Ok(mut pq) = self.piece_priority_queue.lock() {
+            pq.clear();
+            for piece_index in 0..self.number_of_pieces as u32 {
+                if self.is_piece_wanted(piece_index) && !self.is_piece_local(piece_index) {
+                    let count = self.piece_data.get(piece_index as usize).map(|p| p.peer_count).unwrap_or(0);
+                    pq.push(PieceRarity { peer_count: count, piece_index });
+                }
+            }
+        }
+    }
+
+    /// Returns the currently active BEP 53 selected file indices, if configured.
+    pub fn selected_files(&self) -> Option<&[usize]> {
+        self.selected_file_indices.as_deref()
+    }
+
+    /// Returns a BEP 53 selection evaluation comparing selected files to total torrent payload.
+    pub fn bep53_evaluation(&self) -> Option<crate::network::metadata_fetcher::BEP53SelectionEvaluation> {
+        if let Some(ref manifest) = self.expedited_manifest {
+            let selected = self.selected_file_indices.as_deref().unwrap_or(&[]);
+            return Some(manifest.evaluate_bep53_selection(selected));
+        }
+
+        if !self.files_to_download.is_empty() {
+            let files = self.files_to_download.iter().enumerate().map(|(idx, f)| {
+                let start_piece = if self.piece_length == 0 { 0 } else { (f.offset / self.piece_length as u64) as u32 };
+                let end_piece = if f.length == 0 || self.piece_length == 0 {
+                    start_piece
+                } else {
+                    ((f.offset + f.length - 1) / self.piece_length as u64) as u32
+                };
+                crate::network::metadata_fetcher::PartialFileInfo {
+                    index: idx,
+                    name: f.name.clone(),
+                    length: f.length,
+                    piece_range: (start_piece, end_piece),
+                }
+            }).collect();
+
+            let manifest = crate::network::metadata_fetcher::PartialMetadataManifest {
+                name: self.file_name.clone(),
+                piece_length: self.piece_length as u64,
+                total_bytes: self.total_bytes_to_download,
+                total_pieces: self.number_of_pieces as u32,
+                files,
+                has_complete_file_list: true,
+            };
+            let selected = self.selected_file_indices.as_deref().unwrap_or(&[]);
+            return Some(manifest.evaluate_bep53_selection(selected));
+        }
+
+        None
     }
 
     /// Returns true if super-seeding mode (BEP 16) is actively running.

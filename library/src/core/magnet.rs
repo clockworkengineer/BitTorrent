@@ -21,6 +21,8 @@ pub struct MagnetLink {
     pub exact_sources: Vec<String>,
     /// List of BEP 19 acceptable source URLs (`as`).
     pub acceptable_sources: Vec<String>,
+    /// BEP 53: 0-based file indices selected for download (`so=`).
+    pub select_only: Vec<usize>,
 }
 
 impl MagnetLink {
@@ -42,6 +44,7 @@ impl MagnetLink {
         let mut web_seeds = Vec::new();
         let mut exact_sources = Vec::new();
         let mut acceptable_sources = Vec::new();
+        let mut select_only = Vec::new();
 
         for param in query.split('&') {
             let mut parts = param.splitn(2, '=');
@@ -98,6 +101,10 @@ impl MagnetLink {
                         acceptable_sources.push(as_url);
                     }
                 }
+                "so" => {
+                    let so_val = percent_decode(val);
+                    parse_bep53_select_only(&so_val, &mut select_only);
+                }
                 _ => {}
             }
         }
@@ -119,6 +126,7 @@ impl MagnetLink {
             web_seeds,
             exact_sources,
             acceptable_sources,
+            select_only,
         })
     }
 
@@ -199,6 +207,54 @@ impl MagnetLink {
         }
     }
 
+    /// Returns `true` if this magnet link contains a BEP 53 file selection (`so=`).
+    pub fn has_file_selection(&self) -> bool {
+        !self.select_only.is_empty()
+    }
+
+    /// Returns the slice of selected 0-based file indices (BEP 53 `so=`).
+    pub fn selected_indices(&self) -> &[usize] {
+        &self.select_only
+    }
+
+    /// Returns `true` if the given 0-based file index is selected.
+    /// If no file selection is present in the magnet link, all files are selected by default.
+    pub fn is_file_selected(&self, index: usize) -> bool {
+        if self.select_only.is_empty() {
+            true
+        } else {
+            self.select_only.binary_search(&index).is_ok()
+        }
+    }
+
+    /// Returns `true` if the given 0-based file index is explicitly included in the `so=` list.
+    pub fn is_explicitly_selected(&self, index: usize) -> bool {
+        self.select_only.binary_search(&index).is_ok()
+    }
+
+    /// Adds a file index to the BEP 53 selection.
+    pub fn add_selected_file(&mut self, index: usize) {
+        if !self.select_only.contains(&index) {
+            self.select_only.push(index);
+            self.select_only.sort_unstable();
+        }
+    }
+
+    /// Adds an inclusive range of file indices to the BEP 53 selection (`start..=end`).
+    pub fn add_selected_range(&mut self, start: usize, end: usize) {
+        for idx in start..=end {
+            if !self.select_only.contains(&idx) {
+                self.select_only.push(idx);
+            }
+        }
+        self.select_only.sort_unstable();
+    }
+
+    /// Clears any BEP 53 file selection.
+    pub fn clear_selection(&mut self) {
+        self.select_only.clear();
+    }
+
     /// Generates a canonical, percent-encoded BitTorrent magnet URI representing this `MagnetLink`.
     pub fn to_uri(&self) -> String {
         let mut uri = String::from("magnet:?");
@@ -248,6 +304,13 @@ impl MagnetLink {
             params.push(format!("as={}", percent_encode(as_url)));
         }
 
+        if !self.select_only.is_empty() {
+            let formatted_so = format_bep53_select_only(&self.select_only);
+            if !formatted_so.is_empty() {
+                params.push(format!("so={}", formatted_so));
+            }
+        }
+
         uri.push_str(&params.join("&"));
         uri
     }
@@ -263,6 +326,7 @@ pub struct MagnetUriBuilder {
     web_seeds: Vec<String>,
     exact_sources: Vec<String>,
     acceptable_sources: Vec<String>,
+    select_only: Vec<usize>,
 }
 
 impl MagnetUriBuilder {
@@ -365,6 +429,37 @@ impl MagnetUriBuilder {
         self
     }
 
+    /// Sets specific 0-based file indices to select for download (BEP 53 `so=`).
+    pub fn with_selected_files(mut self, indices: &[usize]) -> Self {
+        for &idx in indices {
+            if !self.select_only.contains(&idx) {
+                self.select_only.push(idx);
+            }
+        }
+        self.select_only.sort_unstable();
+        self
+    }
+
+    /// Adds an inclusive 0-based range of file indices to select for download (BEP 53 `so=`).
+    pub fn with_selected_range(mut self, start: usize, end: usize) -> Self {
+        for idx in start..=end {
+            if !self.select_only.contains(&idx) {
+                self.select_only.push(idx);
+            }
+        }
+        self.select_only.sort_unstable();
+        self
+    }
+
+    /// Selects a single 0-based file index for download (BEP 53 `so=`).
+    pub fn select_file(mut self, index: usize) -> Self {
+        if !self.select_only.contains(&index) {
+            self.select_only.push(index);
+            self.select_only.sort_unstable();
+        }
+        self
+    }
+
     /// Builds the configured [`MagnetLink`].
     pub fn build(self) -> Result<MagnetLink, BitTorrentError> {
         let info_hash = self.info_hash.ok_or_else(|| {
@@ -379,6 +474,7 @@ impl MagnetUriBuilder {
             web_seeds: self.web_seeds,
             exact_sources: self.exact_sources,
             acceptable_sources: self.acceptable_sources,
+            select_only: self.select_only,
         })
     }
 
@@ -479,3 +575,63 @@ fn parse_base32_hash(b32: &str) -> Option<Vec<u8>> {
         None
     }
 }
+
+/// Parses BEP 53 `so=` select-only file indices parameter.
+/// Supports single numbers (e.g. `0`, `2`) and inclusive ranges (e.g. `6-8`).
+/// Multiple comma-separated elements are parsed into a sorted, deduplicated vector.
+pub fn parse_bep53_select_only(s: &str, output: &mut Vec<usize>) {
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(dash_idx) = part.find('-') {
+            let start_str = part[..dash_idx].trim();
+            let end_str = part[dash_idx + 1..].trim();
+            if let (Ok(start), Ok(end)) = (start_str.parse::<usize>(), end_str.parse::<usize>()) {
+                if start <= end {
+                    for idx in start..=end {
+                        if !output.contains(&idx) {
+                            output.push(idx);
+                        }
+                    }
+                }
+            }
+        } else if let Ok(idx) = part.parse::<usize>() {
+            if !output.contains(&idx) {
+                output.push(idx);
+            }
+        }
+    }
+    output.sort_unstable();
+}
+
+/// Formats a list of 0-based file indices into a canonical BEP 53 `so=` value string.
+/// Compresses contiguous runs into `start-end` notation (e.g. `[0, 2, 4, 6, 7, 8]` -> `"0,2,4,6-8"`).
+pub fn format_bep53_select_only(indices: &[usize]) -> String {
+    if indices.is_empty() {
+        return String::new();
+    }
+    let mut sorted = indices.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
+    let mut parts: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let start = sorted[i];
+        let mut end = start;
+        while i + 1 < sorted.len() && sorted[i + 1] == end + 1 {
+            end = sorted[i + 1];
+            i += 1;
+        }
+        if start == end {
+            parts.push(format!("{}", start));
+        } else {
+            parts.push(format!("{}-{}", start, end));
+        }
+        i += 1;
+    }
+    parts.join(",")
+}
+

@@ -356,16 +356,31 @@ pub async fn handle_magnet_bootstrap(
             if let Some(&peer_ext_id) = pg.extension_ids.get("ut_metadata") {
                 if let Some(size) = ctx.metadata_size {
                     let num_pieces = (size + 16383) / 16384;
+                    let timeout = Duration::from_secs(ctx.config.metadata_request_timeout_secs.max(1));
                     let mut target_piece = None;
-                    for p in 0..num_pieces as u32 {
-                        if !ctx.metadata_pieces.contains_key(&p) {
-                            let is_requested = ctx.requested_metadata_pieces.get(&p)
-                                .map(|t| t.elapsed() < Duration::from_secs(5))
-                                .unwrap_or(false);
-                            if !is_requested {
-                                ctx.requested_metadata_pieces.insert(p, Instant::now());
-                                target_piece = Some((p, peer_ext_id));
-                                break;
+
+                    // Prioritize piece 0 for expedited partial manifest resolution
+                    if num_pieces > 0 && !ctx.metadata_pieces.contains_key(&0) {
+                        let is_requested = ctx.requested_metadata_pieces.get(&0)
+                            .map(|t| t.elapsed() < timeout)
+                            .unwrap_or(false);
+                        if !is_requested {
+                            ctx.requested_metadata_pieces.insert(0, Instant::now());
+                            target_piece = Some((0, peer_ext_id));
+                        }
+                    }
+
+                    if target_piece.is_none() {
+                        for p in 0..num_pieces as u32 {
+                            if !ctx.metadata_pieces.contains_key(&p) {
+                                let is_requested = ctx.requested_metadata_pieces.get(&p)
+                                    .map(|t| t.elapsed() < timeout)
+                                    .unwrap_or(false);
+                                if !is_requested {
+                                    ctx.requested_metadata_pieces.insert(p, Instant::now());
+                                    target_piece = Some((p, peer_ext_id));
+                                    break;
+                                }
                             }
                         }
                     }

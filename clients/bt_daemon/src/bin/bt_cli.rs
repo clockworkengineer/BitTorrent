@@ -64,7 +64,7 @@ fn print_usage() {
     println!("  bt-cli resume-info <path-to-fastresume-file>");
     println!("  bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]");
     println!("  bt-cli v2-info <torrent-path>");
-    println!("  bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]");
+    println!("  bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>] [--select <indices>]");
     println!("  bt-cli recheck <torrent-path> <data-dir> [--workers <N>]");
     println!("  bt-cli shutdown");
 }
@@ -368,6 +368,7 @@ fn main() {
 
         let mut inject_webtorrent = false;
         let mut custom_web_seeds = Vec::new();
+        let mut select_indices_str = None;
         let mut idx = 3;
         while idx < args.len() {
             if args[idx] == "--inject-webtorrent" {
@@ -375,8 +376,16 @@ fn main() {
             } else if args[idx] == "--web-seed" && idx + 1 < args.len() {
                 custom_web_seeds.push(args[idx + 1].clone());
                 idx += 1;
+            } else if args[idx] == "--select" && idx + 1 < args.len() {
+                select_indices_str = Some(args[idx + 1].clone());
+                idx += 1;
             }
             idx += 1;
+        }
+
+        if let Some(ref sel_str) = select_indices_str {
+            magnet.select_only.clear();
+            bittorrent_rs::parse_bep53_select_only(sel_str, &mut magnet.select_only);
         }
 
         println!("BitTorrent Magnet URI Inspection:");
@@ -408,6 +417,13 @@ fn main() {
         println!("  Format:           {}", format_str);
         println!("  WebTorrent Cap:   {}", if magnet.is_webtorrent() { "Yes (WebSocket trackers present)" } else { "No" });
 
+        let selection_str = if magnet.has_file_selection() {
+            format!("{} ({} file(s) selected)", bittorrent_rs::format_bep53_select_only(magnet.selected_indices()), magnet.selected_indices().len())
+        } else {
+            "All files (no so= filter)".to_string()
+        };
+        println!("  Selected (BEP 53):{}", selection_str);
+
         let report = bittorrent_rs::WebTorrentMagnetInjector::extract_trackers(&magnet);
         println!("\n  Trackers ({} total):", report.total_trackers);
         println!("    WebSocket ({}):", report.websocket_trackers.len());
@@ -428,16 +444,19 @@ fn main() {
             println!("    - {}", ws);
         }
 
-        if inject_webtorrent || !custom_web_seeds.is_empty() {
+        if inject_webtorrent || !custom_web_seeds.is_empty() || select_indices_str.is_some() {
             let injected_ws = bittorrent_rs::WebTorrentMagnetInjector::inject_web_seeds(&mut magnet, &custom_web_seeds);
             let injected_trackers = if inject_webtorrent {
                 bittorrent_rs::WebTorrentMagnetInjector::inject_websocket_trackers(&mut magnet, None)
             } else {
                 0
             };
-            println!("\n  Injected:");
+            println!("\n  Modifications:");
             println!("    WebSeeds Added:       {}", injected_ws);
             println!("    WS Trackers Added:    {}", injected_trackers);
+            if select_indices_str.is_some() {
+                println!("    BEP 53 Selected:      {}", bittorrent_rs::format_bep53_select_only(magnet.selected_indices()));
+            }
             println!("\n  Updated Magnet URI:");
             println!("    {}", magnet.to_uri());
         } else {

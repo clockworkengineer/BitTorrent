@@ -162,7 +162,15 @@ pub use utils::io_traits::SocketFactory;
 pub use utils::io_traits::{HttpClient, UreqHttpClient};
 #[cfg(feature = "std")]
 pub use session::manager::Manager;
-pub use core::magnet::{percent_decode, percent_encode, MagnetLink, MagnetUriBuilder};
+pub use core::magnet::{
+    format_bep53_select_only, parse_bep53_select_only, percent_decode, percent_encode, MagnetLink,
+    MagnetUriBuilder,
+};
+#[cfg(feature = "std")]
+pub use network::metadata_fetcher::{
+    BEP53SelectionEvaluation, MetadataFetchMetrics, MetadataRangeFetcher, PartialFileInfo,
+    PartialMetadataManifest, MAX_METADATA_SIZE, METADATA_PIECE_SIZE,
+};
 #[cfg(feature = "std")]
 pub use network::webtorrent_injector::{
     DEFAULT_WEBTORRENT_TRACKERS, InjectionSummary, TrackerExtractionReport,

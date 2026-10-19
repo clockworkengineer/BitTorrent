@@ -80,6 +80,10 @@ pub struct SessionConfig {
     pub verification_workers: usize,
     /// Maximum number of piece verification jobs queued in the worker pool (default: 1024).
     pub verification_queue_capacity: usize,
+    /// Maximum concurrent pipelined metadata requests dispatched to a single peer (default: 4).
+    pub metadata_pipeline_depth: usize,
+    /// Timeout in seconds before an in-flight metadata request can be re-dispatched (default: 5).
+    pub metadata_request_timeout_secs: u64,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -173,6 +177,8 @@ impl Default for SessionConfig {
                 }
             },
             verification_queue_capacity: 1024,
+            metadata_pipeline_depth: 4,
+            metadata_request_timeout_secs: 5,
         }
     }
 }
@@ -266,6 +272,18 @@ impl SessionConfig {
     /// Configures the maximum number of verification jobs queued in the worker pool.
     pub fn with_verification_queue_capacity(mut self, capacity: usize) -> Self {
         self.verification_queue_capacity = capacity.max(16);
+        self
+    }
+
+    /// Configures the maximum concurrent pipelined metadata requests dispatched to a single peer.
+    pub fn with_metadata_pipeline_depth(mut self, depth: usize) -> Self {
+        self.metadata_pipeline_depth = depth.max(1);
+        self
+    }
+
+    /// Configures the timeout in seconds before an in-flight metadata request can be re-dispatched.
+    pub fn with_metadata_request_timeout(mut self, secs: u64) -> Self {
+        self.metadata_request_timeout_secs = secs.max(1);
         self
     }
 }

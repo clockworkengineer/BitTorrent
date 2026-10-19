@@ -50,6 +50,7 @@ pub struct TorrentSessionBuilder {
     pub(super) fast_resume_file: Option<PathBuf>,
     pub(super) web_seeds: Vec<String>,
     pub(super) auto_inject_webtorrent: bool,
+    pub(super) selected_files: Option<Vec<usize>>,
 }
 
 impl TorrentSessionBuilder {
@@ -66,6 +67,7 @@ impl TorrentSessionBuilder {
             fast_resume_file: None,
             web_seeds: Vec::new(),
             auto_inject_webtorrent: true,
+            selected_files: None,
         }
     }
 
@@ -82,6 +84,7 @@ impl TorrentSessionBuilder {
             fast_resume_file: None,
             web_seeds: Vec::new(),
             auto_inject_webtorrent: true,
+            selected_files: None,
         }
     }
 
@@ -249,6 +252,40 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Sets specific 0-based file indices to select for download (BEP 53 `so=`).
+    pub fn select_files(mut self, indices: &[usize]) -> Self {
+        let mut sorted = indices.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        self.selected_files = Some(sorted);
+        self
+    }
+
+    /// Adds an inclusive 0-based range of file indices to select for download (BEP 53 `so=`).
+    pub fn select_file_range(mut self, start: usize, end: usize) -> Self {
+        let mut files = self.selected_files.unwrap_or_default();
+        for idx in start..=end {
+            if !files.contains(&idx) {
+                files.push(idx);
+            }
+        }
+        files.sort_unstable();
+        self.selected_files = Some(files);
+        self
+    }
+
+    /// Configures the maximum concurrent pipelined metadata requests dispatched to a single peer.
+    pub fn metadata_pipeline_depth(mut self, depth: usize) -> Self {
+        self.config.metadata_pipeline_depth = depth.max(1);
+        self
+    }
+
+    /// Configures the timeout in seconds before an in-flight metadata request can be re-dispatched.
+    pub fn metadata_request_timeout(mut self, secs: u64) -> Self {
+        self.config.metadata_request_timeout_secs = secs.max(1);
+        self
+    }
+
     /// Consumes the builder and constructs the `TorrentSession`.
     ///
     /// # Errors
@@ -276,6 +313,9 @@ impl TorrentSessionBuilder {
                 if !self.web_seeds.is_empty() {
                     sess.inject_web_seeds(self.web_seeds);
                 }
+                if let Some(ref sel) = self.selected_files {
+                    sess.context.lock().unwrap().set_selected_files(sel);
+                }
                 sess
             }
             TorrentSource::Magnet(link) => {
@@ -286,6 +326,7 @@ impl TorrentSessionBuilder {
                     self.selector,
                     self.web_seeds,
                     self.auto_inject_webtorrent,
+                    self.selected_files,
                 )?
             }
         };

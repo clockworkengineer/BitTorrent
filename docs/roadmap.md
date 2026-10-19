@@ -603,13 +603,37 @@ Implemented multi-threaded background piece hash verification worker pool offloa
 
 ---
 
+### Phase 42: BEP 53 Selective Magnet Download & Range-Based Metadata Fetching
+
+Implemented BEP 53 Magnet URI file selection (`so=`), multi-peer range-based metadata fetching, and expedited early partial file manifest resolution:
+- **BEP 53 `so=` Magnet URI Parsing & Range Compression Serialization**:
+  - Full support for 0-based file indices, inclusive ranges (e.g. `6-8`), comma-separated lists, and multi-parameter query strings (`so=0,2,4,6-8`).
+  - Canonical range compression serialization in `MagnetLink::to_uri()` compressing contiguous runs into compact `start-end` notation.
+  - Programmatic builder methods in `MagnetUriBuilder` (`with_selected_files`, `with_selected_range`, `select_file`).
+- **Expedited Early Partial File Manifest Resolution (`PartialMetadataManifest`)**:
+  - Early dictionary scanner extracting file manifest, file count, names, lengths, and piece boundaries directly from initial metadata blocks without waiting for full hash trees.
+  - Comprehensive selection evaluation report (`BEP53SelectionEvaluation`): byte savings percentage, piece savings percentage, selected pieces, and unselected files.
+- **Range-Based Metadata Pipelining Engine (`MetadataRangeFetcher`)**:
+  - Multi-peer concurrent metadata range request scheduler with configurable pipeline depth (`metadata_pipeline_depth`) and timeout retry logic (`metadata_request_timeout_secs`).
+  - Prioritizes piece 0 across connected peers to accelerate early directory manifest inspection.
+  - Robust piece rejection handling, assembled buffer concatenation, and SHA-1 / SHA-256 infohash verification.
+- **Context & Session Selective Download Enforcement**:
+  - `TorrentContext`: Integrated `selected_file_indices`, `set_selected_files`, `apply_bep53_file_selection`, `bep53_evaluation`, and automatic selection enforcement on metadata bootstrap transition.
+  - Piece selectors (`RarestFirstSelector`, `SequentialSelector`, `StreamingPieceSelector`) automatically skip blocks belonging exclusively to unselected files.
+  - Session configuration (`SessionConfig`, `TorrentSessionBuilder`) and session runtime APIs (`TorrentSession::selected_files`, `TorrentSession::select_files`, `TorrentSession::bep53_evaluation`).
+- **CLI Companion Tooling (`bt-cli`)**:
+  - Extended `bt-cli magnet-info <magnet-uri> [--select <indices>]` with BEP 53 file selection inspection and URI rewrite.
+- **Test Suite**: Dedicated integration test suite in `library/tests/bep53_selective_magnet_tests.rs` (7/7 tests passing) validating BEP 53 parsing, canonical serialization, builder methods, multi-peer range pipelining, expedited partial manifest parsing, context priority filtering, and runtime session selection.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BEP 53 Selective Magnet Download & Range-Based Metadata Fetching**: Fine-grained selection indices and expedited partial file metadata resolution over peer connections.
+1. **Endgame Mode Multi-Source Adaptive Erasure Caching**: Predictive erasure block staging and swarm latency profiling to eliminate tail completion stalls on slow peer pipelines.
 
-2. **Endgame Mode Multi-Source Adaptive Erasure Caching**: Predictive erasure block staging and swarm latency profiling to eliminate tail completion stalls on slow peer pipelines.
+2. **BEP 38 / WebTorrent Dynamic WebSeed Failover & Mirror Health Tracker**: Multi-source HTTP fallback routing and real-time latency/error rate health scoring across WebSeed endpoints.
 
 
 

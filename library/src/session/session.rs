@@ -194,6 +194,7 @@ impl TorrentSession {
         selector: Arc<dyn PieceSelector>,
         custom_web_seeds: Vec<String>,
         auto_inject_webtorrent: bool,
+        selected_files: Option<Vec<usize>>,
     ) -> Result<Self, BitTorrentError> {
         let mut magnet = MagnetLink::parse(magnet_link)?;
         let download_path = download_path.as_ref().to_path_buf();
@@ -217,6 +218,12 @@ impl TorrentSession {
             &context,
             auto_inject_webtorrent && (config.enable_webtorrent || config.webtorrent_bridge_mode),
         );
+
+        if let Some(ref sel) = selected_files {
+            context.lock().unwrap().set_selected_files(sel);
+        } else if magnet.has_file_selection() {
+            context.lock().unwrap().set_selected_files(magnet.selected_indices());
+        }
 
         let (task_tx, task_rx) = std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
         let executor_thread = spawn_executor(context.clone(), task_rx);
@@ -816,6 +823,28 @@ impl TorrentSession {
     pub fn set_file_priority(&mut self, index: usize, priority: FilePriority) -> Result<(), BitTorrentError> {
         let mut ctx = self.context.lock().unwrap();
         ctx.set_file_priority(index, priority)
+    }
+
+    /// Returns the currently active BEP 53 selected file indices, if configured.
+    pub fn selected_files(&self) -> Option<Vec<usize>> {
+        let ctx = self.context.lock().unwrap();
+        ctx.selected_files().map(|s| s.to_vec())
+    }
+
+    /// Sets or updates the BEP 53 selective file download list (`so=`).
+    ///
+    /// Selected files are elevated to [`FilePriority::Normal`], and unselected files
+    /// are set to [`FilePriority::Skip`].
+    pub fn select_files(&mut self, indices: &[usize]) -> Result<(), BitTorrentError> {
+        let mut ctx = self.context.lock().unwrap();
+        ctx.set_selected_files(indices);
+        Ok(())
+    }
+
+    /// Returns a BEP 53 selection evaluation comparing selected files to total torrent payload.
+    pub fn bep53_evaluation(&self) -> Option<crate::network::metadata_fetcher::BEP53SelectionEvaluation> {
+        let ctx = self.context.lock().unwrap();
+        ctx.bep53_evaluation()
     }
 
     /// Identifies the next missing block to download and transmits a Request packet to the specified peer.

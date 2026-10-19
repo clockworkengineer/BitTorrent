@@ -27,3 +27,5 @@ pub mod utp;
 pub mod webrtc;
 #[cfg(feature = "std")]
 pub mod webtorrent_injector;
+#[cfg(feature = "std")]
+pub mod metadata_fetcher;
