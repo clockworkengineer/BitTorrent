@@ -82,10 +82,15 @@ impl PeerDetails {
     pub fn is_ipv4(&self) -> bool {
         !self.is_ipv6() && !self.ip.starts_with("webrtc:")
     }
+
+    /// Returns `true` if this peer represents a WebRTC / WebTorrent browser endpoint.
+    pub fn is_webrtc(&self) -> bool {
+        self.ip.starts_with("webrtc:")
+    }
 }
 
 /// Structured response received from a tracker announce request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnounceResponse {
     pub announce_count: usize,
     pub failure: bool,

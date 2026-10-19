@@ -133,6 +133,24 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Enables or disables WebTorrent WebSocket tracker signaling and WebRTC Data Channels.
+    pub fn enable_webtorrent(mut self, enable: bool) -> Self {
+        self.config.enable_webtorrent = enable;
+        self
+    }
+
+    /// Enables or disables WebTorrent cross-swarm bridge mode.
+    pub fn webtorrent_bridge_mode(mut self, enable: bool) -> Self {
+        self.config.webtorrent_bridge_mode = enable;
+        self
+    }
+
+    /// Sets the maximum concurrent WebRTC browser peers for WebTorrent bridging.
+    pub fn webtorrent_max_web_peers(mut self, max_peers: usize) -> Self {
+        self.config.webtorrent_max_web_peers = max_peers;
+        self
+    }
+
     /// Returns a reference to the configured SessionConfig.
     pub fn get_config(&self) -> &SessionConfig {
         &self.config

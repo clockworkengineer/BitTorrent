@@ -464,15 +464,42 @@ Implemented the complete BEP 55 `ut_holepunch` extension for peer-to-peer NAT an
 
 ---
 
+### Phase 36: WebTorrent WebSocket Tracker Signaling & Bridge Mode
+
+Implemented full browser-to-desktop bridging via WebTorrent signaling channels (`wss://` and `ws://` WebSocket tracker protocols) and WebRTC Data Channels:
+- **WebSocket Signaling Protocol & Models (`webrtc.rs`)**:
+  - `WebTorrentAnnounceRequest`: JSON announce payloads with multi-offers (`Vec<WebTorrentOffer>`), event signaling (`started`, `completed`, `stopped`), `uploaded`, `downloaded`, `left`, and `numwant`.
+  - `WebTorrentAnswer`: Formats SDP answer objects with `to_peer_id` targeting specific browser peers.
+  - `WebTorrentScrapeRequest` & `WebTorrentScrapeResponse`: Full JSON scrape protocol support for querying complete, incomplete, and downloaded swarm stats across multiple info-hashes on WebSocket trackers.
+  - `WebTorrentIncomingMessage`: Clean demuxing of inbound WebSocket tracker frames into `PeerAnnouncement`, `InboundOffer`, `InboundAnswer`, and `Error`.
+- **WebSocket Transport Abstraction (`WebSocketSignalingClient`)**:
+  - Extensible `WebSocketSignalingClient` trait for dispatching WebSocket frames to trackers.
+  - In-memory `MockWebSocketSignalingChannel` for deterministic testing and loopback announce/scrape verification.
+  - `WebTorrentAnnouncer::with_client` and `set_signaling_client` integration with `Announcer` trait methods `announce` and `scrape`.
+- **WebTorrent Swarm Bridge Coordinator (`WebTorrentBridge`)**:
+  - `WebTorrentBridge`: Coordinates outgoing pending offers, resolves inbound answers to activate WebRTC sockets, and converts incoming browser offers into answers and active peer connections.
+  - Seamless socket binding in `worker.rs`: `perform_handshake` automatically detects `peer_details.is_webrtc()` (`webrtc:<peer_id>`) and attaches the paired `Socket::WebRtc` data channel without attempting standard TCP connections.
+  - Cross-swarm data bridging: Pieces downloaded from standard TCP/uTP peers are verified, recorded in the bitfield, and served to WebRTC browser peers; pieces received from browser peers are written to storage and advertised to TCP/uTP swarms via `Have` broadcasts.
+  - Telemetry: Metrics for `offers_sent`, `offers_received`, `answers_sent`, `answers_received`, `tcp_to_webrtc_bytes`, `webrtc_to_tcp_bytes`, and active WebRTC peer count.
+- **Session Configuration & Builder**:
+  - `enable_webtorrent: bool` (default `true`) in `SessionConfig` and `TorrentSessionBuilder::enable_webtorrent(bool)`.
+  - `webtorrent_bridge_mode: bool` (default `true`) in `SessionConfig` and `TorrentSessionBuilder::webtorrent_bridge_mode(bool)`.
+  - `webtorrent_max_web_peers: usize` (default `25`) in `SessionConfig` and `TorrentSessionBuilder::webtorrent_max_web_peers(usize)`.
+  - `TorrentContext::webtorrent_bridge_stats()` and `record_webrtc_bridge_transfer()` integration.
+- **Test Suite**: Dedicated integration test suite in `library/tests/webtorrent_bridge_tests.rs` (8/8 tests passing) alongside `library/tests/webrtc_tests.rs` (7/7 tests passing) covering multi-offer announce construction, scrape exchange, incoming message demuxing, bridge offer/answer handshake, mock WebSocket tracker signaling, cross-swarm piece distribution, and builder configuration.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **WebTorrent WebSocket Tracker Signaling & Bridge Mode**: Browser-to-desktop bridging via WebTorrent signaling channels and WebRTC data channels.
+1. **BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool**: CLI tooling for converting v1 torrents to hybrid/v2 format with Merkle tree generation.
 
-2. **BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool**: CLI tooling for converting v1 torrents to hybrid/v2 format with Merkle tree generation.
+2. **uTP SACK Dynamic Out-of-Order Packet Pipeline**: Enhanced SACK bitmap reassembly optimization and burst loss recovery in high-latency network conditions.
 
-3. **uTP SACK Dynamic Out-of-Order Packet Pipeline**: Enhanced SACK bitmap reassembly optimization and burst loss recovery in high-latency network conditions.
+3. **WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector**: Automated extraction of `ws=` and `wss=` trackers from Magnet links for instant browser bridge bootstrapping.
+
 
 
 

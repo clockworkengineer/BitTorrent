@@ -157,6 +157,8 @@ pub struct TorrentContext {
     pub holepunch_connect_received: AtomicUsize,
     pub holepunch_error_sent: AtomicUsize,
     pub holepunch_error_received: AtomicUsize,
+    #[cfg(feature = "webrtc")]
+    pub webrtc_bridge: Arc<crate::network::webrtc::WebTorrentBridge>,
 }
 
 impl TorrentContext {
@@ -282,6 +284,8 @@ impl TorrentContext {
             holepunch_connect_received: AtomicUsize::new(0),
             holepunch_error_sent: AtomicUsize::new(0),
             holepunch_error_received: AtomicUsize::new(0),
+            #[cfg(feature = "webrtc")]
+            webrtc_bridge: Arc::new(crate::network::webrtc::WebTorrentBridge::new()),
         };
         Ok(context)
     }
@@ -374,6 +378,8 @@ impl TorrentContext {
             holepunch_connect_received: AtomicUsize::new(0),
             holepunch_error_sent: AtomicUsize::new(0),
             holepunch_error_received: AtomicUsize::new(0),
+            #[cfg(feature = "webrtc")]
+            webrtc_bridge: Arc::new(crate::network::webrtc::WebTorrentBridge::new()),
         };
         Ok(context)
     }
@@ -1886,6 +1892,28 @@ impl TorrentContext {
         let connect_to_target = HolepunchMessage::connect(initiator_addr);
 
         Ok((connect_to_initiator, connect_to_target))
+    }
+
+    /// Returns a snapshot of WebTorrent WebRTC bridge statistics and telemetry.
+    #[cfg(feature = "webrtc")]
+    pub fn webtorrent_bridge_stats(&self) -> crate::network::webrtc::WebTorrentBridgeStats {
+        self.webrtc_bridge.stats()
+    }
+
+    /// Records a cross-swarm data transfer between BitTorrent (TCP/uTP) and WebTorrent (WebRTC).
+    #[cfg(feature = "webrtc")]
+    pub fn record_webrtc_bridge_transfer(&self, from_webrtc: bool, bytes: u64) {
+        self.webrtc_bridge.record_bridge_transfer(from_webrtc, bytes);
+    }
+
+    /// Returns `true` if WebTorrent support is enabled in configuration.
+    pub fn is_webtorrent_enabled(&self) -> bool {
+        self.config.enable_webtorrent
+    }
+
+    /// Returns `true` if WebTorrent cross-swarm bridge mode is enabled.
+    pub fn is_webtorrent_bridge_enabled(&self) -> bool {
+        self.config.enable_webtorrent && self.config.webtorrent_bridge_mode
     }
 
     /// Records dropped peers received from a PEX message.

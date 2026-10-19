@@ -108,11 +108,33 @@ pub async fn perform_handshake(
         ctx.config.clone()
     };
 
-    let socket = match config.socket_factory.connect(&peer_details.ip, peer_details.port) {
-        Ok(s) => s,
-        Err(_) => {
+    let socket = if peer_details.is_webrtc() {
+        #[cfg(feature = "webrtc")]
+        {
+            let bridge_socket = {
+                let ctx = context.lock().unwrap();
+                ctx.webrtc_bridge.get_peer_socket(&peer_details.ip)
+            };
+            match bridge_socket {
+                Some(adapter) => Arc::new(crate::Socket::WebRtc((*adapter).clone())),
+                None => {
+                    let adapter = crate::network::webrtc::WebRtcSocketAdapter::new("webtorrent");
+                    Arc::new(crate::Socket::WebRtc(adapter))
+                }
+            }
+        }
+        #[cfg(not(feature = "webrtc"))]
+        {
             mark_peer_dead(manager, &peer_details.ip);
             return Err(());
+        }
+    } else {
+        match config.socket_factory.connect(&peer_details.ip, peer_details.port) {
+            Ok(s) => s,
+            Err(_) => {
+                mark_peer_dead(manager, &peer_details.ip);
+                return Err(());
+            }
         }
     };
 
@@ -121,6 +143,11 @@ pub async fn perform_handshake(
         peer_details.port,
         socket,
     )));
+
+    if peer_details.is_webrtc() {
+        let mut pg = peer.lock().unwrap();
+        pg.connection_type = "WebRTC".to_string();
+    }
 
     let mut net = {
         let mut pg = peer.lock().unwrap();

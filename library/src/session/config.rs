@@ -62,6 +62,12 @@ pub struct SessionConfig {
     pub enable_pex: bool,
     /// Enable Holepunch extension (BEP 55 / ut_holepunch) for NAT traversal (default: true).
     pub enable_holepunch: bool,
+    /// Enable WebTorrent WebSocket tracker signaling and WebRTC peer data channels (default: true).
+    pub enable_webtorrent: bool,
+    /// Enable WebTorrent bridge mode bridging desktop TCP/uTP swarms with browser WebRTC swarms (default: true).
+    pub webtorrent_bridge_mode: bool,
+    /// Maximum concurrent WebRTC browser peers per torrent (default: 25).
+    pub webtorrent_max_web_peers: usize,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -135,6 +141,9 @@ impl Default for SessionConfig {
             disk_cache_size_mb: 32,
             enable_pex: true,
             enable_holepunch: true,
+            enable_webtorrent: true,
+            webtorrent_bridge_mode: true,
+            webtorrent_max_web_peers: 25,
         }
     }
 }
@@ -174,6 +183,24 @@ impl SessionConfig {
     /// Enables or disables the Holepunch extension (BEP 55 / ut_holepunch).
     pub fn with_enable_holepunch(mut self, enable: bool) -> Self {
         self.enable_holepunch = enable;
+        self
+    }
+
+    /// Enables or disables WebTorrent WebSocket tracker signaling and WebRTC Data Channels.
+    pub fn with_enable_webtorrent(mut self, enable: bool) -> Self {
+        self.enable_webtorrent = enable;
+        self
+    }
+
+    /// Enables or disables WebTorrent cross-swarm bridge mode.
+    pub fn with_webtorrent_bridge_mode(mut self, enable: bool) -> Self {
+        self.webtorrent_bridge_mode = enable;
+        self
+    }
+
+    /// Sets the maximum concurrent WebRTC browser peers for WebTorrent bridging.
+    pub fn with_webtorrent_max_web_peers(mut self, max_peers: usize) -> Self {
+        self.webtorrent_max_web_peers = max_peers;
         self
     }
 }

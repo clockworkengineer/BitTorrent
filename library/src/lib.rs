@@ -192,6 +192,14 @@ pub use core::merkle::{MerkleProof, MerkleTree, BLOCK_SIZE as V2_BLOCK_SIZE};
 pub use core::torrent_builder::TorrentBuilder;
 #[cfg(all(feature = "std", feature = "mse"))]
 pub use network::peer_network::EncryptedSocket;
+#[cfg(all(feature = "std", feature = "webrtc"))]
+pub use network::webrtc::{
+    create_webtorrent_answer, create_webtorrent_offer, DataChannelState,
+    MockWebSocketSignalingChannel, SdpDescription, WebRtcSocketAdapter, WebRtcStats,
+    WebTorrentAnswer, WebTorrentAnnounceRequest, WebTorrentAnnounceResponse, WebTorrentAnnouncer,
+    WebTorrentBridge, WebTorrentBridgeStats, WebTorrentIncomingMessage, WebTorrentOffer,
+    WebTorrentScrapeFile, WebTorrentScrapeRequest, WebTorrentScrapeResponse, WebSocketSignalingClient,
+};
 #[cfg(feature = "std")]
 pub use session::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]
