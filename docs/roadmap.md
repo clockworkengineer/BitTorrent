@@ -508,17 +508,39 @@ Implemented offline and session-level conversion and export tooling for upgradin
   - `bt-cli v2-info <torrent-path>`: Inspects any torrent file and displays format (v1, hybrid, pure v2), piece length, v1 info-hash, v2 info-hash, truncated v2 info-hash, piece layers count, and per-file Merkle `pieces root` hashes.
 - **Test Suite**: Dedicated integration test suite in `library/tests/torrent_upgrader_tests.rs` (5/5 tests passing) covering single-file v1 to pure v2 upgrade, multi-file v1 to hybrid conversion with padding alignment, piece length clamping to BEP 52 powers of 2, missing file error handling, and `TorrentSession::export_torrent` direct export.
 
+### Phase 38: uTP SACK Dynamic Out-of-Order Packet Pipeline & Burst Loss Recovery (BEP 29)
+
+Implemented advanced SACK-driven fast loss detection, RFC 6298 microsecond RTT/RTO tracking, dynamic burst loss window scaling, and bounded out-of-order reassembly buffers for the Micro Transport Protocol (uTP):
+- **SACK-Driven Fast Loss Detection & Immediate Retransmission (`UtpSocketAdapter`)**:
+  - Implemented proactive gap detection across circular 16-bit sequence number space (`detect_receive_gaps`).
+  - When an incoming ACK with SACK extension indicates $\ge 3$ higher sequence numbers have arrived safely while intermediate packets remain missing, the sender immediately transitions into fast loss recovery and retransmits the lost packet without waiting for RTO timer expiry.
+  - SACK processing tracks and retires acknowledged packets from the in-flight retransmission queue.
+- **Loss Recovery State Machine & Burst Loss Window Scaling (`LedbatCongestionController`)**:
+  - Introduced `LossRecoveryState` (`Normal` and `Recovery { recovery_seq, loss_window }`) preventing destructive, redundant window collapses during a single loss epoch.
+  - Multi-gap burst loss scaling: When two or more concurrent sequence gaps are detected, `enter_recovery` executes aggressive burst protection (`cwnd * 0.65`) while maintaining minimum MTU guarantees.
+- **RFC 6298 Microsecond RTT & RTO Tracking**:
+  - Microsecond-precision smoothed round-trip time (`srtt_us`) and RTT variation (`rttvar_us`) tracking with initial 1000ms RTO default.
+  - Implemented exponential timeout backoff (`on_rto_timeout()`) doubling RTO up to 30s max, and resetting back to calculated values on successful acknowledgment.
+- **Bounded Out-of-Order Reassembly Buffer**:
+  - Protected the uTP receiver against packet flood and memory exhaustion attacks by bounding the out-of-order reassembly queue (`max_out_of_order_packets: usize = 128`).
+  - Gracefully discards packets exceeding the buffer limit and relies on SACK gap signals to prompt retransmission only within safe memory bounds.
+- **Pipeline Telemetry & Metrics (`UtpPipelineMetrics`)**:
+  - Real-time tracking of `fast_retransmits`, `rto_timeouts`, `burst_loss_events`, `sacked_packets`, `out_of_order_buffered`, `srtt_us`, `rttvar_us`, and `rto_us`.
+  - Accessible via `UtpSocketAdapter::pipeline_metrics()`.
+- **Test Suite**: Dedicated integration test suite in `library/tests/utp_pipeline_tests.rs` (5/5 tests passing) covering circular wraparound gap detection, burst loss scaling, RFC 6298 RTO exponential backoff, bounded OOO buffer capacity enforcement, and end-to-end SACK fast retransmission over loopback UDP sockets.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **uTP SACK Dynamic Out-of-Order Packet Pipeline**: Enhanced SACK bitmap reassembly optimization and burst loss recovery in high-latency network conditions.
+1. **WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector**: Automated extraction of `ws=` and `wss=` trackers from Magnet links for instant browser bridge bootstrapping.
 
-2. **WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector**: Automated extraction of `ws=` and `wss=` trackers from Magnet links for instant browser bridge bootstrapping.
+2. **BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving**: Persistent on-disk caching of intermediate Merkle tree layers to serve incoming BEP 52 `hash_request` messages with minimal I/O overhead.
 
-3. **BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving**: Persistent on-disk caching of intermediate Merkle tree layers to serve incoming BEP 52 `hash_request` messages with minimal I/O overhead.
+3. **Asynchronous Piece Hash Verification Worker Pool**: Multi-threaded background piece hashing offloading CPU-intensive SHA-1/SHA-256 verifications from the main async loop.
+
 
 
 

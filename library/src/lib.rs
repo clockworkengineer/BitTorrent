@@ -182,9 +182,10 @@ pub use core::selector::{PieceSelector, RarestFirstSelector, SequentialSelector,
 pub use network::dht::Dht;
 #[cfg(all(feature = "std", feature = "utp"))]
 pub use network::utp::{
-    build_sack_bitmask, is_seq_sacked, parse_sacked_seqs, DelayBucket, DelayTracker,
-    LedbatCongestionController, UtpExtension, UtpHeader, UtpPacketType, UtpSocketAdapter,
-    UTP_EXT_EXTENSION_BITS, UTP_EXT_SACK,
+    build_sack_bitmask, detect_receive_gaps, is_seq_sacked, parse_sacked_seqs, DelayBucket,
+    DelayTracker, LedbatCongestionController, LossRecoveryState, SentPacket, UtpExtension,
+    UtpHeader, UtpPacketType, UtpPipelineMetrics, UtpSocketAdapter, UTP_EXT_EXTENSION_BITS,
+    UTP_EXT_SACK,
 };
 #[cfg(feature = "v2")]
 pub use core::merkle::{MerkleProof, MerkleTree, BLOCK_SIZE as V2_BLOCK_SIZE};
