@@ -38,7 +38,12 @@ fn main() {
     bittorrent_rs::util::set_log_sender(log_tx.clone());
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1100.0, 750.0]),
+        vsync: false,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([960.0, 620.0])
+            .with_position(egui::pos2(80.0, 80.0))
+            .with_visible(true)
+            .with_active(true),
         ..Default::default()
     };
     if let Err(err) = eframe::run_native(
