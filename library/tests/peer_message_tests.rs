@@ -64,9 +64,9 @@ fn test_peer_handshake_round_trip() {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let mut peer = Peer::new("127.0.0.1".to_string(), addr.port(), stream);
-    let received_peer_id = futures::executor::block_on(async {
-        peer.handshake(&info_hash, &local_peer_id).await
-    }).expect("Handshake failed");
+    let received_peer_id =
+        futures::executor::block_on(async { peer.handshake(&info_hash, &local_peer_id).await })
+            .expect("Handshake failed");
     assert_eq!(received_peer_id, remote_peer_id.to_vec());
     assert_eq!(
         peer.remote_peer_id.as_deref(),
@@ -81,7 +81,7 @@ fn test_peer_handshake_decode_errors() {
     assert!(PeerMessage::handshake_encode(&[0; 20], &[0; 21]).is_err());
 
     assert!(PeerMessage::handshake_decode(&[0; 67]).is_err());
-    
+
     let mut bad_proto_len = vec![18];
     bad_proto_len.extend_from_slice(b"BitTorrent protocol");
     bad_proto_len.extend_from_slice(&[0; 48]);
@@ -98,21 +98,20 @@ fn test_peer_message_decode_errors() {
     assert!(PeerMessage::decode(&[99, 1, 2, 3]).is_err());
 
     assert!(PeerMessage::decode(&[4, 0, 0, 0]).is_err());
-    
+
     assert!(PeerMessage::decode(&[6, 0, 0, 0, 1]).is_err());
-    
+
     assert!(PeerMessage::decode(&[7, 0, 0, 0, 1, 2, 3]).is_err());
-    
+
     assert!(PeerMessage::decode(&[8, 0, 0]).is_err());
-    
+
     assert!(PeerMessage::decode(&[9, 0, 0, 0]).is_err());
-    
+
     assert!(PeerMessage::decode(&[20]).is_err());
-    
+
     assert!(PeerMessage::decode(&[13, 0, 0, 0]).is_err());
-    
+
     assert!(PeerMessage::decode(&[16, 0]).is_err());
-    
+
     assert!(PeerMessage::decode(&[17, 0, 0]).is_err());
 }
-

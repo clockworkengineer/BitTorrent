@@ -6,8 +6,10 @@
 
 use crate::bencode::{BNode, Bencode};
 use crate::error::BitTorrentError;
-use crate::network::tracker::PeerDetails;
-use alloc::string::ToString;
+use crate::network::peer_details::PeerDetails;
+use alloc::format;
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
 use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
@@ -197,7 +199,9 @@ impl PexMessage {
                 for (idx, chunk) in bytes.chunks_exact(6).enumerate() {
                     let ip = format!("{}.{}.{}.{}", chunk[0], chunk[1], chunk[2], chunk[3]);
                     let port = u16::from_be_bytes([chunk[4], chunk[5]]);
-                    let flag = added_flags_opt.and_then(|f| f.get(idx).copied()).unwrap_or(0);
+                    let flag = added_flags_opt
+                        .and_then(|f| f.get(idx).copied())
+                        .unwrap_or(0);
                     msg.added_v4.push(PexPeer::new(
                         PeerDetails {
                             info_hash: info_hash.to_vec(),
@@ -240,7 +244,9 @@ impl PexMessage {
                     let ip = format_ipv6_octets(&octets);
 
                     let port = u16::from_be_bytes([chunk[16], chunk[17]]);
-                    let flag = added6_flags_opt.and_then(|f| f.get(idx).copied()).unwrap_or(0);
+                    let flag = added6_flags_opt
+                        .and_then(|f| f.get(idx).copied())
+                        .unwrap_or(0);
                     msg.added_v6.push(PexPeer::new(
                         PeerDetails {
                             info_hash: info_hash.to_vec(),
@@ -293,20 +299,23 @@ pub fn parse_ipv4_octets(ip: &str) -> Option<[u8; 4]> {
         let b = parts.next()?.parse::<u8>().ok()?;
         let c = parts.next()?.parse::<u8>().ok()?;
         let d = parts.next()?.parse::<u8>().ok()?;
-        if parts.next().is_some() { return None; }
+        if parts.next().is_some() {
+            return None;
+        }
         Some([a, b, c, d])
     }
 }
 
 /// Parses an IPv6 address string into standard 16-byte network byte order octets.
 pub fn parse_ipv6_octets(ip: &str) -> Option<[u8; 16]> {
-    let clean = ip.trim().trim_start_matches('[').trim_end_matches(']');
     #[cfg(feature = "std")]
     {
+        let clean = ip.trim().trim_start_matches('[').trim_end_matches(']');
         clean.parse::<Ipv6Addr>().ok().map(|a| a.octets())
     }
     #[cfg(not(feature = "std"))]
     {
+        let _ = ip;
         None
     }
 }

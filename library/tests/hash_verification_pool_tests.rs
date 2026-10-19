@@ -1,11 +1,9 @@
 use bittorrent_rs::{
+    BNode, Bencode, MetaInfoFile, MockSocket, Peer, SessionConfig, Socket, TorrentSessionBuilder,
     internals::TorrentContext,
     selector::RarestFirstSelector,
     storage::disk_io::DiskIO,
-    storage::verification_pool::{
-        HashVerificationPool, PieceVerificationJob,
-    },
-    BNode, Bencode, MetaInfoFile, MockSocket, Peer, SessionConfig, Socket, TorrentSessionBuilder,
+    storage::verification_pool::{HashVerificationPool, PieceVerificationJob},
 };
 use sha1::Digest;
 use std::fs;
@@ -27,7 +25,11 @@ impl MockBlockStorage {
 }
 
 impl bittorrent_rs::io_traits::BlockReader for MockBlockStorage {
-    fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, bittorrent_rs::BitTorrentError> {
+    fn read_block(
+        &self,
+        offset: u64,
+        buffer: &mut [u8],
+    ) -> Result<usize, bittorrent_rs::BitTorrentError> {
         let data = self.data.lock().unwrap();
         let start = offset as usize;
         if start >= data.len() {
@@ -41,7 +43,11 @@ impl bittorrent_rs::io_traits::BlockReader for MockBlockStorage {
 }
 
 impl bittorrent_rs::io_traits::BlockWriter for MockBlockStorage {
-    fn write_block(&self, offset: u64, data_slice: &[u8]) -> Result<(), bittorrent_rs::BitTorrentError> {
+    fn write_block(
+        &self,
+        offset: u64,
+        data_slice: &[u8],
+    ) -> Result<(), bittorrent_rs::BitTorrentError> {
         let mut data = self.data.lock().unwrap();
         let start = offset as usize;
         let end = start + data_slice.len();
@@ -124,7 +130,10 @@ fn test_hash_verification_pool_multi_worker_concurrency() {
         let results = pool.poll_results();
         for res in results {
             assert!(res.is_valid);
-            assert_eq!(res.expected_v1_hash, Some(expected[res.piece_number as usize]));
+            assert_eq!(
+                res.expected_v1_hash,
+                Some(expected[res.piece_number as usize])
+            );
             completed += 1;
         }
         thread::sleep(Duration::from_millis(5));
@@ -135,7 +144,10 @@ fn test_hash_verification_pool_multi_worker_concurrency() {
     assert_eq!(metrics.jobs_completed, num_pieces as u64);
     assert_eq!(metrics.valid_pieces, num_pieces as u64);
     assert_eq!(metrics.corrupted_pieces, 0);
-    assert_eq!(metrics.total_bytes_verified, (num_pieces * piece_len) as u64);
+    assert_eq!(
+        metrics.total_bytes_verified,
+        (num_pieces * piece_len) as u64
+    );
     assert!(metrics.throughput_mb_s() >= 0.0);
 }
 
@@ -216,7 +228,8 @@ fn test_torrent_context_async_verification_pipeline_and_selection_guard() {
         &test_dir,
         false,
         config,
-    ).unwrap();
+    )
+    .unwrap();
 
     let piece_number = 0;
     assert!(!ctx.is_piece_verifying(piece_number));
@@ -298,7 +311,8 @@ fn test_torrent_context_parallel_recheck_all_pieces() {
         &test_dir,
         false,
         SessionConfig::default(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let progress = ctx.recheck_all_pieces().expect("Start parallel recheck");
     assert_eq!(progress.total_pieces, 4);
@@ -309,8 +323,18 @@ fn test_torrent_context_parallel_recheck_all_pieces() {
     }
 
     assert!(progress.is_finished());
-    assert_eq!(progress.valid_pieces.load(std::sync::atomic::Ordering::Relaxed), 4);
-    assert_eq!(progress.corrupt_pieces.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(
+        progress
+            .valid_pieces
+            .load(std::sync::atomic::Ordering::Relaxed),
+        4
+    );
+    assert_eq!(
+        progress
+            .corrupt_pieces
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
     assert_eq!(progress.percent_complete(), 100.0);
 
     let _ = fs::remove_dir_all(&test_dir);
@@ -357,7 +381,8 @@ fn test_disk_io_create_torrent_bitfield_parallel() {
         &test_dir,
         false,
         SessionConfig::default(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let pool = HashVerificationPool::new(4, 32);
     let progress = disk_io
@@ -365,7 +390,12 @@ fn test_disk_io_create_torrent_bitfield_parallel() {
         .expect("Parallel bitfield generation");
 
     assert!(progress.is_finished());
-    assert_eq!(progress.valid_pieces.load(std::sync::atomic::Ordering::Relaxed), 2);
+    assert_eq!(
+        progress
+            .valid_pieces
+            .load(std::sync::atomic::Ordering::Relaxed),
+        2
+    );
     assert_eq!(ctx.missing_pieces_count, 0);
     assert!(ctx.is_piece_local(0));
     assert!(ctx.is_piece_local(1));

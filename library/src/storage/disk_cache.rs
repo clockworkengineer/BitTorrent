@@ -148,9 +148,12 @@ impl CachedBlockStorage {
 
         for offset in offsets_to_remove {
             if let Some(removed) = state.blocks.remove(&offset) {
-                state.current_cached_bytes = state.current_cached_bytes.saturating_sub(removed.data.len());
+                state.current_cached_bytes = state
+                    .current_cached_bytes
+                    .saturating_sub(removed.data.len());
                 if removed.dirty {
-                    state.current_dirty_bytes = state.current_dirty_bytes.saturating_sub(removed.data.len());
+                    state.current_dirty_bytes =
+                        state.current_dirty_bytes.saturating_sub(removed.data.len());
                 }
             }
         }
@@ -215,8 +218,10 @@ impl CachedBlockStorage {
         // Write each coalesced chunk to underlying storage
         for (start_offset, coalesced_data) in &chunks {
             self.inner.write_block(*start_offset, coalesced_data)?;
-            self.coalesced_write_operations.fetch_add(1, Ordering::Relaxed);
-            self.bytes_flushed_to_storage.fetch_add(coalesced_data.len() as u64, Ordering::Relaxed);
+            self.coalesced_write_operations
+                .fetch_add(1, Ordering::Relaxed);
+            self.bytes_flushed_to_storage
+                .fetch_add(coalesced_data.len() as u64, Ordering::Relaxed);
         }
 
         // Mark flushed blocks as clean in the cache
@@ -231,7 +236,9 @@ impl CachedBlockStorage {
             }
         }
 
-        state.current_dirty_bytes = state.current_dirty_bytes.saturating_sub(bytes_flushed_total);
+        state.current_dirty_bytes = state
+            .current_dirty_bytes
+            .saturating_sub(bytes_flushed_total);
         self.flushes_performed.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -263,7 +270,7 @@ impl CachedBlockStorage {
         // Pass 2: If still overflowing, flush all dirty blocks and then evict
         if state.current_cached_bytes > self.max_cache_bytes {
             self.flush_internal(state, None)?;
-            
+
             // Now all blocks are clean, evict LRU until under max_cache_bytes
             let mut remaining_blocks: Vec<(u64, usize, Instant)> = state
                 .blocks
@@ -314,7 +321,8 @@ impl BlockWriter for CachedBlockStorage {
 
         state.current_cached_bytes += data.len();
         state.current_dirty_bytes += data.len();
-        self.bytes_written_to_cache.fetch_add(data.len() as u64, Ordering::Relaxed);
+        self.bytes_written_to_cache
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
 
         self.evict_if_needed(&mut state)?;
         Ok(())
@@ -393,7 +401,8 @@ impl BlockReader for CachedBlockStorage {
                 }
                 let gap_len = i - start_gap;
                 let gap_offset = target_start + start_gap as u64;
-                self.inner.read_block(gap_offset, &mut buffer[start_gap..start_gap + gap_len])?;
+                self.inner
+                    .read_block(gap_offset, &mut buffer[start_gap..start_gap + gap_len])?;
             } else {
                 i += 1;
             }

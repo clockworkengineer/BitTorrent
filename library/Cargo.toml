@@ -10,6 +10,9 @@ keywords = ["bittorrent", "torrent", "peer-to-peer", "dht", "utp"]
 categories = ["network-programming", "asynchronous"]
 
 
+[lints]
+workspace = true
+
 [features]
 default = ["std", "http-tracker", "dht", "lsd", "utp", "nat-pmp", "mse", "webseed", "v2", "webrtc"]
 std = [

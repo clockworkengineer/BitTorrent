@@ -1,4 +1,4 @@
-use crate::error::{BitTorrentError, BencodeError};
+use crate::error::{BencodeError, BitTorrentError};
 use alloc::string::ToString;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +18,10 @@ pub struct BencodeTokenizer<'a> {
 
 impl<'a> BencodeTokenizer<'a> {
     pub fn new(buffer: &'a [u8]) -> Self {
-        Self { buffer, position: 0 }
+        Self {
+            buffer,
+            position: 0,
+        }
     }
 
     pub fn position(&self) -> usize {
@@ -67,7 +70,9 @@ impl<'a> BencodeTokenizer<'a> {
                 }
                 let end = self.position;
                 if self.current_byte() != Some(&b'e') {
-                    return Some(Err(BitTorrentError::Bencode(BencodeError::UnterminatedInteger)));
+                    return Some(Err(BitTorrentError::Bencode(
+                        BencodeError::UnterminatedInteger,
+                    )));
                 }
                 let number_bytes = &self.buffer[start..end];
                 if number_bytes.len() > 20 {
@@ -78,10 +83,14 @@ impl<'a> BencodeTokenizer<'a> {
                         || (number_str.starts_with('0') && number_str.len() > 1)
                         || number_str == "-0"
                     {
-                        return Some(Err(BitTorrentError::Bencode(BencodeError::InvalidIntegerFormat)));
+                        return Some(Err(BitTorrentError::Bencode(
+                            BencodeError::InvalidIntegerFormat,
+                        )));
                     }
                 } else {
-                    return Some(Err(BitTorrentError::Bencode(BencodeError::Custom("Invalid UTF-8 integer".into()))));
+                    return Some(Err(BitTorrentError::Bencode(BencodeError::Custom(
+                        "Invalid UTF-8 integer".into(),
+                    ))));
                 }
                 self.position += 1; // consume 'e'
                 Some(Ok(BencodeToken::Integer(number_bytes)))
@@ -93,17 +102,26 @@ impl<'a> BencodeTokenizer<'a> {
                         break;
                     }
                     if !b.is_ascii_digit() {
-                        return Some(Err(BitTorrentError::Bencode(BencodeError::InvalidStringLength)));
+                        return Some(Err(BitTorrentError::Bencode(
+                            BencodeError::InvalidStringLength,
+                        )));
                     }
                     self.position += 1;
                 }
                 let length_bytes_res = core::str::from_utf8(&self.buffer[start..self.position]);
                 let length_bytes = match length_bytes_res {
                     Ok(s) => s,
-                    Err(e) => return Some(Err(BitTorrentError::Bencode(BencodeError::Custom(e.to_string())))),
+                    Err(e) => {
+                        return Some(Err(BitTorrentError::Bencode(BencodeError::Custom(
+                            e.to_string(),
+                        ))));
+                    }
                 };
-                if length_bytes.is_empty() || (length_bytes.starts_with('0') && length_bytes != "0") {
-                    return Some(Err(BitTorrentError::Bencode(BencodeError::InvalidStringLength)));
+                if length_bytes.is_empty() || (length_bytes.starts_with('0') && length_bytes != "0")
+                {
+                    return Some(Err(BitTorrentError::Bencode(
+                        BencodeError::InvalidStringLength,
+                    )));
                 }
                 if length_bytes.len() > 10 {
                     return Some(Err(BitTorrentError::Bencode(BencodeError::StringTooLong)));
@@ -112,7 +130,8 @@ impl<'a> BencodeTokenizer<'a> {
                     Ok(l) => l,
                     Err(e) => return Some(Err(BitTorrentError::from(e))),
                 };
-                if length > 16_777_216 { // 16 MB limit
+                if length > 16_777_216 {
+                    // 16 MB limit
                     return Some(Err(BitTorrentError::Bencode(BencodeError::StringTooLong)));
                 }
                 self.position += 1; // consume ':'

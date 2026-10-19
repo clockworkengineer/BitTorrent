@@ -3,13 +3,13 @@
 //! Connects to the running bt_daemon via a Unix socket or Windows Named Pipe,
 //! sends control commands, and displays statuses/results.
 
-use torrent_client_shared::{IpcMessage, IpcReply, TorrentStatusInfo, fmt_bytes};
 use std::env;
+use torrent_client_shared::{IpcMessage, IpcReply, TorrentStatusInfo, fmt_bytes};
 
 #[cfg(unix)]
 mod ipc_client {
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
-    use std::io::{Write, BufRead, BufReader};
 
     pub fn send_message(name: &str, msg: &str) -> std::io::Result<String> {
         let path = format!("/tmp/{}.sock", name);
@@ -29,14 +29,11 @@ mod ipc_client {
 #[cfg(windows)]
 mod ipc_client {
     use std::fs::OpenOptions;
-    use std::io::{Write, BufReader, BufRead};
+    use std::io::{BufRead, BufReader, Write};
 
     pub fn send_message(name: &str, msg: &str) -> std::io::Result<String> {
         let pipe_path = format!("\\\\.\\pipe\\{}", name);
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&pipe_path)?;
+        let mut file = OpenOptions::new().read(true).write(true).open(&pipe_path)?;
         let mut msg_bytes = msg.as_bytes().to_vec();
         msg_bytes.push(b'\n');
         file.write_all(&msg_bytes)?;
@@ -62,9 +59,13 @@ fn print_usage() {
     println!("  bt-cli super-seed <info-hash> <on|off>");
     println!("  bt-cli peers <info-hash>");
     println!("  bt-cli resume-info <path-to-fastresume-file>");
-    println!("  bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]");
+    println!(
+        "  bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]"
+    );
     println!("  bt-cli v2-info <torrent-path>");
-    println!("  bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>] [--select <indices>]");
+    println!(
+        "  bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>] [--select <indices>]"
+    );
     println!("  bt-cli recheck <torrent-path> <data-dir> [--workers <N>]");
     println!("  bt-cli shutdown");
 }
@@ -75,15 +76,24 @@ fn print_status_table(torrents: &[TorrentStatusInfo]) {
         return;
     }
 
-    println!("{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20} | {:<20}",
-             "Name", "Info Hash", "Progress", "Status", "Peers", "Speed", "Downloaded / Total", "Download Dir");
+    println!(
+        "{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20} | {:<20}",
+        "Name",
+        "Info Hash",
+        "Progress",
+        "Status",
+        "Peers",
+        "Speed",
+        "Downloaded / Total",
+        "Download Dir"
+    );
     println!("{}", "-".repeat(155));
     for t in torrents {
         let progress_str = format!("{:.1}%", t.progress * 100.0);
         let peers_str = format!("{}({})", t.peers_active, t.peers_connected);
         let speed_str = format!("{}/s", fmt_bytes(t.download_rate));
         let downloaded_str = format!("{} / {}", fmt_bytes(t.downloaded), fmt_bytes(t.total_size));
-        
+
         let truncated_name = if t.name.len() > 22 {
             format!("{}...", &t.name[..22])
         } else {
@@ -96,8 +106,17 @@ fn print_status_table(torrents: &[TorrentStatusInfo]) {
             t.status.clone()
         };
 
-        println!("{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20} | {:<20}",
-                 truncated_name, t.info_hash, progress_str, status_str, peers_str, speed_str, downloaded_str, t.download_dir);
+        println!(
+            "{:<25} | {:<40} | {:<8} | {:<12} | {:<7} | {:<10} | {:<20} | {:<20}",
+            truncated_name,
+            t.info_hash,
+            progress_str,
+            status_str,
+            peers_str,
+            speed_str,
+            downloaded_str,
+            t.download_dir
+        );
     }
 }
 
@@ -119,22 +138,33 @@ fn main() {
         let resume_path = std::path::Path::new(&args[2]);
         match bittorrent_rs::FastResumeData::load_from_file(resume_path) {
             Ok(data) => {
-                let info_hash_hex = data.info_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                let info_hash_hex = data
+                    .info_hash
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
                 println!("Fast Resume Metadata (BEP 47):");
                 println!("  File:             {}", resume_path.display());
                 println!("  Info Hash:        {}", info_hash_hex);
                 println!("  Save Path:        {}", data.save_path.display());
-                println!("  Pieces:           {} / {} ({:.1}%)",
+                println!(
+                    "  Pieces:           {} / {} ({:.1}%)",
                     data.pieces_have_count(),
                     data.num_pieces,
                     data.progress() * 100.0,
                 );
-                println!("  Piece Length:     {}", fmt_bytes(data.piece_length as u64));
+                println!(
+                    "  Piece Length:     {}",
+                    fmt_bytes(data.piece_length as u64)
+                );
                 println!("  Downloaded:       {}", fmt_bytes(data.total_downloaded));
                 println!("  Uploaded:         {}", fmt_bytes(data.total_uploaded));
                 println!("  Active Time:      {}s", data.active_time);
                 println!("  Seeding Time:     {}s", data.seeding_time);
-                println!("  Seeding:          {}", if data.is_seeding { "YES" } else { "NO" });
+                println!(
+                    "  Seeding:          {}",
+                    if data.is_seeding { "YES" } else { "NO" }
+                );
                 println!("  Files ({}) :", data.files.len());
                 for (i, f) in data.files.iter().enumerate() {
                     let pri_str = match f.priority {
@@ -148,7 +178,8 @@ fn main() {
                     } else {
                         f.path.display().to_string()
                     };
-                    println!("    {:>3}. {} ({} bytes, mtime: {}, priority: {})",
+                    println!(
+                        "    {:>3}. {} ({} bytes, mtime: {}, priority: {})",
                         i + 1,
                         display_path,
                         f.length,
@@ -162,7 +193,14 @@ fn main() {
                 }
 
                 let verified = data.verify_on_disk(&data.save_path).unwrap_or(false);
-                println!("\n  On-Disk Fast Verification: {}", if verified { "PASS (Valid)" } else { "FAIL (Disk mismatch or files missing)" });
+                println!(
+                    "\n  On-Disk Fast Verification: {}",
+                    if verified {
+                        "PASS (Valid)"
+                    } else {
+                        "FAIL (Disk mismatch or files missing)"
+                    }
+                );
             }
             Err(e) => {
                 eprintln!("Failed to parse fast-resume file: {}", e);
@@ -173,8 +211,12 @@ fn main() {
 
     if command == "upgrade" {
         if args.len() < 4 {
-            eprintln!("Error: 'upgrade' command requires an input torrent file and data directory.");
-            eprintln!("Usage: bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]");
+            eprintln!(
+                "Error: 'upgrade' command requires an input torrent file and data directory."
+            );
+            eprintln!(
+                "Usage: bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]"
+            );
             return;
         }
         let input_path = std::path::Path::new(&args[2]);
@@ -203,7 +245,10 @@ fn main() {
         }
 
         let out_file = output_path.unwrap_or_else(|| {
-            let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("upgraded");
+            let stem = input_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("upgraded");
             let ext = match format {
                 bittorrent_rs::TorrentExportFormat::V1 => "v1.torrent",
                 bittorrent_rs::TorrentExportFormat::V2 => "v2.torrent",
@@ -227,23 +272,38 @@ fn main() {
                 println!("\nUpgrade Complete!");
                 println!("  Name:             {}", report.name);
                 println!("  Format:           {:?}", report.format);
-                println!("  Total Size:       {} ({} bytes)", fmt_bytes(report.total_size), report.total_size);
-                println!("  Piece Length:     {}", fmt_bytes(report.piece_length as u64));
-                println!("  v1 Infohash:      {}", report.v1_info_hash.as_deref().unwrap_or("N/A (Pure v2)"));
-                println!("  v2 Infohash:      {}", report.v2_info_hash.as_deref().unwrap_or("N/A"));
-                println!("  v2 Truncated:     {}", report.v2_truncated_info_hash.as_deref().unwrap_or("N/A"));
+                println!(
+                    "  Total Size:       {} ({} bytes)",
+                    fmt_bytes(report.total_size),
+                    report.total_size
+                );
+                println!(
+                    "  Piece Length:     {}",
+                    fmt_bytes(report.piece_length as u64)
+                );
+                println!(
+                    "  v1 Infohash:      {}",
+                    report.v1_info_hash.as_deref().unwrap_or("N/A (Pure v2)")
+                );
+                println!(
+                    "  v2 Infohash:      {}",
+                    report.v2_info_hash.as_deref().unwrap_or("N/A")
+                );
+                println!(
+                    "  v2 Truncated:     {}",
+                    report.v2_truncated_info_hash.as_deref().unwrap_or("N/A")
+                );
                 println!("  Piece Layers:     {}", report.piece_layers_count);
                 println!("  Files ({}):", report.file_pieces_roots.len());
                 for (i, (path, pieces_root)) in report.file_pieces_roots.iter().enumerate() {
-                    println!("    {:>3}. {} (pieces root: {})",
-                        i + 1,
-                        path,
-                        pieces_root
-                    );
+                    println!("    {:>3}. {} (pieces root: {})", i + 1, path, pieces_root);
                 }
                 println!("\n  Canonical Magnet URI:");
                 println!("    {}", report.magnet_uri);
-                println!("\nSuccessfully wrote upgraded torrent to: {}", out_file.display());
+                println!(
+                    "\nSuccessfully wrote upgraded torrent to: {}",
+                    out_file.display()
+                );
             }
             Err(e) => {
                 eprintln!("Error upgrading torrent: {}", e);
@@ -288,7 +348,11 @@ fn main() {
         println!("  Version:          {}", version_str);
 
         let total_size = metainfo.get_total_size().unwrap_or(0);
-        println!("  Total Size:       {} ({} bytes)", fmt_bytes(total_size), total_size);
+        println!(
+            "  Total Size:       {} ({} bytes)",
+            fmt_bytes(total_size),
+            total_size
+        );
 
         if let Ok(pl) = metainfo.get_piece_length() {
             println!("  Piece Length:     {}", fmt_bytes(pl as u64));
@@ -297,11 +361,9 @@ fn main() {
         if let Ok(v1_hash) = metainfo.get_v1_info_hash() {
             let v1_hex: String = v1_hash.iter().map(|b| format!("{:02x}", b)).collect();
             println!("  v1 Infohash:      {}", v1_hex);
-        } else if !is_v2 {
-            if let Ok(hash) = metainfo.get_info_hash() {
-                let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
-                println!("  v1 Infohash:      {}", hex);
-            }
+        } else if !is_v2 && let Ok(hash) = metainfo.get_info_hash() {
+            let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+            println!("  v1 Infohash:      {}", hex);
         }
 
         if let Ok(v2_hash) = metainfo.get_v2_info_hash() {
@@ -318,7 +380,7 @@ fn main() {
             let mut cached_bytes = 0u64;
             if let Ok(entries) = std::fs::read_dir(piece_layers_cache_dir) {
                 for entry in entries.flatten() {
-                    if entry.path().extension().map_or(false, |ext| ext == "layers") {
+                    if entry.path().extension().is_some_and(|ext| ext == "layers") {
                         cached_count += 1;
                         if let Ok(meta) = entry.metadata() {
                             cached_bytes += meta.len();
@@ -326,15 +388,23 @@ fn main() {
                     }
                 }
             }
-            println!("  Layer Disk Cache: {} files cached ({}) in {}", cached_count, fmt_bytes(cached_bytes), piece_layers_cache_dir.display());
+            println!(
+                "  Layer Disk Cache: {} files cached ({}) in {}",
+                cached_count,
+                fmt_bytes(cached_bytes),
+                piece_layers_cache_dir.display()
+            );
         }
 
         if let Ok((_, files)) = metainfo.local_files_to_download_list(".") {
             let non_pad_files: Vec<_> = files.iter().filter(|f| !f.is_pad_file()).collect();
             println!("  Files ({} non-pad):", non_pad_files.len());
             for (i, f) in non_pad_files.iter().enumerate() {
-                let root_str = f.pieces_root_hex().unwrap_or_else(|| "N/A (v1 only)".into());
-                println!("    {:>3}. {} ({} bytes, pieces root: {})",
+                let root_str = f
+                    .pieces_root_hex()
+                    .unwrap_or_else(|| "N/A (v1 only)".into());
+                println!(
+                    "    {:>3}. {} ({} bytes, pieces root: {})",
                     i + 1,
                     f.torrent_path,
                     f.length,
@@ -344,8 +414,13 @@ fn main() {
         }
 
         if !is_v2 {
-            println!("\n  Notice: This is a legacy v1 torrent. You can upgrade it to Hybrid or Pure v2 using:");
-            println!("    bt-cli upgrade \"{}\" <data-dir>", torrent_path.display());
+            println!(
+                "\n  Notice: This is a legacy v1 torrent. You can upgrade it to Hybrid or Pure v2 using:"
+            );
+            println!(
+                "    bt-cli upgrade \"{}\" <data-dir>",
+                torrent_path.display()
+            );
         }
 
         return;
@@ -354,7 +429,9 @@ fn main() {
     if command == "magnet-info" {
         if args.len() < 3 {
             eprintln!("Error: 'magnet-info' command requires a magnet URI.");
-            eprintln!("Usage: bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]");
+            eprintln!(
+                "Usage: bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]"
+            );
             return;
         }
         let magnet_uri = &args[2];
@@ -389,7 +466,10 @@ fn main() {
         }
 
         println!("BitTorrent Magnet URI Inspection:");
-        println!("  Display Name:     {}", magnet.display_name.as_deref().unwrap_or("Unknown"));
+        println!(
+            "  Display Name:     {}",
+            magnet.display_name.as_deref().unwrap_or("Unknown")
+        );
 
         let mut v1_hex = String::with_capacity(40);
         for b in &magnet.info_hash {
@@ -415,10 +495,21 @@ fn main() {
             "v1 (Legacy SHA-1)"
         };
         println!("  Format:           {}", format_str);
-        println!("  WebTorrent Cap:   {}", if magnet.is_webtorrent() { "Yes (WebSocket trackers present)" } else { "No" });
+        println!(
+            "  WebTorrent Cap:   {}",
+            if magnet.is_webtorrent() {
+                "Yes (WebSocket trackers present)"
+            } else {
+                "No"
+            }
+        );
 
         let selection_str = if magnet.has_file_selection() {
-            format!("{} ({} file(s) selected)", bittorrent_rs::format_bep53_select_only(magnet.selected_indices()), magnet.selected_indices().len())
+            format!(
+                "{} ({} file(s) selected)",
+                bittorrent_rs::format_bep53_select_only(magnet.selected_indices()),
+                magnet.selected_indices().len()
+            )
         } else {
             "All files (no so= filter)".to_string()
         };
@@ -445,9 +536,15 @@ fn main() {
         }
 
         if inject_webtorrent || !custom_web_seeds.is_empty() || select_indices_str.is_some() {
-            let injected_ws = bittorrent_rs::WebTorrentMagnetInjector::inject_web_seeds(&mut magnet, &custom_web_seeds);
+            let injected_ws = bittorrent_rs::WebTorrentMagnetInjector::inject_web_seeds(
+                &mut magnet,
+                &custom_web_seeds,
+            );
             let injected_trackers = if inject_webtorrent {
-                bittorrent_rs::WebTorrentMagnetInjector::inject_websocket_trackers(&mut magnet, None)
+                bittorrent_rs::WebTorrentMagnetInjector::inject_websocket_trackers(
+                    &mut magnet,
+                    None,
+                )
             } else {
                 0
             };
@@ -455,7 +552,10 @@ fn main() {
             println!("    WebSeeds Added:       {}", injected_ws);
             println!("    WS Trackers Added:    {}", injected_trackers);
             if select_indices_str.is_some() {
-                println!("    BEP 53 Selected:      {}", bittorrent_rs::format_bep53_select_only(magnet.selected_indices()));
+                println!(
+                    "    BEP 53 Selected:      {}",
+                    bittorrent_rs::format_bep53_select_only(magnet.selected_indices())
+                );
             }
             println!("\n  Updated Magnet URI:");
             println!("    {}", magnet.to_uri());
@@ -469,7 +569,9 @@ fn main() {
 
     if command == "recheck" {
         if args.len() < 4 {
-            eprintln!("Error: 'recheck' command requires a path to a torrent file and download directory.");
+            eprintln!(
+                "Error: 'recheck' command requires a path to a torrent file and download directory."
+            );
             eprintln!("Usage: bt-cli recheck <path-to-torrent-file> <data-dir> [--workers <N>]");
             return;
         }
@@ -540,7 +642,11 @@ fn main() {
 
         let pool = bittorrent_rs::HashVerificationPool::new(workers, 1024);
 
-        println!("  Total Pieces:     {} ({} total)", num_pieces, fmt_bytes(total_size));
+        println!(
+            "  Total Pieces:     {} ({} total)",
+            num_pieces,
+            fmt_bytes(total_size)
+        );
         println!("  Piece Length:     {}", fmt_bytes(piece_length as u64));
         println!("\nCommencing parallel multi-threaded verification...");
 
@@ -560,14 +666,21 @@ fn main() {
         };
 
         let elapsed = start_time.elapsed();
-        let valid = progress.valid_pieces.load(std::sync::atomic::Ordering::Relaxed);
-        let corrupt = progress.corrupt_pieces.load(std::sync::atomic::Ordering::Relaxed);
+        let valid = progress
+            .valid_pieces
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let corrupt = progress
+            .corrupt_pieces
+            .load(std::sync::atomic::Ordering::Relaxed);
         let metrics = pool.metrics();
 
         println!("\nVerification Complete:");
         println!("  Valid Pieces:     {} / {}", valid, num_pieces);
         println!("  Corrupted Pieces: {}", corrupt);
-        println!("  Bytes Hashed:     {}", fmt_bytes(metrics.total_bytes_verified));
+        println!(
+            "  Bytes Hashed:     {}",
+            fmt_bytes(metrics.total_bytes_verified)
+        );
         println!("  Elapsed Time:     {:.2?}", elapsed);
         println!("  Throughput:       {:.2} MB/s", metrics.throughput_mb_s());
         println!(
@@ -598,7 +711,10 @@ fn main() {
                 }
                 idx += 1;
             }
-            IpcMessage::Add { torrent_path, download_dir }
+            IpcMessage::Add {
+                torrent_path,
+                download_dir,
+            }
         }
         "status" => IpcMessage::Status,
         "pause" => {
@@ -606,14 +722,18 @@ fn main() {
                 eprintln!("Error: 'pause' command requires an info hash.");
                 return;
             }
-            IpcMessage::Pause { info_hash: args[2].clone() }
+            IpcMessage::Pause {
+                info_hash: args[2].clone(),
+            }
         }
         "resume" => {
             if args.len() < 3 {
                 eprintln!("Error: 'resume' command requires an info hash.");
                 return;
             }
-            IpcMessage::Resume { info_hash: args[2].clone() }
+            IpcMessage::Resume {
+                info_hash: args[2].clone(),
+            }
         }
         "remove" => {
             if args.len() < 3 {
@@ -621,18 +741,25 @@ fn main() {
                 return;
             }
             let delete_data = args.iter().any(|arg| arg == "--purge");
-            IpcMessage::Remove { info_hash: args[2].clone(), delete_data }
+            IpcMessage::Remove {
+                info_hash: args[2].clone(),
+                delete_data,
+            }
         }
         "files" => {
             if args.len() < 3 {
                 eprintln!("Error: 'files' command requires an info hash.");
                 return;
             }
-            IpcMessage::Files { info_hash: args[2].clone() }
+            IpcMessage::Files {
+                info_hash: args[2].clone(),
+            }
         }
         "set-priority" | "priority" => {
             if args.len() < 5 {
-                eprintln!("Error: 'set-priority' requires <info-hash> <file-index> <skip|low|normal|high>");
+                eprintln!(
+                    "Error: 'set-priority' requires <info-hash> <file-index> <skip|low|normal|high>"
+                );
                 return;
             }
             let info_hash = args[2].clone();
@@ -644,7 +771,11 @@ fn main() {
                 }
             };
             let priority = args[4].clone();
-            IpcMessage::SetFilePriority { info_hash, file_index, priority }
+            IpcMessage::SetFilePriority {
+                info_hash,
+                file_index,
+                priority,
+            }
         }
         "super-seed" | "superseed" => {
             if args.len() < 4 {
@@ -667,14 +798,18 @@ fn main() {
                 eprintln!("Error: 'peers' command requires an info hash.");
                 return;
             }
-            IpcMessage::Peers { info_hash: args[2].clone() }
+            IpcMessage::Peers {
+                info_hash: args[2].clone(),
+            }
         }
         "pieces" => {
             if args.len() < 3 {
                 eprintln!("Error: 'pieces' command requires an info hash.");
                 return;
             }
-            IpcMessage::Pieces { info_hash: args[2].clone() }
+            IpcMessage::Pieces {
+                info_hash: args[2].clone(),
+            }
         }
         "shutdown" => IpcMessage::Shutdown,
         _ => {
@@ -712,13 +847,20 @@ fn main() {
                     print_status_table(&torrents);
                 }
                 IpcReply::FileList { files } => {
-                    println!("{:<6} {:<45} {:<12} {:<7} {}", "INDEX", "NAME", "SIZE", "MEDIA", "PRIORITY");
+                    println!(
+                        "{:<6} {:<45} {:<12} {:<7} PRIORITY",
+                        "INDEX", "NAME", "SIZE", "MEDIA"
+                    );
                     println!("{}", "-".repeat(82));
                     for f in files {
                         println!(
                             "{:<6} {:<45} {:<12} {:<7} {}",
                             f.index,
-                            if f.name.len() > 43 { format!("{}...", &f.name[..40]) } else { f.name },
+                            if f.name.len() > 43 {
+                                format!("{}...", &f.name[..40])
+                            } else {
+                                f.name
+                            },
                             torrent_client_shared::fmt_bytes(f.length),
                             if f.is_media { "YES" } else { "NO" },
                             f.priority
@@ -729,16 +871,20 @@ fn main() {
                     if peers.is_empty() {
                         println!("No peers currently connected to this torrent.");
                     } else {
-                        println!("{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | {}",
-                                 "IP:PORT", "CLIENT", "PROGRESS", "DOWN RATE", "UP RATE", "FLAGS");
+                        println!(
+                            "{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | FLAGS",
+                            "IP:PORT", "CLIENT", "PROGRESS", "DOWN RATE", "UP RATE"
+                        );
                         println!("{}", "-".repeat(95));
                         for p in peers {
                             let endpoint = format!("{}:{}", p.ip, p.port);
                             let progress_str = format!("{:.1}%", p.progress * 100.0);
                             let down_str = format!("{}/s", fmt_bytes(p.down_rate));
                             let up_str = format!("{}/s", fmt_bytes(p.up_rate));
-                            println!("{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | {}",
-                                     endpoint, p.client, progress_str, down_str, up_str, p.flags);
+                            println!(
+                                "{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | {}",
+                                endpoint, p.client, progress_str, down_str, up_str, p.flags
+                            );
                         }
                     }
                 }
@@ -748,11 +894,19 @@ fn main() {
                     } else {
                         0.0
                     };
-                    println!("Piece Summary: {} / {} completed ({:.1}%) • Piece Size: {}",
-                             info.have_pieces, info.total_pieces, pct, fmt_bytes(info.piece_length as u64));
-                    
+                    println!(
+                        "Piece Summary: {} / {} completed ({:.1}%) • Piece Size: {}",
+                        info.have_pieces,
+                        info.total_pieces,
+                        pct,
+                        fmt_bytes(info.piece_length as u64)
+                    );
+
                     let max_rarity = info.swarm_rarity.iter().copied().max().unwrap_or(0);
-                    println!("Swarm Availability: Max peer copies for a piece: {}", max_rarity);
+                    println!(
+                        "Swarm Availability: Max peer copies for a piece: {}",
+                        max_rarity
+                    );
 
                     // Render mini ASCII availability / completion bar (50 characters wide)
                     let bar_width = 50.min(info.total_pieces);

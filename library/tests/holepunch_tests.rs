@@ -1,11 +1,11 @@
 use bittorrent_rs::{
+    MockSocket, Peer, PeerMessage, SequentialSelector, SessionConfig, Socket,
+    TorrentSessionBuilder,
     internals::TorrentContext,
     network::holepunch::{
         HolepunchAddrType, HolepunchErrorCode, HolepunchMessage, HolepunchMessageType,
     },
     network::peer::PeerAction,
-    MockSocket, Peer, PeerMessage, SequentialSelector, SessionConfig, Socket,
-    TorrentSessionBuilder,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -51,7 +51,10 @@ fn test_holepunch_encoding_decoding_ipv4() {
     assert_eq!(encoded_r[0], 0x00); // Rendezvous
     assert_eq!(encoded_r[1], 0x00); // IPv4
     assert_eq!(&encoded_r[2..6], &[192, 168, 1, 50]);
-    assert_eq!(u16::from_be_bytes(encoded_r[6..8].try_into().unwrap()), 51413);
+    assert_eq!(
+        u16::from_be_bytes(encoded_r[6..8].try_into().unwrap()),
+        51413
+    );
     assert_eq!(u32::from_be_bytes(encoded_r[8..12].try_into().unwrap()), 0);
 
     let decoded_r = HolepunchMessage::decode(&encoded_r).expect("Decode Rendezvous IPv4");
@@ -74,7 +77,10 @@ fn test_holepunch_encoding_decoding_ipv4() {
     assert_eq!(e_msg.err_code, HolepunchErrorCode::NoSuchPeer);
     let encoded_e = e_msg.encode();
     assert_eq!(encoded_e[0], 0x02); // Error
-    assert_eq!(u32::from_be_bytes(encoded_e[8..12].try_into().unwrap()), 0x01);
+    assert_eq!(
+        u32::from_be_bytes(encoded_e[8..12].try_into().unwrap()),
+        0x01
+    );
     let decoded_e = HolepunchMessage::decode(&encoded_e).expect("Decode Error IPv4");
     assert_eq!(decoded_e.msg_type, HolepunchMessageType::Error);
     assert_eq!(decoded_e.err_code, HolepunchErrorCode::NoSuchPeer);
@@ -92,7 +98,10 @@ fn test_holepunch_encoding_decoding_ipv6() {
     assert_eq!(encoded[0], 0x01); // Connect
     assert_eq!(encoded[1], 0x01); // IPv6
     assert_eq!(&encoded[2..18], &v6_addr.octets());
-    assert_eq!(u16::from_be_bytes(encoded[18..20].try_into().unwrap()), 6882);
+    assert_eq!(
+        u16::from_be_bytes(encoded[18..20].try_into().unwrap()),
+        6882
+    );
     assert_eq!(u32::from_be_bytes(encoded[20..24].try_into().unwrap()), 0);
 
     let decoded = HolepunchMessage::decode(&encoded).expect("Decode Connect IPv6");
@@ -116,7 +125,9 @@ fn test_holepunch_decode_invalid_inputs() {
     assert!(HolepunchMessage::decode(&[0x00, 0x00, 1, 2, 3, 4, 0, 80]).is_err());
 
     // Truncated IPv6 (< 24 bytes)
-    assert!(HolepunchMessage::decode(&[0x00, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).is_err());
+    assert!(
+        HolepunchMessage::decode(&[0x00, 0x01, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).is_err()
+    );
 
     // Invalid message type (e.g. 0x03)
     let mut valid_ipv4 = HolepunchMessage::connect(SocketAddr::new(
@@ -264,7 +275,9 @@ fn test_peer_handle_holepunch_rendezvous_and_connect_actions() {
     let initiator_ip = "10.0.0.1";
     let initiator_port = 45000;
     let mut relay_peer = create_mock_peer(initiator_ip, initiator_port, ctx_arc.clone());
-    relay_peer.extension_ids.insert("ut_holepunch".to_string(), 3);
+    relay_peer
+        .extension_ids
+        .insert("ut_holepunch".to_string(), 3);
 
     let rendezvous_payload = HolepunchMessage::rendezvous(SocketAddr::new(
         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
@@ -356,7 +369,11 @@ fn test_peer_handle_holepunch_connect_dispatches_connection() {
 
     // If peer is already in swarm, connect action is ignored
     {
-        let connected_peer = Arc::new(Mutex::new(create_mock_peer("172.16.0.5", 6885, ctx_arc.clone())));
+        let connected_peer = Arc::new(Mutex::new(create_mock_peer(
+            "172.16.0.5",
+            6885,
+            ctx_arc.clone(),
+        )));
         let ctx_guard = ctx_arc.lock().unwrap();
         ctx_guard
             .peer_swarm
@@ -418,7 +435,9 @@ fn test_peer_handle_holepunch_rendezvous_error_response() {
     // Relay peer, but requested target is NOT in swarm
     let initiator_ip = "10.0.0.1";
     let mut relay_peer = create_mock_peer(initiator_ip, 45000, ctx_arc.clone());
-    relay_peer.extension_ids.insert("ut_holepunch".to_string(), 3);
+    relay_peer
+        .extension_ids
+        .insert("ut_holepunch".to_string(), 3);
 
     let rendezvous_payload = HolepunchMessage::rendezvous(SocketAddr::new(
         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 99)),

@@ -9,14 +9,26 @@ use std::sync::{Arc, Mutex, RwLock};
 #[test]
 fn test_peer_id_client_parsing_variety() {
     // Azureus style clients
-    assert_eq!(parse_peer_client(b"-qB4620-abcdefghijkl"), "qBittorrent 4.6.2");
+    assert_eq!(
+        parse_peer_client(b"-qB4620-abcdefghijkl"),
+        "qBittorrent 4.6.2"
+    );
     assert_eq!(parse_peer_client(b"-TR3000-123456789012"), "Transmission 3");
     assert_eq!(parse_peer_client(b"-UT3550-xxxxxxxxxxxx"), "µTorrent 3.5.5");
     assert_eq!(parse_peer_client(b"-uT2210-yyyyyyyyyyyy"), "µTorrent 2.2.1");
     assert_eq!(parse_peer_client(b"-DE2030-zzzzzzzzzzzz"), "Deluge 2.0.3");
-    assert_eq!(parse_peer_client(b"-AZ5760-wwwwwwwwwwww"), "Vuze / Azureus 5.7.6");
-    assert_eq!(parse_peer_client(b"-WD0140-vvvvvvvvvvvv"), "WebTorrent 0.1.4");
-    assert_eq!(parse_peer_client(b"-LT1280-uuuuuuuuuuuu"), "libtorrent (Rasterbar) 1.2.8");
+    assert_eq!(
+        parse_peer_client(b"-AZ5760-wwwwwwwwwwww"),
+        "Vuze / Azureus 5.7.6"
+    );
+    assert_eq!(
+        parse_peer_client(b"-WD0140-vvvvvvvvvvvv"),
+        "WebTorrent 0.1.4"
+    );
+    assert_eq!(
+        parse_peer_client(b"-LT1280-uuuuuuuuuuuu"),
+        "libtorrent (Rasterbar) 1.2.8"
+    );
     assert_eq!(parse_peer_client(b"-BC0150-tttttttttttt"), "BitComet 0.1.5");
     assert_eq!(parse_peer_client(b"-TT1200-ssssssssssss"), "Tixati 1.2");
 
@@ -26,7 +38,10 @@ fn test_peer_id_client_parsing_variety() {
 
     // Fallback
     assert_eq!(parse_peer_client(b"Short"), "Unknown");
-    assert_eq!(parse_peer_client(&[0xAA, 0xBB, 0xCC, 0xDD, 0x01, 0x02, 0x03, 0x04]), "AABBCCDD...");
+    assert_eq!(
+        parse_peer_client(&[0xAA, 0xBB, 0xCC, 0xDD, 0x01, 0x02, 0x03, 0x04]),
+        "AABBCCDD..."
+    );
 }
 
 #[test]
@@ -41,7 +56,8 @@ fn test_piece_availability_and_swarm_rarity() {
         Arc::new(SequentialSelector),
         &temp_dir,
         SessionConfig::default(),
-    ).expect("Bootstrap failed");
+    )
+    .expect("Bootstrap failed");
 
     // Setup 10 pieces
     ctx.number_of_pieces = 10;

@@ -1,7 +1,7 @@
-use crate::session::session::{TorrentSession, SessionConfig};
-use crate::tracker::Tracker;
 use crate::error::BitTorrentError;
 use crate::selector::PieceSelector;
+use crate::session::session::{SessionConfig, TorrentSession};
+use crate::tracker::Tracker;
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
@@ -15,7 +15,10 @@ pub struct TorrentClient {
 
 impl TorrentClient {
     /// Creates a new `TorrentClient` with default settings.
-    pub fn new(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> Result<Self, BitTorrentError> {
+    pub fn new(
+        torrent_path: impl AsRef<Path>,
+        download_path: impl AsRef<Path>,
+    ) -> Result<Self, BitTorrentError> {
         let session = TorrentSession::builder(torrent_path, download_path)
             .seeding(false)
             .build()?;
@@ -67,7 +70,11 @@ impl TorrentClient {
                     let mgr2 = manager.clone();
                     let peer_workers2 = peer_workers.clone();
                     let handle = thread::spawn(move || {
-                        futures::executor::block_on(crate::session::worker::handle_peer_session(peer_details, ctx2, mgr2));
+                        futures::executor::block_on(crate::session::worker::handle_peer_session(
+                            peer_details,
+                            ctx2,
+                            mgr2,
+                        ));
                     });
                     peer_workers2.lock().unwrap().push(handle);
                 }
@@ -88,7 +95,9 @@ impl TorrentClient {
                         let duration = Duration::from_secs(interval as u64);
                         let mut ended = false;
                         while start_time.elapsed() < duration {
-                            if context_reannounce.lock().unwrap().status == crate::TorrentStatus::Ended {
+                            if context_reannounce.lock().unwrap().status
+                                == crate::TorrentStatus::Ended
+                            {
                                 ended = true;
                                 break;
                             }
@@ -120,7 +129,13 @@ impl TorrentClient {
                                     let peer_workers2 = peer_workers_reannounce.clone();
 
                                     let handle = std::thread::spawn(move || {
-                                        futures::executor::block_on(crate::session::worker::handle_peer_session(peer_details, ctx2, mgr2));
+                                        futures::executor::block_on(
+                                            crate::session::worker::handle_peer_session(
+                                                peer_details,
+                                                ctx2,
+                                                mgr2,
+                                            ),
+                                        );
                                     });
                                     peer_workers2.lock().unwrap().push(handle);
                                 }

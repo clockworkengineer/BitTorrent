@@ -71,9 +71,13 @@ impl SessionState {
 
         self.last_bps = ctx_guard.bytes_per_second() as u64;
         self.last_upload_bps = ctx_guard.upload_bytes_per_second() as u64;
-        self.last_downloaded = ctx_guard.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+        self.last_downloaded = ctx_guard
+            .total_bytes_downloaded
+            .load(std::sync::atomic::Ordering::Relaxed);
         self.last_total = ctx_guard.total_bytes_to_download;
-        self.last_uploaded = ctx_guard.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed);
+        self.last_uploaded = ctx_guard
+            .total_bytes_uploaded
+            .load(std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -95,7 +99,7 @@ pub fn fmt_bytes(bytes: u64) -> String {
     }
 }
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TorrentStatusInfo {
@@ -175,12 +179,32 @@ pub fn extract_peer_infos(ctx: &bittorrent_rs::internals::TorrentContext) -> Vec
                 };
 
                 let mut flags = String::new();
-                if peer.am_interested { flags.push('I'); } else { flags.push('i'); }
-                if peer.am_choking { flags.push('C'); } else { flags.push('c'); }
-                if peer.peer_interested { flags.push('H'); } else { flags.push('h'); }
-                if peer.peer_choking.wait_one(0) { flags.push('U'); } else { flags.push('u'); }
-                if peer.supports_extensions { flags.push('E'); }
-                if peer.supports_fast_extension { flags.push('F'); }
+                if peer.am_interested {
+                    flags.push('I');
+                } else {
+                    flags.push('i');
+                }
+                if peer.am_choking {
+                    flags.push('C');
+                } else {
+                    flags.push('c');
+                }
+                if peer.peer_interested {
+                    flags.push('H');
+                } else {
+                    flags.push('h');
+                }
+                if peer.peer_choking.wait_one(0) {
+                    flags.push('U');
+                } else {
+                    flags.push('u');
+                }
+                if peer.supports_extensions {
+                    flags.push('E');
+                }
+                if peer.supports_fast_extension {
+                    flags.push('F');
+                }
 
                 result.push(PeerInfo {
                     ip: peer.ip.clone(),
@@ -200,7 +224,9 @@ pub fn extract_peer_infos(ctx: &bittorrent_rs::internals::TorrentContext) -> Vec
 }
 
 /// Extracts piece verification status and swarm rarity from an active session's TorrentContext.
-pub fn extract_piece_availability(ctx: &bittorrent_rs::internals::TorrentContext) -> PieceAvailabilityInfo {
+pub fn extract_piece_availability(
+    ctx: &bittorrent_rs::internals::TorrentContext,
+) -> PieceAvailabilityInfo {
     let (local_have, swarm_rarity) = ctx.get_piece_availability();
     let have_pieces = local_have.iter().filter(|&&h| h).count();
     PieceAvailabilityInfo {
@@ -254,34 +280,31 @@ pub enum IpcMessage {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "data")]
 pub enum IpcReply {
-    Success {
-        message: String,
-    },
-    StatusList {
-        torrents: Vec<TorrentStatusInfo>,
-    },
-    FileList {
-        files: Vec<FileInfo>,
-    },
-    PeerList {
-        peers: Vec<PeerInfo>,
-    },
-    PieceStates {
-        info: PieceAvailabilityInfo,
-    },
-    Error {
-        reason: String,
-    },
+    Success { message: String },
+    StatusList { torrents: Vec<TorrentStatusInfo> },
+    FileList { files: Vec<FileInfo> },
+    PeerList { peers: Vec<PeerInfo> },
+    PieceStates { info: PieceAvailabilityInfo },
+    Error { reason: String },
 }
 
 /// Returns true if the file name has a common video or audio extension.
 pub fn is_media_filename(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.ends_with(".mp4") || lower.ends_with(".mkv") || lower.ends_with(".webm") ||
-    lower.ends_with(".avi") || lower.ends_with(".mov") || lower.ends_with(".m4v") ||
-    lower.ends_with(".flv") || lower.ends_with(".wmv") || lower.ends_with(".mp3") ||
-    lower.ends_with(".flac") || lower.ends_with(".ogg") || lower.ends_with(".wav") ||
-    lower.ends_with(".aac") || lower.ends_with(".m4a")
+    lower.ends_with(".mp4")
+        || lower.ends_with(".mkv")
+        || lower.ends_with(".webm")
+        || lower.ends_with(".avi")
+        || lower.ends_with(".mov")
+        || lower.ends_with(".m4v")
+        || lower.ends_with(".flv")
+        || lower.ends_with(".wmv")
+        || lower.ends_with(".mp3")
+        || lower.ends_with(".flac")
+        || lower.ends_with(".ogg")
+        || lower.ends_with(".wav")
+        || lower.ends_with(".aac")
+        || lower.ends_with(".m4a")
 }
 
 /// Detects the MIME content type based on the file extension.
@@ -316,7 +339,9 @@ mod tests {
 
     #[test]
     fn test_ipc_peers_and_pieces_serialization_roundtrip() {
-        let msg_peers = IpcMessage::Peers { info_hash: "1234567890abcdef1234".to_string() };
+        let msg_peers = IpcMessage::Peers {
+            info_hash: "1234567890abcdef1234".to_string(),
+        };
         let json_peers = serde_json::to_string(&msg_peers).unwrap();
         let decoded_peers: IpcMessage = serde_json::from_str(&json_peers).unwrap();
         match decoded_peers {
@@ -324,7 +349,9 @@ mod tests {
             _ => panic!("Expected IpcMessage::Peers"),
         }
 
-        let msg_pieces = IpcMessage::Pieces { info_hash: "fedcba0987654321fedc".to_string() };
+        let msg_pieces = IpcMessage::Pieces {
+            info_hash: "fedcba0987654321fedc".to_string(),
+        };
         let json_pieces = serde_json::to_string(&msg_pieces).unwrap();
         let decoded_pieces: IpcMessage = serde_json::from_str(&json_pieces).unwrap();
         match decoded_pieces {
@@ -332,7 +359,10 @@ mod tests {
             _ => panic!("Expected IpcMessage::Pieces"),
         }
 
-        let msg_ss = IpcMessage::SetSuperSeeding { info_hash: "abcdef1234567890abcdef12".to_string(), enabled: true };
+        let msg_ss = IpcMessage::SetSuperSeeding {
+            info_hash: "abcdef1234567890abcdef12".to_string(),
+            enabled: true,
+        };
         let json_ss = serde_json::to_string(&msg_ss).unwrap();
         let decoded_ss: IpcMessage = serde_json::from_str(&json_ss).unwrap();
         match decoded_ss {
@@ -357,7 +387,9 @@ mod tests {
             connection_type: "TCP".to_string(),
         };
 
-        let reply_peers = IpcReply::PeerList { peers: vec![peer.clone()] };
+        let reply_peers = IpcReply::PeerList {
+            peers: vec![peer.clone()],
+        };
         let json_peers = serde_json::to_string(&reply_peers).unwrap();
         let decoded_reply: IpcReply = serde_json::from_str(&json_peers).unwrap();
         match decoded_reply {
@@ -393,5 +425,3 @@ mod tests {
         }
     }
 }
-
-

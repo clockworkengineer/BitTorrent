@@ -5,14 +5,19 @@ pub mod dht;
 pub mod holepunch;
 #[cfg(feature = "std")]
 pub mod host;
+#[cfg(feature = "std")]
+pub mod latency_profiler;
 #[cfg(all(feature = "std", feature = "lsd"))]
 pub mod lsd;
+#[cfg(feature = "std")]
+pub mod metadata_fetcher;
 #[cfg(all(feature = "std", feature = "mse"))]
 pub mod mse;
 #[cfg(all(feature = "std", feature = "nat-pmp"))]
 pub mod nat;
 #[cfg(feature = "std")]
 pub mod peer;
+pub mod peer_details;
 #[cfg(feature = "std")]
 pub mod peer_id;
 pub mod peer_message;
@@ -26,10 +31,6 @@ pub mod utp;
 #[cfg(all(feature = "std", feature = "webrtc"))]
 pub mod webrtc;
 #[cfg(feature = "std")]
-pub mod webtorrent_injector;
-#[cfg(feature = "std")]
-pub mod metadata_fetcher;
-#[cfg(feature = "std")]
-pub mod latency_profiler;
-#[cfg(feature = "std")]
 pub mod webseed_tracker;
+#[cfg(feature = "std")]
+pub mod webtorrent_injector;

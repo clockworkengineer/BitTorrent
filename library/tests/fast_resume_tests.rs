@@ -1,8 +1,8 @@
+use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::{
     FastResumeData, FastResumeFileEntry, FileDetails, FilePriority, SequentialSelector,
     SessionConfig, TorrentSession, TorrentStatus,
 };
-use bittorrent_rs::internals::TorrentContext;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_dir(name: &str) -> PathBuf {
     let mut dir = std::env::temp_dir();
-    let epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     dir.push(format!("bt_test_fastresume_{}_{}", name, epoch));
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -204,21 +207,20 @@ fn test_apply_to_context() {
         selector,
         Path::new("."),
         config,
-    ).unwrap();
+    )
+    .unwrap();
 
     ctx.init_pieces(4, 1000);
     ctx.total_bytes_to_download = 3500;
-    ctx.files_to_download = vec![
-        FileDetails {
-            name: "file.bin".into(),
-            torrent_path: "file.bin".into(),
-            length: 3500,
-            md5sum: None,
-            offset: 0,
-            pieces_root: None,
-            priority: FilePriority::Normal,
-        }
-    ];
+    ctx.files_to_download = vec![FileDetails {
+        name: "file.bin".into(),
+        torrent_path: "file.bin".into(),
+        length: 3500,
+        md5sum: None,
+        offset: 0,
+        pieces_root: None,
+        priority: FilePriority::Normal,
+    }];
 
     let resume = FastResumeData {
         info_hash: [0x33; 20],
@@ -231,18 +233,18 @@ fn test_apply_to_context() {
         active_time: 120,
         seeding_time: 0,
         is_seeding: false,
-        files: vec![
-            FastResumeFileEntry {
-                path: PathBuf::from("file.bin"),
-                length: 3500,
-                mtime: 0,
-                priority: 7, // High priority
-            }
-        ],
+        files: vec![FastResumeFileEntry {
+            path: PathBuf::from("file.bin"),
+            length: 3500,
+            mtime: 0,
+            priority: 7, // High priority
+        }],
         peers: vec!["1.2.3.4:6881".into()],
     };
 
-    resume.apply_to_context(&mut ctx).expect("Failed to apply fast resume to context");
+    resume
+        .apply_to_context(&mut ctx)
+        .expect("Failed to apply fast resume to context");
 
     assert!(ctx.is_piece_local(0));
     assert!(!ctx.is_piece_local(1));
@@ -255,8 +257,16 @@ fn test_apply_to_context() {
     assert!(ctx.is_piece_missing(3));
 
     assert_eq!(ctx.missing_pieces_count, 2);
-    assert_eq!(ctx.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed), 2000);
-    assert_eq!(ctx.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed), 50000);
+    assert_eq!(
+        ctx.total_bytes_downloaded
+            .load(std::sync::atomic::Ordering::Relaxed),
+        2000
+    );
+    assert_eq!(
+        ctx.total_bytes_uploaded
+            .load(std::sync::atomic::Ordering::Relaxed),
+        50000
+    );
     assert_eq!(ctx.files_to_download[0].priority, FilePriority::High);
     assert_eq!(ctx.status, TorrentStatus::Initialised);
 
@@ -272,18 +282,18 @@ fn test_apply_to_context() {
         active_time: 500,
         seeding_time: 300,
         is_seeding: true,
-        files: vec![
-            FastResumeFileEntry {
-                path: PathBuf::from("file.bin"),
-                length: 3500,
-                mtime: 0,
-                priority: 4,
-            }
-        ],
+        files: vec![FastResumeFileEntry {
+            path: PathBuf::from("file.bin"),
+            length: 3500,
+            mtime: 0,
+            priority: 4,
+        }],
         peers: Vec::new(),
     };
 
-    seeding_resume.apply_to_context(&mut ctx).expect("Failed to apply seeding resume");
+    seeding_resume
+        .apply_to_context(&mut ctx)
+        .expect("Failed to apply seeding resume");
     assert_eq!(ctx.missing_pieces_count, 0);
     assert_eq!(ctx.status, TorrentStatus::Seeding);
     assert!(ctx.download_finished.is_set());
@@ -305,21 +315,21 @@ fn test_save_load_file() {
         active_time: 60,
         seeding_time: 0,
         is_seeding: false,
-        files: vec![
-            FastResumeFileEntry {
-                path: PathBuf::from("data.bin"),
-                length: 160000,
-                mtime: 1729000000,
-                priority: 4,
-            }
-        ],
+        files: vec![FastResumeFileEntry {
+            path: PathBuf::from("data.bin"),
+            length: 160000,
+            mtime: 1729000000,
+            priority: 4,
+        }],
         peers: vec!["127.0.0.1:8999".into()],
     };
 
-    data.save_to_file(&resume_file).expect("Failed to save fast resume to disk");
+    data.save_to_file(&resume_file)
+        .expect("Failed to save fast resume to disk");
     assert!(resume_file.exists());
 
-    let loaded = FastResumeData::load_from_file(&resume_file).expect("Failed to load fast resume from disk");
+    let loaded =
+        FastResumeData::load_from_file(&resume_file).expect("Failed to load fast resume from disk");
     assert_eq!(loaded.info_hash, data.info_hash);
     assert_eq!(loaded.num_pieces, data.num_pieces);
     assert_eq!(loaded.bitfield, data.bitfield);
@@ -345,7 +355,9 @@ fn test_session_builder_fast_resume_roundtrip() {
         .expect("Failed to build initial session");
 
     // Save fast-resume state
-    session.save_fast_resume(&resume_path).expect("Failed to save fast resume");
+    session
+        .save_fast_resume(&resume_path)
+        .expect("Failed to save fast resume");
     assert!(resume_path.exists());
 
     let fr = FastResumeData::load_from_file(&resume_path).expect("Failed to load");

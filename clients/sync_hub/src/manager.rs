@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use bittorrent_rs::session::{TorrentSession, SessionConfig};
-use crate::watcher::DirectoryWatcher;
 use crate::torrent_gen::generate_torrent_bytes;
+use crate::watcher::DirectoryWatcher;
+use bittorrent_rs::session::{SessionConfig, TorrentSession};
+use std::path::PathBuf;
 
 pub struct SyncManager {
     sync_dir: PathBuf,
@@ -29,7 +29,7 @@ impl SyncManager {
         let _watcher = DirectoryWatcher::watch(&self.sync_dir)?;
 
         println!("Watching directory {:?} for sync changes...", self.sync_dir);
-        
+
         Ok(())
     }
 
@@ -53,11 +53,13 @@ impl SyncManager {
         std::fs::write(&self.torrent_path, &bytes)?;
 
         // Configure session
-        let mut config = SessionConfig::default();
-        config.mse_enabled = true; // Message Stream Encryption enabled
-        config.allow_private_lsd = true; // Custom private LSD enabled
-        config.dht_enabled = false; // Disable public DHT
-        config.dht_port = self.listen_port + 10;
+        let config = SessionConfig {
+            mse_enabled: true,
+            allow_private_lsd: true,
+            dht_enabled: false,
+            dht_port: self.listen_port + 10,
+            ..Default::default()
+        };
 
         // Build and start the session
         let mut session = TorrentSession::builder(&self.torrent_path, &self.sync_dir)
@@ -66,7 +68,7 @@ impl SyncManager {
             .build()?;
 
         session.start_download()?;
-        
+
         let info_hash = session.context().lock().unwrap().info_hash.clone();
         let info_hash_hex: String = info_hash.iter().map(|b| format!("{:02x}", b)).collect();
         println!("Sync Session Started. Info Hash: {}", info_hash_hex);

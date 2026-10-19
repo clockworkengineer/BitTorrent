@@ -1,7 +1,7 @@
 use bittorrent_rs::bencode::{BNode, Bencode};
 use bittorrent_rs::disk_io::DiskIO;
-use bittorrent_rs::{MetaInfoFile, selector::RarestFirstSelector, session::SessionConfig};
 use bittorrent_rs::internals::TorrentContext;
+use bittorrent_rs::{MetaInfoFile, selector::RarestFirstSelector, session::SessionConfig};
 use sha1::Digest;
 use std::fs;
 use std::io::Read;
@@ -37,25 +37,13 @@ fn write_single_file_torrent(
     let pieces_ref = &pieces;
 
     let info = BNode::Dictionary(vec![
-        (
-            b"length" as &[u8],
-            BNode::Number(file_length_bytes),
-        ),
-        (
-            b"name" as &[u8],
-            BNode::String(file_name_bytes),
-        ),
-        (
-            b"piece length" as &[u8],
-            BNode::Number(piece_length_bytes),
-        ),
+        (b"length" as &[u8], BNode::Number(file_length_bytes)),
+        (b"name" as &[u8], BNode::String(file_name_bytes)),
+        (b"piece length" as &[u8], BNode::Number(piece_length_bytes)),
         (b"pieces" as &[u8], BNode::String(pieces_ref)),
     ]);
     let root = BNode::Dictionary(vec![
-        (
-            b"announce" as &[u8],
-            BNode::String(announce_url_bytes),
-        ),
+        (b"announce" as &[u8], BNode::String(announce_url_bytes)),
         (b"info" as &[u8], info),
     ]);
     fs::write(torrent_path, Bencode::encode(&root)).unwrap();
@@ -93,21 +81,12 @@ fn write_multi_file_torrent(
 
     let info = BNode::Dictionary(vec![
         (b"files" as &[u8], BNode::List(file_entries)),
-        (
-            b"name" as &[u8],
-            BNode::String(root_name_bytes),
-        ),
-        (
-            b"piece length" as &[u8],
-            BNode::Number(piece_length_bytes),
-        ),
+        (b"name" as &[u8], BNode::String(root_name_bytes)),
+        (b"piece length" as &[u8], BNode::Number(piece_length_bytes)),
         (b"pieces" as &[u8], BNode::String(pieces_ref)),
     ]);
     let root = BNode::Dictionary(vec![
-        (
-            b"announce" as &[u8],
-            BNode::String(announce_url_bytes),
-        ),
+        (b"announce" as &[u8], BNode::String(announce_url_bytes)),
         (b"info" as &[u8], info),
     ]);
     fs::write(torrent_path, Bencode::encode(&root)).unwrap();
@@ -135,16 +114,21 @@ fn test_write_piece_across_multiple_files() {
     meta_info.parse().unwrap();
     meta_info.validate().unwrap();
     let piece_length = meta_info.get_piece_length().unwrap();
-    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).unwrap();
-    let disk_io = std::sync::Arc::new(DiskIO::new(
-        &download_path,
-        files_to_download,
-        piece_length,
-    ));
+    let (_, files_to_download) = meta_info
+        .local_files_to_download_list(&download_path)
+        .unwrap();
+    let disk_io = std::sync::Arc::new(DiskIO::new(&download_path, files_to_download, piece_length));
     disk_io.create_local_torrent_structure().unwrap();
 
-    let mut _context =
-        TorrentContext::new(&meta_info, std::sync::Arc::new(RarestFirstSelector), disk_io.clone(), &download_path, false, SessionConfig::default()).unwrap();
+    let mut _context = TorrentContext::new(
+        &meta_info,
+        std::sync::Arc::new(RarestFirstSelector),
+        disk_io.clone(),
+        &download_path,
+        false,
+        SessionConfig::default(),
+    )
+    .unwrap();
     disk_io.create_torrent_bitfield(&mut _context).unwrap();
     let file_one = download_path.join("downloads").join("part1.bin");
     let file_two = download_path.join("downloads").join("part2.bin");
@@ -191,15 +175,20 @@ fn test_process_piece_block_writes_complete_piece_to_disk() {
     meta_info.parse().unwrap();
     meta_info.validate().unwrap();
     let piece_length = meta_info.get_piece_length().unwrap();
-    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).unwrap();
-    let disk_io = std::sync::Arc::new(DiskIO::new(
-        &download_path,
-        files_to_download,
-        piece_length,
-    ));
+    let (_, files_to_download) = meta_info
+        .local_files_to_download_list(&download_path)
+        .unwrap();
+    let disk_io = std::sync::Arc::new(DiskIO::new(&download_path, files_to_download, piece_length));
     disk_io.create_local_torrent_structure().unwrap();
-    let mut context =
-        TorrentContext::new(&meta_info, std::sync::Arc::new(RarestFirstSelector), disk_io.clone(), &download_path, false, SessionConfig::default()).unwrap();
+    let mut context = TorrentContext::new(
+        &meta_info,
+        std::sync::Arc::new(RarestFirstSelector),
+        disk_io.clone(),
+        &download_path,
+        false,
+        SessionConfig::default(),
+    )
+    .unwrap();
     disk_io.create_torrent_bitfield(&mut context).unwrap();
 
     let completed = context
@@ -208,7 +197,12 @@ fn test_process_piece_block_writes_complete_piece_to_disk() {
 
     assert!(completed);
     assert!(context.is_piece_local(0));
-    assert_eq!(context.total_bytes_downloaded.load(std::sync::atomic::Ordering::Relaxed), 16384);
+    assert_eq!(
+        context
+            .total_bytes_downloaded
+            .load(std::sync::atomic::Ordering::Relaxed),
+        16384
+    );
 
     let file_path = download_path.join("data.bin");
     let mut file_contents = Vec::new();
@@ -242,12 +236,10 @@ fn test_disk_io_bounds_error_handling() {
     let mut meta_info = MetaInfoFile::new(&torrent_file).unwrap();
     meta_info.parse().unwrap();
     let piece_length = meta_info.get_piece_length().unwrap();
-    let (_, files_to_download) = meta_info.local_files_to_download_list(&download_path).unwrap();
-    let disk_io = DiskIO::new(
-        &download_path,
-        files_to_download,
-        piece_length,
-    );
+    let (_, files_to_download) = meta_info
+        .local_files_to_download_list(&download_path)
+        .unwrap();
+    let disk_io = DiskIO::new(&download_path, files_to_download, piece_length);
     disk_io.create_local_torrent_structure().unwrap();
 
     use bittorrent_rs::{BlockReader, BlockWriter};

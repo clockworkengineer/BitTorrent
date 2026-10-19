@@ -1,15 +1,15 @@
 use bittorrent_rs::{
+    MockSocket, Peer, PeerMessage, SequentialSelector, SessionConfig, Socket,
+    TorrentSessionBuilder,
     internals::TorrentContext,
     io_traits::AsyncSocket,
     network::tracker::{TrackerAnnounceContext, TrackerEvent},
     network::webrtc::{
-        create_webtorrent_answer, create_webtorrent_offer, DataChannelState,
-        MockWebSocketSignalingChannel, SdpDescription, WebRtcSocketAdapter,
-        WebTorrentAnnouncer, WebTorrentBridge, WebTorrentIncomingMessage,
+        DataChannelState, MockWebSocketSignalingChannel, SdpDescription, WebRtcSocketAdapter,
+        WebTorrentAnnouncer, WebTorrentBridge, WebTorrentIncomingMessage, create_webtorrent_answer,
+        create_webtorrent_offer,
     },
     util::info_hash_to_string,
-    MockSocket, Peer, PeerMessage, SequentialSelector, SessionConfig, Socket,
-    TorrentSessionBuilder,
 };
 use std::sync::{Arc, Mutex};
 
@@ -220,7 +220,12 @@ fn test_webtorrent_bridge_coordinator_offer_and_answer_handshake() {
     // 1. Client generates offers
     let offers = bridge.generate_offers(3);
     assert_eq!(offers.len(), 3);
-    assert_eq!(bridge.offers_sent.load(std::sync::atomic::Ordering::Relaxed), 3);
+    assert_eq!(
+        bridge
+            .offers_sent
+            .load(std::sync::atomic::Ordering::Relaxed),
+        3
+    );
 
     let offer1_id = &offers[0].offer_id;
 
@@ -234,7 +239,12 @@ fn test_webtorrent_bridge_coordinator_offer_and_answer_handshake() {
         .handle_inbound_answer(offer1_id, "peer-browser-abc", &dummy_answer)
         .expect("handle answer");
 
-    assert_eq!(bridge.answers_received.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(
+        bridge
+            .answers_received
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 
     // Socket is registered in bridge active peers
     let found_socket = bridge.get_peer_socket("webrtc:peer-browser-abc");
@@ -308,10 +318,8 @@ fn test_webtorrent_announcer_with_mock_websocket_signaling() {
     }"#,
     );
 
-    let mut announcer = WebTorrentAnnouncer::with_client(
-        "wss://tracker.openwebtorrent.com",
-        mock_channel.clone(),
-    );
+    let mut announcer =
+        WebTorrentAnnouncer::with_client("wss://tracker.openwebtorrent.com", mock_channel.clone());
 
     let tracker_ctx = TrackerAnnounceContext {
         info_hash: vec![0x12; 20],
@@ -390,11 +398,10 @@ fn test_cross_swarm_bridge_piece_distribution() {
             .write()
             .unwrap()
             .insert("192.168.1.50".to_string(), Arc::new(Mutex::new(tcp_peer)));
-        ctx_guard
-            .peer_swarm
-            .write()
-            .unwrap()
-            .insert("webrtc:browser-peer-99".to_string(), Arc::new(Mutex::new(browser_peer)));
+        ctx_guard.peer_swarm.write().unwrap().insert(
+            "webrtc:browser-peer-99".to_string(),
+            Arc::new(Mutex::new(browser_peer)),
+        );
     }
 
     // 2. Simulate piece download from TCP peer: write block to storage, mark piece complete
@@ -437,7 +444,11 @@ fn test_cross_swarm_bridge_piece_distribution() {
     .unwrap();
 
     match n {
-        PeerMessage::Request { index, begin, length } => {
+        PeerMessage::Request {
+            index,
+            begin,
+            length,
+        } => {
             assert_eq!(index, 0);
             assert_eq!(begin, 0);
             assert_eq!(length, 16384);

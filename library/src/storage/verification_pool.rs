@@ -5,9 +5,9 @@
 //! for BitTorrent v2 / Hybrid) away from the cooperative async executor and network loops.
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
-    mpsc::{channel, Receiver, Sender},
     Arc, Mutex,
+    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+    mpsc::{Receiver, Sender, channel},
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -239,8 +239,11 @@ impl HashVerificationPool {
                                 }
 
                                 if let Some(ref progress) = progress_opt {
-                                    let prev = progress.checked_pieces.fetch_add(1, Ordering::Relaxed);
-                                    progress.checked_bytes.fetch_add(result.piece_length as u64, Ordering::Relaxed);
+                                    let prev =
+                                        progress.checked_pieces.fetch_add(1, Ordering::Relaxed);
+                                    progress
+                                        .checked_bytes
+                                        .fetch_add(result.piece_length as u64, Ordering::Relaxed);
                                     if result.is_valid {
                                         progress.valid_pieces.fetch_add(1, Ordering::Relaxed);
                                     } else {
@@ -377,11 +380,7 @@ impl HashVerificationPool {
             let piece_offset = (piece as u64) * (piece_length as u64);
             let piece_len = if piece == num_pieces - 1 {
                 let rem = (total_bytes % piece_length as u64) as u32;
-                if rem == 0 {
-                    piece_length
-                } else {
-                    rem
-                }
+                if rem == 0 { piece_length } else { rem }
             } else {
                 piece_length
             };
@@ -454,7 +453,8 @@ impl HashVerificationPool {
                 // Drain any remaining buffered results
                 for res in self.poll_results() {
                     if res.is_valid {
-                        let (b_idx, mask) = crate::util::get_bitfield_index_and_mask(res.piece_number);
+                        let (b_idx, mask) =
+                            crate::util::get_bitfield_index_and_mask(res.piece_number);
                         if b_idx < bitfield.len() {
                             bitfield[b_idx] |= mask;
                         }
@@ -762,7 +762,10 @@ mod tests {
         while completed < 4 {
             for res in pool.poll_results() {
                 assert!(res.is_valid);
-                assert_eq!(res.expected_v1_hash, Some(expected_hashes[res.piece_number as usize]));
+                assert_eq!(
+                    res.expected_v1_hash,
+                    Some(expected_hashes[res.piece_number as usize])
+                );
                 results.push(res);
                 completed += 1;
             }

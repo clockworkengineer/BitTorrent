@@ -1,13 +1,13 @@
-use bittorrent_rs::{
-    io_traits::{MemStorage, MockSocket, Socket},
-    network::latency_profiler::{PeerLatencyProfile, SwarmLatencyProfiler},
-    storage::erasure_staging::{AdaptiveErasureStaging, BlockArrivalOutcome},
-    selector::SequentialSelector,
-    session::config::SessionConfig,
-    TorrentSession, TorrentStatus,
-};
 use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::peer::Peer;
+use bittorrent_rs::{
+    TorrentSession, TorrentStatus,
+    io_traits::{MemStorage, MockSocket, Socket},
+    network::latency_profiler::{PeerLatencyProfile, SwarmLatencyProfiler},
+    selector::SequentialSelector,
+    session::config::SessionConfig,
+    storage::erasure_staging::{AdaptiveErasureStaging, BlockArrivalOutcome},
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -174,7 +174,10 @@ fn test_straggler_detection_and_preemption() {
 
     // When block arrives, verify estimated stall time saved
     let outcome = staging.on_block_arrived(1, 0, "192.168.1.99");
-    assert!(matches!(outcome, BlockArrivalOutcome::CommitAndCancelOthers { .. }));
+    assert!(matches!(
+        outcome,
+        BlockArrivalOutcome::CommitAndCancelOthers { .. }
+    ));
 
     let metrics = staging.metrics();
     assert_eq!(metrics.preempted_stragglers, 1);
@@ -191,9 +194,14 @@ fn test_torrent_context_endgame_preemption_and_erasure() {
     let peer_fast = create_mock_peer("10.0.0.20", context.clone());
 
     // Peer slow requests block 0
-    let req1 = context.lock().unwrap().next_block_request_for_peer(&peer_slow);
+    let req1 = context
+        .lock()
+        .unwrap()
+        .next_block_request_for_peer(&peer_slow);
     assert_eq!(req1, Some((0, 0, 16384)));
-    peer_slow.reserved_blocks.push((0, 0, std::time::Instant::now()));
+    peer_slow
+        .reserved_blocks
+        .push((0, 0, std::time::Instant::now()));
 
     // Verify block 0 is staged
     {
@@ -206,7 +214,10 @@ fn test_torrent_context_endgame_preemption_and_erasure() {
     std::thread::sleep(Duration::from_millis(600));
 
     // Peer fast requests next block: should preempt stalled block 0 from slow peer!
-    let req2 = context.lock().unwrap().next_block_request_for_peer(&peer_fast);
+    let req2 = context
+        .lock()
+        .unwrap()
+        .next_block_request_for_peer(&peer_fast);
     assert_eq!(req2, Some((0, 0, 16384)));
 
     // Fast peer delivers block 0

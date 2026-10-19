@@ -37,13 +37,17 @@ fn test_local_files_to_download_list_single_file() {
 #[test]
 fn test_validate_relative_path_harden() {
     let path = std::env::temp_dir().join("bittorrent_bad_path_test.torrent");
-    
+
     // Test reserved Windows device name CON
     let contents = b"d8:announce18:http://tracker.com4:infod4:name7:CON.txt12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaa6:lengthi100eee";
     fs::write(&path, contents).unwrap();
     let mut torrent = MetaInfoFile::new(&path).unwrap();
     torrent.parse().unwrap();
-    assert!(torrent.local_files_to_download_list(Path::new(".")).is_err());
+    assert!(
+        torrent
+            .local_files_to_download_list(Path::new("."))
+            .is_err()
+    );
     fs::remove_file(&path).unwrap();
 
     // Test colon in path
@@ -51,7 +55,11 @@ fn test_validate_relative_path_harden() {
     fs::write(&path, contents2).unwrap();
     let mut torrent2 = MetaInfoFile::new(&path).unwrap();
     torrent2.parse().unwrap();
-    assert!(torrent2.local_files_to_download_list(Path::new(".")).is_err());
+    assert!(
+        torrent2
+            .local_files_to_download_list(Path::new("."))
+            .is_err()
+    );
     fs::remove_file(&path).unwrap();
 }
 
@@ -74,8 +82,11 @@ fn test_validate_relative_path_traversal_and_reserved_names() {
         fs::write(&path, contents).unwrap();
         let mut torrent = MetaInfoFile::new(&path).unwrap();
         torrent.parse().unwrap();
-        assert!(torrent.local_files_to_download_list(Path::new(".")).is_err());
+        assert!(
+            torrent
+                .local_files_to_download_list(Path::new("."))
+                .is_err()
+        );
         let _ = fs::remove_file(&path);
     }
 }
-

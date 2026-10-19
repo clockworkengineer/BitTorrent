@@ -30,7 +30,9 @@ pub mod announcer_trait {
             &mut self,
             _tracker: &TrackerAnnounceContext,
         ) -> Result<ScrapeResponse, BitTorrentError> {
-            Err(BitTorrentError::Parse("Scrape not supported by this announcer".into()))
+            Err(BitTorrentError::Parse(
+                "Scrape not supported by this announcer".into(),
+            ))
         }
     }
 }
@@ -124,7 +126,9 @@ impl HttpAnnouncer {
                                             .unwrap_or(0);
                                     }
                                 }
-                                if peer.ip != tracker.ip && tracker.ipv6.as_deref() != Some(&peer.ip) {
+                                if peer.ip != tracker.ip
+                                    && tracker.ipv6.as_deref() != Some(&peer.ip)
+                                {
                                     response.peer_list.push(peer);
                                 }
                             }
@@ -199,9 +203,9 @@ impl HttpAnnouncer {
 
 #[cfg(feature = "http-tracker")]
 fn derive_scrape_url(announce_url: &str) -> Result<String, BitTorrentError> {
-    let mut parsed = url::Url::parse(announce_url)
-        .map_err(|e| BitTorrentError::Parse(e.to_string()))?;
-    
+    let mut parsed =
+        url::Url::parse(announce_url).map_err(|e| BitTorrentError::Parse(e.to_string()))?;
+
     let path = parsed.path().to_string();
     if let Some(idx) = path.rfind("announce") {
         let mut new_path = path[..idx].to_string();
@@ -210,7 +214,9 @@ fn derive_scrape_url(announce_url: &str) -> Result<String, BitTorrentError> {
         parsed.set_path(&new_path);
         Ok(parsed.into())
     } else {
-        Err(BitTorrentError::Parse("Announce URL does not contain 'announce'".into()))
+        Err(BitTorrentError::Parse(
+            "Announce URL does not contain 'announce'".into(),
+        ))
     }
 }
 
@@ -240,24 +246,29 @@ impl Announcer for HttpAnnouncer {
         };
         let body = tracker.http_client.get(&url)?;
         let decoded = crate::bencode::Bencode::decode(&body)?;
-        let files = decoded.dict_get(b"files")
+        let files = decoded
+            .dict_get(b"files")
             .ok_or_else(|| BitTorrentError::Parse("Scrape response missing 'files'".into()))?;
-        let torrent_data = files.dict_get(&tracker.info_hash)
-            .ok_or_else(|| BitTorrentError::Parse("Scrape response missing this info_hash".into()))?;
-        
-        let complete = torrent_data.dict_get(b"complete")
+        let torrent_data = files.dict_get(&tracker.info_hash).ok_or_else(|| {
+            BitTorrentError::Parse("Scrape response missing this info_hash".into())
+        })?;
+
+        let complete = torrent_data
+            .dict_get(b"complete")
             .and_then(|n| n.as_number_bytes())
             .and_then(|b| String::from_utf8_lossy(b).parse::<usize>().ok())
             .unwrap_or(0);
-        let downloaded = torrent_data.dict_get(b"downloaded")
+        let downloaded = torrent_data
+            .dict_get(b"downloaded")
             .and_then(|n| n.as_number_bytes())
             .and_then(|b| String::from_utf8_lossy(b).parse::<usize>().ok())
             .unwrap_or(0);
-        let incomplete = torrent_data.dict_get(b"incomplete")
+        let incomplete = torrent_data
+            .dict_get(b"incomplete")
             .and_then(|n| n.as_number_bytes())
             .and_then(|b| String::from_utf8_lossy(b).parse::<usize>().ok())
             .unwrap_or(0);
-            
+
         Ok(ScrapeResponse {
             complete,
             downloaded,
@@ -306,7 +317,11 @@ impl UdpAnnouncer {
         let remote_addr = addrs
             .next()
             .ok_or_else(|| BitTorrentError::Parse("Failed to resolve tracker host".to_string()))?;
-        let bind_addr = if remote_addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+        let bind_addr = if remote_addr.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
         let socket = UdpSocket::bind(bind_addr).map_err(BitTorrentError::Io)?;
         socket
             .set_read_timeout(Some(Duration::from_secs(3)))
@@ -379,11 +394,7 @@ impl UdpAnnouncer {
     }
 
     /// Builds the 36-byte UDP scrape packet.
-    fn build_scrape_packet(
-        &self,
-        info_hash: &[u8],
-        transaction_id: u32,
-    ) -> Vec<u8> {
+    fn build_scrape_packet(&self, info_hash: &[u8], transaction_id: u32) -> Vec<u8> {
         let mut packet = Vec::new();
         packet.extend_from_slice(&pack_u64(self.connection_id));
         packet.extend_from_slice(&pack_u32(2)); // action 2 = scrape
@@ -507,7 +518,9 @@ impl Announcer for UdpAnnouncer {
             }
         }
         let transaction_id: u32 = rand::random();
-        let reply = match self.send_command(&self.build_scrape_packet(&tracker.info_hash, transaction_id)) {
+        let reply = match self
+            .send_command(&self.build_scrape_packet(&tracker.info_hash, transaction_id))
+        {
             Ok(r) => r,
             Err(e) => {
                 self.socket = None;
@@ -523,7 +536,9 @@ impl Announcer for UdpAnnouncer {
         let action = unpack_u32(&reply, 0);
         if action == 2 {
             if reply.len() < 20 {
-                return Err(BitTorrentError::Parse("UDP scrape response too short".into()));
+                return Err(BitTorrentError::Parse(
+                    "UDP scrape response too short".into(),
+                ));
             }
             let complete = unpack_u32(&reply, 8) as usize;
             let downloaded = unpack_u32(&reply, 12) as usize;
@@ -597,18 +612,24 @@ impl AnnouncerFactory {
             }
             #[cfg(not(feature = "http-tracker"))]
             {
-                Err(BitTorrentError::Parse("HTTP tracker support is disabled".into()))
+                Err(BitTorrentError::Parse(
+                    "HTTP tracker support is disabled".into(),
+                ))
             }
         } else if url.starts_with("udp://") {
             Ok(Box::new(UdpAnnouncer::new(url)?))
         } else if url.starts_with("wss://") || url.starts_with("ws://") {
             #[cfg(feature = "webrtc")]
             {
-                Ok(Box::new(crate::network::webrtc::WebTorrentAnnouncer::new(url)))
+                Ok(Box::new(crate::network::webrtc::WebTorrentAnnouncer::new(
+                    url,
+                )))
             }
             #[cfg(not(feature = "webrtc"))]
             {
-                Err(BitTorrentError::Parse("WebTorrent WebSocket tracker support is disabled".into()))
+                Err(BitTorrentError::Parse(
+                    "WebTorrent WebSocket tracker support is disabled".into(),
+                ))
             }
         } else {
             Err(BitTorrentError::Parse("Invalid tracker URL".into()))
@@ -624,18 +645,24 @@ impl AnnouncerFactory {
             }
             #[cfg(not(feature = "http-tracker"))]
             {
-                Err(BitTorrentError::Parse("HTTP tracker support is disabled".into()))
+                Err(BitTorrentError::Parse(
+                    "HTTP tracker support is disabled".into(),
+                ))
             }
         } else if url.starts_with("udp://") {
             Ok(AnnouncerEnum::Udp(UdpAnnouncer::new(url)?))
         } else if url.starts_with("wss://") || url.starts_with("ws://") {
             #[cfg(feature = "webrtc")]
             {
-                Ok(AnnouncerEnum::WebTorrent(crate::network::webrtc::WebTorrentAnnouncer::new(url)))
+                Ok(AnnouncerEnum::WebTorrent(
+                    crate::network::webrtc::WebTorrentAnnouncer::new(url),
+                ))
             }
             #[cfg(not(feature = "webrtc"))]
             {
-                Err(BitTorrentError::Parse("WebTorrent WebSocket tracker support is disabled".into()))
+                Err(BitTorrentError::Parse(
+                    "WebTorrent WebSocket tracker support is disabled".into(),
+                ))
             }
         } else {
             Err(BitTorrentError::Parse("Invalid tracker URL".into()))

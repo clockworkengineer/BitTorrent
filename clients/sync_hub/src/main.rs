@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 use sync_hub::manager::SyncManager;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

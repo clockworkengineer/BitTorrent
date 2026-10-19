@@ -21,11 +21,11 @@
 //! ```
 
 use crate::announcer::{Announcer, AnnouncerFactory};
+use crate::core::torrent_context::TorrentContext;
 use crate::error::BitTorrentError;
 use crate::host;
 use crate::manager::Manager;
 use crate::peer_id;
-use crate::core::torrent_context::TorrentContext;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -58,36 +58,7 @@ pub enum TrackerStatus {
     Stalled,
 }
 
-/// Contains contact information and identifiers for a remote peer.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PeerDetails {
-    pub info_hash: Vec<u8>,
-    pub peer_id: Option<String>,
-    pub ip: String,
-    pub port: u16,
-}
-
-impl PeerDetails {
-    /// Formats the peer IP address and port into a standard socket address string (e.g. `1.2.3.4:6881` or `[2001:db8::1]:6881`).
-    pub fn endpoint(&self) -> String {
-        crate::util::format_socket_addr(&self.ip, self.port)
-    }
-
-    /// Returns `true` if this peer represents an IPv6 endpoint.
-    pub fn is_ipv6(&self) -> bool {
-        self.ip.contains(':') && !self.ip.starts_with("webrtc:")
-    }
-
-    /// Returns `true` if this peer represents an IPv4 endpoint.
-    pub fn is_ipv4(&self) -> bool {
-        !self.is_ipv6() && !self.ip.starts_with("webrtc:")
-    }
-
-    /// Returns `true` if this peer represents a WebRTC / WebTorrent browser endpoint.
-    pub fn is_webrtc(&self) -> bool {
-        self.ip.starts_with("webrtc:")
-    }
-}
+pub use crate::network::peer_details::PeerDetails;
 
 /// Structured response received from a tracker announce request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,8 +205,6 @@ impl Tracker {
         );
     }
 
-
-
     /// Creates and configures a new `Tracker` manager by mapping urls, selecting primary announcer protocol handlers, and initializing defaults.
     pub fn new(tc: Arc<Mutex<TorrentContext>>) -> Result<Self, BitTorrentError> {
         let guard = tc.lock().unwrap();
@@ -365,7 +334,8 @@ impl Tracker {
 
     /// Computes bytes remaining to download in the torrent.
     pub fn left(&self) -> u64 {
-        let downloaded = self.total_bytes_downloaded
+        let downloaded = self
+            .total_bytes_downloaded
             .load(std::sync::atomic::Ordering::Relaxed);
         self.total_bytes_to_download.saturating_sub(downloaded)
     }
@@ -421,7 +391,8 @@ impl Tracker {
                 match response {
                     Ok(response) => {
                         if response.failure {
-                            last_error = Some(BitTorrentError::Parse(response.status_message.clone()));
+                            last_error =
+                                Some(BitTorrentError::Parse(response.status_message.clone()));
                             if attempt < 2 {
                                 let sleep_ms = 200 * (1 << attempt);
                                 std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
@@ -430,7 +401,9 @@ impl Tracker {
                         } else {
                             if let Some(ref mut comb) = combined_response {
                                 for p in response.peer_list {
-                                    if !comb.peer_list.iter().any(|existing| existing.ip == p.ip && existing.port == p.port) {
+                                    if !comb.peer_list.iter().any(|existing| {
+                                        existing.ip == p.ip && existing.port == p.port
+                                    }) {
                                         comb.peer_list.push(p);
                                     }
                                 }

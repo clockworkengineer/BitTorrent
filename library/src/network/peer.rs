@@ -30,22 +30,22 @@
 //! ```
 
 use crate::average::Average;
-use crate::io_traits::Socket;
+use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::error::BitTorrentError;
+use crate::io_traits::Socket;
+use crate::log_debug;
+use crate::manager::Manager;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
-use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::PeerDetails;
-use crate::manager::Manager;
 use crate::util::get_bitfield_index_and_mask;
-use crate::log_debug;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
-use alloc::vec::Vec;
-use alloc::string::String;
-use alloc::collections::BTreeMap;
-use alloc::string::ToString;
 
 /// Actions returned by message handling to be executed asynchronously outside locks.
 #[derive(Debug)]
@@ -293,7 +293,10 @@ impl Peer {
     }
 
     /// Receives and decodes the next message from the remote peer.
-    pub async fn read_message<'a>(&mut self, read_buffer: &'a mut [u8]) -> Result<PeerMessage<'a>, BitTorrentError> {
+    pub async fn read_message<'a>(
+        &mut self,
+        read_buffer: &'a mut [u8],
+    ) -> Result<PeerMessage<'a>, BitTorrentError> {
         let net = self.network.as_mut().ok_or_else(|| {
             BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -324,7 +327,8 @@ impl Peer {
             index,
             begin,
             length,
-        }).await
+        })
+        .await
     }
 
     /// Transmits a Have message to announce possession of a complete piece.
@@ -408,7 +412,12 @@ impl Peer {
         if !self.supports_fast_extension || tc.number_of_pieces == 0 {
             return false;
         }
-        let fast_set = crate::util::generate_allowed_fast_set(10, tc.number_of_pieces, &tc.info_hash, &self.ip);
+        let fast_set = crate::util::generate_allowed_fast_set(
+            10,
+            tc.number_of_pieces,
+            &tc.info_hash,
+            &self.ip,
+        );
         fast_set.contains(&piece)
     }
 
@@ -437,7 +446,8 @@ impl Peer {
     ) -> PeerAction {
         #[cfg(feature = "v2")]
         {
-            tc.v2_hash_requests_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tc.v2_hash_requests_sent
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         PeerAction::SendHashRequest {
             pieces_root,
@@ -454,7 +464,8 @@ impl Peer {
         target_endpoint: core::net::SocketAddr,
         tc: &mut TorrentContext,
     ) -> PeerAction {
-        tc.holepunch_rendezvous_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tc.holepunch_rendezvous_sent
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let message = crate::network::holepunch::HolepunchMessage::rendezvous(target_endpoint);
         PeerAction::SendHolepunch {
             target_ip: self.ip.clone(),
@@ -473,29 +484,27 @@ impl Peer {
         match message {
             PeerMessage::KeepAlive => {}
             PeerMessage::Choke => {
-                log_debug!(
-                    "[peer {}:{}] CHOKED by remote",
-                    self.ip, self.port
-                );
+                log_debug!("[peer {}:{}] CHOKED by remote", self.ip, self.port);
                 if self.peer_choking.wait_one(0) {
-                    tc.unchoked_peers_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    tc.unchoked_peers_count
+                        .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.peer_choking.reset();
             }
             PeerMessage::Unchoke => {
-                log_debug!(
-                    "[peer {}:{}] UNCHOKED by remote",
-                    self.ip, self.port
-                );
+                log_debug!("[peer {}:{}] UNCHOKED by remote", self.ip, self.port);
                 if !self.peer_choking.wait_one(0) {
-                    tc.unchoked_peers_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tc.unchoked_peers_count
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.peer_choking.set();
             }
             PeerMessage::Interested => {
                 self.peer_interested = true;
                 if tc.is_super_seeding() {
-                    if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
+                    if let Some(piece) =
+                        tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield)
+                    {
                         actions.push(PeerAction::SendHave(piece));
                         if self.supports_fast_extension {
                             actions.push(PeerAction::SendSuggest(piece));
@@ -539,7 +548,9 @@ impl Peer {
                                 });
                             }
                         }
-                        if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
+                        if let Some(piece) =
+                            tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield)
+                        {
                             actions.push(PeerAction::SendHave(piece));
                             if self.supports_fast_extension {
                                 actions.push(PeerAction::SendSuggest(piece));
@@ -555,7 +566,9 @@ impl Peer {
                 if tc.is_super_seeding() {
                     if self.is_seed(tc.number_of_pieces) {
                         tc.set_super_seeding(false);
-                    } else if let Some(piece) = tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield) {
+                    } else if let Some(piece) =
+                        tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield)
+                    {
                         actions.push(PeerAction::SendHave(piece));
                         if self.supports_fast_extension {
                             actions.push(PeerAction::SendSuggest(piece));
@@ -572,7 +585,8 @@ impl Peer {
                 self.bytes_downloaded_in_interval += block.len();
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
-                let request_time = self.reserved_blocks
+                let request_time = self
+                    .reserved_blocks
                     .iter()
                     .find(|&&(p, b, _)| p == index && b == block_index)
                     .map(|&(_, _, t)| t);
@@ -596,7 +610,8 @@ impl Peer {
                 }
 
                 let storage = tc.storage.clone();
-                let piece_complete = tc.process_piece_block(&*storage, index, begin, block, &self.ip)?;
+                let piece_complete =
+                    tc.process_piece_block(&*storage, index, begin, block, &self.ip)?;
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
                     self.suggested_pieces.retain(|&p| p != index);
@@ -624,7 +639,8 @@ impl Peer {
                 begin,
                 length,
             } => {
-                let is_allowed_fast = self.supports_fast_extension && self.is_peer_allowed_fast(index, tc);
+                let is_allowed_fast =
+                    self.supports_fast_extension && self.is_peer_allowed_fast(index, tc);
                 let can_serve = (!self.am_choking || is_allowed_fast)
                     && tc.is_piece_local(index)
                     && tc.can_upload_piece_to_peer(&self.ip, index);
@@ -639,22 +655,34 @@ impl Peer {
                                 begin,
                                 block,
                             });
-                            tc.total_bytes_uploaded.fetch_add(length as u64, std::sync::atomic::Ordering::Relaxed);
+                            tc.total_bytes_uploaded
+                                .fetch_add(length as u64, std::sync::atomic::Ordering::Relaxed);
                             self.bytes_uploaded_in_interval += length as usize;
                         }
                         Err(e) => {
                             log_debug!(
                                 "[peer {}:{}] failed to read piece {} for upload: {}",
-                                self.ip, self.port, index, e
+                                self.ip,
+                                self.port,
+                                index,
+                                e
                             );
                             if self.supports_fast_extension {
-                                actions.push(PeerAction::SendReject { index, begin, length });
+                                actions.push(PeerAction::SendReject {
+                                    index,
+                                    begin,
+                                    length,
+                                });
                             }
                         }
                     }
                 } else if self.supports_fast_extension {
                     // BEP 6: Reject requests for pieces that cannot be satisfied or when choked
-                    actions.push(PeerAction::SendReject { index, begin, length });
+                    actions.push(PeerAction::SendReject {
+                        index,
+                        begin,
+                        length,
+                    });
                 }
             }
             PeerMessage::Extended { ext_id, payload } => {
@@ -666,8 +694,10 @@ impl Peer {
                                     if let crate::bencode::BNode::Number(num_bytes) = val_node {
                                         if let Ok(num_str) = core::str::from_utf8(num_bytes) {
                                             if let Ok(id) = num_str.parse::<u8>() {
-                                                if let Ok(key_str) = core::str::from_utf8(key_bytes) {
-                                                    self.extension_ids.insert(key_str.to_string(), id);
+                                                if let Ok(key_str) = core::str::from_utf8(key_bytes)
+                                                {
+                                                    self.extension_ids
+                                                        .insert(key_str.to_string(), id);
                                                     if key_str == "ut_holepunch" {
                                                         self.supports_holepunch = true;
                                                     }
@@ -678,7 +708,9 @@ impl Peer {
                                 }
                             }
                         }
-                        if let Some(crate::bencode::BNode::Number(num_bytes)) = bnode.dict_get(b"metadata_size") {
+                        if let Some(crate::bencode::BNode::Number(num_bytes)) =
+                            bnode.dict_get(b"metadata_size")
+                        {
                             if let Ok(num_str) = core::str::from_utf8(num_bytes) {
                                 if let Ok(size) = num_str.parse::<usize>() {
                                     self.metadata_size = Some(size);
@@ -688,22 +720,28 @@ impl Peer {
                         }
                     }
                 } else if ext_id == 1 {
-                    if let Ok((bnode, consumed)) = crate::bencode::Bencode::decode_partial(payload) {
-                        let msg_type = bnode.dict_get(b"msg_type")
+                    if let Ok((bnode, consumed)) = crate::bencode::Bencode::decode_partial(payload)
+                    {
+                        let msg_type = bnode
+                            .dict_get(b"msg_type")
                             .and_then(|n| n.as_number_bytes())
                             .and_then(|b| core::str::from_utf8(b).ok())
                             .and_then(|s| s.parse::<u8>().ok());
-                        let piece = bnode.dict_get(b"piece")
+                        let piece = bnode
+                            .dict_get(b"piece")
                             .and_then(|n| n.as_number_bytes())
                             .and_then(|b| core::str::from_utf8(b).ok())
                             .and_then(|s| s.parse::<u32>().ok());
-                        
+
                         match msg_type {
-                            Some(1) => { // Data
+                            Some(1) => {
+                                // Data
                                 if let Some(p) = piece {
                                     let raw_data = &payload[consumed..];
                                     tc.metadata_pieces.insert(p, raw_data.to_vec());
-                                    if let Some(crate::bencode::BNode::Number(num_bytes)) = bnode.dict_get(b"total_size") {
+                                    if let Some(crate::bencode::BNode::Number(num_bytes)) =
+                                        bnode.dict_get(b"total_size")
+                                    {
                                         if let Ok(num_str) = core::str::from_utf8(num_bytes) {
                                             if let Ok(size) = num_str.parse::<usize>() {
                                                 self.metadata_size = Some(size);
@@ -713,27 +751,39 @@ impl Peer {
                                     }
                                 }
                             }
-                            Some(0) => { // Request
+                            Some(0) => {
+                                // Request
                                 if let Some(ref metadata) = tc.info_dict_bytes {
                                     if let Some(p) = piece {
                                         let offset = p as usize * 16384;
                                         if offset < metadata.len() {
                                             let end = (offset + 16384).min(metadata.len());
                                             let chunk = &metadata[offset..end];
-                                            let header = alloc::format!("d8:msg_typei1e5:piecei{}e10:total_sizei{}ee", p, metadata.len());
+                                            let header = alloc::format!(
+                                                "d8:msg_typei1e5:piecei{}e10:total_sizei{}ee",
+                                                p,
+                                                metadata.len()
+                                            );
                                             let mut res_payload = header.into_bytes();
                                             res_payload.extend_from_slice(chunk);
                                             actions.push(PeerAction::SendExtended {
-                                                ext_id: *self.extension_ids.get("ut_metadata").unwrap_or(&1),
+                                                ext_id: *self
+                                                    .extension_ids
+                                                    .get("ut_metadata")
+                                                    .unwrap_or(&1),
                                                 payload: res_payload,
                                             });
                                         }
                                     }
                                 } else {
                                     if let Some(p) = piece {
-                                        let header = alloc::format!("d8:msg_typei2e5:piecei{}eee", p);
+                                        let header =
+                                            alloc::format!("d8:msg_typei2e5:piecei{}eee", p);
                                         actions.push(PeerAction::SendExtended {
-                                            ext_id: *self.extension_ids.get("ut_metadata").unwrap_or(&1),
+                                            ext_id: *self
+                                                .extension_ids
+                                                .get("ut_metadata")
+                                                .unwrap_or(&1),
                                             payload: header.into_bytes(),
                                         });
                                     }
@@ -746,8 +796,13 @@ impl Peer {
                     if !tc.is_pex_enabled() {
                         return Ok(actions);
                     }
-                    if let Ok(pex_msg) = crate::network::pex::PexMessage::decode(payload, &tc.info_hash) {
-                        let am_seed = tc.status == TorrentStatus::Seeding || tc.is_download_complete() || (tc.number_of_pieces > 0 && (0..tc.number_of_pieces as u32).all(|p| tc.is_piece_local(p)));
+                    if let Ok(pex_msg) =
+                        crate::network::pex::PexMessage::decode(payload, &tc.info_hash)
+                    {
+                        let am_seed = tc.status == TorrentStatus::Seeding
+                            || tc.is_download_complete()
+                            || (tc.number_of_pieces > 0
+                                && (0..tc.number_of_pieces as u32).all(|p| tc.is_piece_local(p)));
                         let mut discovered = Vec::new();
 
                         for peer in pex_msg.added_v4 {
@@ -782,13 +837,20 @@ impl Peer {
                     if !tc.is_holepunch_enabled() {
                         return Ok(actions);
                     }
-                    if let Ok(hp_msg) = crate::network::holepunch::HolepunchMessage::decode(payload) {
+                    if let Ok(hp_msg) = crate::network::holepunch::HolepunchMessage::decode(payload)
+                    {
                         match hp_msg.msg_type {
                             crate::network::holepunch::HolepunchMessageType::Rendezvous => {
-                                tc.holepunch_rendezvous_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                match tc.handle_holepunch_rendezvous(&self.ip, self.port, hp_msg.endpoint) {
+                                tc.holepunch_rendezvous_received
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                match tc.handle_holepunch_rendezvous(
+                                    &self.ip,
+                                    self.port,
+                                    hp_msg.endpoint,
+                                ) {
                                     Ok((connect_initiator, connect_target)) => {
-                                        tc.holepunch_connect_sent.fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+                                        tc.holepunch_connect_sent
+                                            .fetch_add(2, std::sync::atomic::Ordering::Relaxed);
                                         actions.push(PeerAction::SendHolepunch {
                                             target_ip: self.ip.clone(),
                                             message: connect_initiator,
@@ -799,8 +861,13 @@ impl Peer {
                                         });
                                     }
                                     Err(err_code) => {
-                                        tc.holepunch_error_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                        let err_msg = crate::network::holepunch::HolepunchMessage::error(hp_msg.endpoint, err_code);
+                                        tc.holepunch_error_sent
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        let err_msg =
+                                            crate::network::holepunch::HolepunchMessage::error(
+                                                hp_msg.endpoint,
+                                                err_code,
+                                            );
                                         actions.push(PeerAction::SendHolepunch {
                                             target_ip: self.ip.clone(),
                                             message: err_msg,
@@ -809,14 +876,16 @@ impl Peer {
                                 }
                             }
                             crate::network::holepunch::HolepunchMessageType::Connect => {
-                                tc.holepunch_connect_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                tc.holepunch_connect_received
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 let endpoint_ip = hp_msg.endpoint.ip().to_string();
                                 if !tc.is_peer_in_swarm(&endpoint_ip) {
                                     actions.push(PeerAction::HolepunchConnect(hp_msg.endpoint));
                                 }
                             }
                             crate::network::holepunch::HolepunchMessageType::Error => {
-                                tc.holepunch_error_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                tc.holepunch_error_received
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
                     }
@@ -842,9 +911,14 @@ impl Peer {
                 }
                 self.number_of_missing_pieces = tc.number_of_pieces;
             }
-            PeerMessage::Reject { index, begin, length: _length } => {
+            PeerMessage::Reject {
+                index,
+                begin,
+                length: _length,
+            } => {
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
-                self.reserved_blocks.retain(|&(p, b, _)| !(p == index && b == block_index));
+                self.reserved_blocks
+                    .retain(|&(p, b, _)| !(p == index && b == block_index));
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
                 tc.release_block_request(index, block_index);
             }
@@ -860,10 +934,18 @@ impl Peer {
             } => {
                 #[cfg(feature = "v2")]
                 {
-                    tc.v2_hash_requests_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    match tc.handle_hash_request(pieces_root, base_layer, index, length, proof_layers) {
+                    tc.v2_hash_requests_received
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    match tc.handle_hash_request(
+                        pieces_root,
+                        base_layer,
+                        index,
+                        length,
+                        proof_layers,
+                    ) {
                         Ok(hashes) => {
-                            tc.v2_hashes_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            tc.v2_hashes_sent
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             actions.push(PeerAction::SendHashes {
                                 pieces_root,
                                 base_layer,
@@ -874,7 +956,8 @@ impl Peer {
                             });
                         }
                         Err(_) => {
-                            tc.v2_hash_rejects_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            tc.v2_hash_rejects_sent
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             actions.push(PeerAction::SendHashReject {
                                 pieces_root,
                                 base_layer,
@@ -906,7 +989,8 @@ impl Peer {
             } => {
                 #[cfg(feature = "v2")]
                 {
-                    tc.v2_hashes_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tc.v2_hashes_received
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let _ = tc.handle_hashes_response(
                         pieces_root,
                         base_layer,
@@ -920,7 +1004,8 @@ impl Peer {
             PeerMessage::HashReject { .. } => {
                 #[cfg(feature = "v2")]
                 {
-                    tc.v2_hash_rejects_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    tc.v2_hash_rejects_received
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -946,13 +1031,29 @@ impl Peer {
                     net.write_message(PeerMessage::Choke).await?;
                     peer.lock().unwrap().update_last_message_sent();
                 }
-                PeerAction::SendPiece { index, begin, block } => {
-                    let msg = PeerMessage::Piece { index, begin, block: &block };
+                PeerAction::SendPiece {
+                    index,
+                    begin,
+                    block,
+                } => {
+                    let msg = PeerMessage::Piece {
+                        index,
+                        begin,
+                        block: &block,
+                    };
                     net.write_message(msg).await?;
                     peer.lock().unwrap().update_last_message_sent();
                 }
-                PeerAction::SendReject { index, begin, length } => {
-                    let msg = PeerMessage::Reject { index, begin, length };
+                PeerAction::SendReject {
+                    index,
+                    begin,
+                    length,
+                } => {
+                    let msg = PeerMessage::Reject {
+                        index,
+                        begin,
+                        length,
+                    };
                     net.write_message(msg).await?;
                     peer.lock().unwrap().update_last_message_sent();
                 }
@@ -973,7 +1074,10 @@ impl Peer {
                     peer.lock().unwrap().update_last_message_sent();
                 }
                 PeerAction::SendExtended { ext_id, payload } => {
-                    let msg = PeerMessage::Extended { ext_id, payload: &payload };
+                    let msg = PeerMessage::Extended {
+                        ext_id,
+                        payload: &payload,
+                    };
                     net.write_message(msg).await?;
                     peer.lock().unwrap().update_last_message_sent();
                 }
@@ -985,7 +1089,8 @@ impl Peer {
                     let target_net = {
                         let ctx_guard = context.lock().unwrap();
                         let swarm = ctx_guard.peer_swarm.read().unwrap();
-                        swarm.get(&target_ip)
+                        swarm
+                            .get(&target_ip)
                             .and_then(|p| p.lock().ok())
                             .and_then(|p| p.network.clone())
                     };
@@ -997,8 +1102,12 @@ impl Peer {
                     let (target_net, supports_fast) = {
                         let ctx_guard = context.lock().unwrap();
                         let swarm = ctx_guard.peer_swarm.read().unwrap();
-                        if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok()) {
-                            (other_peer.network.clone(), other_peer.supports_fast_extension)
+                        if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok())
+                        {
+                            (
+                                other_peer.network.clone(),
+                                other_peer.supports_fast_extension,
+                            )
                         } else {
                             (None, false)
                         }
@@ -1013,15 +1122,21 @@ impl Peer {
                     let (target_net, supports_fast) = {
                         let ctx_guard = context.lock().unwrap();
                         let swarm = ctx_guard.peer_swarm.read().unwrap();
-                        if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok()) {
-                            (other_peer.network.clone(), other_peer.supports_fast_extension)
+                        if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok())
+                        {
+                            (
+                                other_peer.network.clone(),
+                                other_peer.supports_fast_extension,
+                            )
                         } else {
                             (None, false)
                         }
                     };
                     if let Some(target_net) = target_net {
                         if supports_fast {
-                            let _ = target_net.write_message(PeerMessage::AllowedFast(piece)).await;
+                            let _ = target_net
+                                .write_message(PeerMessage::AllowedFast(piece))
+                                .await;
                         }
                     }
                 }
@@ -1082,15 +1197,21 @@ impl Peer {
                     let target_info = {
                         let ctx_guard = context.lock().unwrap();
                         let swarm = ctx_guard.peer_swarm.read().unwrap();
-                        swarm.get(&target_ip)
+                        swarm
+                            .get(&target_ip)
                             .and_then(|p| p.lock().ok())
                             .and_then(|p| {
-                                p.network.clone().map(|n| (n, *p.extension_ids.get("ut_holepunch").unwrap_or(&3)))
+                                p.network.clone().map(|n| {
+                                    (n, *p.extension_ids.get("ut_holepunch").unwrap_or(&3))
+                                })
                             })
                     };
                     if let Some((target_net, ext_id)) = target_info {
                         let payload = message.encode();
-                        let msg = PeerMessage::Extended { ext_id, payload: &payload };
+                        let msg = PeerMessage::Extended {
+                            ext_id,
+                            payload: &payload,
+                        };
                         let _ = target_net.write_message(msg).await;
                     }
                 }
@@ -1112,7 +1233,10 @@ impl Peer {
                         (details, should)
                     };
                     if should_connect {
-                        let is_dead = manager.as_ref().map(|m| m.is_peer_dead(&ip)).unwrap_or(false);
+                        let is_dead = manager
+                            .as_ref()
+                            .map(|m| m.is_peer_dead(&ip))
+                            .unwrap_or(false);
                         if !is_dead {
                             let tc_arc = {
                                 let p = peer.lock().unwrap();
@@ -1121,15 +1245,22 @@ impl Peer {
                             if let Some(ctx2) = tc_arc {
                                 let mgr2 = manager.clone();
                                 std::thread::spawn(move || {
-                                    futures::executor::block_on(crate::session::worker::handle_peer_session(
-                                        details, ctx2, mgr2,
-                                    ));
+                                    futures::executor::block_on(
+                                        crate::session::worker::handle_peer_session(
+                                            details, ctx2, mgr2,
+                                        ),
+                                    );
                                 });
                             }
                         }
                     }
                 }
-                PeerAction::BroadcastCancel { index, begin, length, block_index } => {
+                PeerAction::BroadcastCancel {
+                    index,
+                    begin,
+                    length,
+                    block_index,
+                } => {
                     let peers: Vec<(String, Arc<Mutex<Peer>>)> = {
                         let ctx_guard = context.lock().unwrap();
                         let swarm = ctx_guard.peer_swarm.read().unwrap();
@@ -1139,12 +1270,15 @@ impl Peer {
                             .map(|(ip, peer_arc)| (ip.clone(), peer_arc.clone()))
                             .collect()
                     };
-                    
+
                     let mut nets_to_cancel = Vec::new();
                     for (_ip, peer_arc) in peers {
                         if let Ok(other_peer) = peer_arc.lock() {
                             let should_send = match block_index {
-                                Some(bi) => other_peer.reserved_blocks.iter().any(|&(p, b, _)| p == index && b == bi),
+                                Some(bi) => other_peer
+                                    .reserved_blocks
+                                    .iter()
+                                    .any(|&(p, b, _)| p == index && b == bi),
                                 None => true,
                             };
                             if should_send {
@@ -1154,9 +1288,15 @@ impl Peer {
                             }
                         }
                     }
-                    
+
                     for peer_net in nets_to_cancel {
-                        let _ = peer_net.write_message(PeerMessage::Cancel { index, begin, length }).await;
+                        let _ = peer_net
+                            .write_message(PeerMessage::Cancel {
+                                index,
+                                begin,
+                                length,
+                            })
+                            .await;
                     }
                 }
                 PeerAction::DiscoverPeers(peers) => {
@@ -1181,9 +1321,11 @@ impl Peer {
                             if let Some(ctx2) = tc_arc {
                                 let mgr2 = manager.clone();
                                 std::thread::spawn(move || {
-                                    futures::executor::block_on(crate::session::worker::handle_peer_session(
-                                        details, ctx2, mgr2,
-                                    ));
+                                    futures::executor::block_on(
+                                        crate::session::worker::handle_peer_session(
+                                            details, ctx2, mgr2,
+                                        ),
+                                    );
                                 });
                             }
                         }

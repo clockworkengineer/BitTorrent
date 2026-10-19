@@ -26,19 +26,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Build session with standard full hash validation
     println!("--- Standard Startup (Full Hash Checking) ---");
     let start_std = Instant::now();
-    let session_std = TorrentSession::builder(&torrent_path, &download_dir)
-        .build()?;
-    println!(
-        "Standard session initialized in: {:?}",
-        start_std.elapsed()
-    );
+    let session_std = TorrentSession::builder(&torrent_path, &download_dir).build()?;
+    println!("Standard session initialized in: {:?}", start_std.elapsed());
     println!("Standard initial progress: {:.2}%", session_std.progress());
 
     // 2. Save Fast Resume file (BEP 47 / libtorrent format)
     let resume_path = download_dir.join("state.fastresume");
     session_std.save_fast_resume(&resume_path)?;
     println!("Saved BEP 47 fast resume file to: {:?}", resume_path);
-    
+
     // Cleanup standard session resources
     drop(session_std);
 
@@ -52,7 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Fast resume session initialized in: {:?}",
         start_fast.elapsed()
     );
-    println!("Fast resume initial progress: {:.2}%", session_fast.progress());
+    println!(
+        "Fast resume initial progress: {:.2}%",
+        session_fast.progress()
+    );
 
     // Displaying piece selection info
     let context = session_fast.context();

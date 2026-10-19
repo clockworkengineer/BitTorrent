@@ -3,14 +3,14 @@
 //! Handles file system interactions including directory/file structure initialization,
 //! scanning existing files to compute/verify the bitfield of local pieces, and writing downloaded pieces.
 
-use crate::error::BitTorrentError;
 use crate::core::torrent_context::TorrentContext;
+use crate::error::BitTorrentError;
 use crate::io_traits::{BlockReader, BlockWriter};
+use alloc::string::String;
+use alloc::vec::Vec;
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use alloc::vec::Vec;
-use alloc::string::String;
 
 /// Manager for orchestrating reading and writing torrent data blocks to and from disk.
 #[derive(Debug)]
@@ -86,7 +86,8 @@ impl DiskIO {
         &self,
         tc: &mut TorrentContext,
         pool: &crate::storage::verification_pool::HashVerificationPool,
-    ) -> Result<std::sync::Arc<crate::storage::verification_pool::RecheckProgress>, BitTorrentError> {
+    ) -> Result<std::sync::Arc<crate::storage::verification_pool::RecheckProgress>, BitTorrentError>
+    {
         use std::sync::atomic::Ordering;
         let storage = tc.storage.clone();
         let (bitfield, progress) = pool.recheck_pieces_blocking(
@@ -121,7 +122,8 @@ impl DiskIO {
         }
 
         tc.missing_pieces_count = missing_count;
-        tc.total_bytes_downloaded.store(downloaded, Ordering::Relaxed);
+        tc.total_bytes_downloaded
+            .store(downloaded, Ordering::Relaxed);
         tc.initial_bytes_downloaded = downloaded;
 
         Ok(progress)

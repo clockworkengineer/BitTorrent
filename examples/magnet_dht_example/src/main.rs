@@ -8,7 +8,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(uri) => uri,
         None => {
             eprintln!("Usage: magnet_dht_example <magnet-uri> [download-dir]");
-            eprintln!("Example: magnet_dht_example \"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel\"");
+            eprintln!(
+                "Example: magnet_dht_example \"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel\""
+            );
             std::process::exit(1);
         }
     };
@@ -19,7 +21,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let magnet = MagnetLink::parse(&magnet_uri)?;
 
     println!("\n=== Magnet Link Details ===");
-    println!("Info Hash (Hex): {}", bittorrent_rs::util::info_hash_to_string(&magnet.info_hash));
+    println!(
+        "Info Hash (Hex): {}",
+        bittorrent_rs::util::info_hash_to_string(&magnet.info_hash)
+    );
     println!("Display Name:   {:?}", magnet.display_name);
     println!("Trackers List:");
     if magnet.trackers.is_empty() {
@@ -33,11 +38,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Initialize a Magnet-based TorrentSession
     println!("\nInitializing torrent session with magnet link...");
     let download_path = Path::new(&download_dir);
-    let session = TorrentSession::from_magnet(&magnet_uri, download_path)
-        .build()?;
+    let session = TorrentSession::from_magnet(&magnet_uri, download_path).build()?;
 
     println!("Session status: {:?}", session.status());
-    println!("This session is ready to announce to trackers and download via magnet metadata bootstrap.");
+    println!(
+        "This session is ready to announce to trackers and download via magnet metadata bootstrap."
+    );
 
     Ok(())
 }

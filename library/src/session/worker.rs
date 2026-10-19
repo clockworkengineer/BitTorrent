@@ -1,10 +1,10 @@
+use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::error::BitTorrentError;
+use crate::log_debug;
+use crate::manager::Manager;
 use crate::peer::Peer;
 use crate::peer_message::PeerMessage;
-use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::tracker::PeerDetails;
-use crate::manager::Manager;
-use crate::log_debug;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -33,10 +33,7 @@ pub async fn delay(duration: Duration) {
 }
 
 /// Checks outstanding block requests for a peer and releases/cancels them on timeout (> 15 seconds).
-async fn check_request_timeouts(
-    peer: &Mutex<Peer>,
-    context: &Mutex<TorrentContext>,
-) {
+async fn check_request_timeouts(peer: &Mutex<Peer>, context: &Mutex<TorrentContext>) {
     let timed_out_requests = {
         let mut pg = peer.lock().unwrap();
         let mut timed_out = Vec::new();
@@ -74,11 +71,13 @@ async fn check_request_timeouts(
                         ctx.get_piece_length(pn).saturating_sub(begin),
                     )
                 };
-                let _ = net.write_message(PeerMessage::Cancel {
-                    index: pn,
-                    begin,
-                    length,
-                }).await;
+                let _ = net
+                    .write_message(PeerMessage::Cancel {
+                        index: pn,
+                        begin,
+                        length,
+                    })
+                    .await;
             }
         }
     }
@@ -131,7 +130,10 @@ pub async fn perform_handshake(
             return Err(());
         }
     } else {
-        match config.socket_factory.connect(&peer_details.ip, peer_details.port) {
+        match config
+            .socket_factory
+            .connect(&peer_details.ip, peer_details.port)
+        {
             Ok(s) => s,
             Err(_) => {
                 mark_peer_dead(manager, &peer_details.ip);
@@ -204,11 +206,19 @@ pub async fn perform_handshake(
         return Err(());
     }
 
-    if net.write_handshake(info_hash, local_peer_id.as_bytes()).await.is_err() {
+    if net
+        .write_handshake(info_hash, local_peer_id.as_bytes())
+        .await
+        .is_err()
+    {
         mark_peer_dead(manager, &peer_details.ip);
         return Err(());
     }
-    log_debug!("[peer {}:{}] handshake sent", peer_details.ip, peer_details.port);
+    log_debug!(
+        "[peer {}:{}] handshake sent",
+        peer_details.ip,
+        peer_details.port
+    );
 
     let (remote_info_hash, remote_peer_id, reserved) = match net.read_handshake().await {
         Ok(res) => res,
@@ -243,7 +253,11 @@ pub async fn perform_handshake(
     if supports_extensions {
         let (is_private, enable_pex, enable_holepunch) = {
             let ctx = context.lock().unwrap();
-            (ctx.is_private, ctx.config.enable_pex, ctx.config.enable_holepunch)
+            (
+                ctx.is_private,
+                ctx.config.enable_pex,
+                ctx.config.enable_holepunch,
+            )
         };
         let payload: &[u8] = match (is_private || !enable_pex, enable_holepunch) {
             (true, false) => b"d1:md11:ut_metadatai1eee",
@@ -251,7 +265,11 @@ pub async fn perform_handshake(
             (false, false) => b"d1:md11:ut_metadatai1e6:ut_pexi2eee",
             (false, true) => b"d1:md12:ut_holepunchi3e11:ut_metadatai1e6:ut_pexi2eee",
         };
-        if net.write_message(PeerMessage::Extended { ext_id: 0, payload }).await.is_err() {
+        if net
+            .write_message(PeerMessage::Extended { ext_id: 0, payload })
+            .await
+            .is_err()
+        {
             mark_peer_dead(manager, &peer_details.ip);
             return Err(());
         }
@@ -262,9 +280,16 @@ pub async fn perform_handshake(
     let (bitfield, is_super_seeding, number_of_pieces, is_seed, is_empty) = {
         let ctx = context.lock().unwrap();
         let num = ctx.number_of_pieces;
-        let seed = ctx.is_download_complete() || (num > 0 && (0..num as u32).all(|p| ctx.is_piece_local(p)));
+        let seed = ctx.is_download_complete()
+            || (num > 0 && (0..num as u32).all(|p| ctx.is_piece_local(p)));
         let empty = num > 0 && (0..num as u32).all(|p| !ctx.is_piece_local(p));
-        (ctx.bitfield.clone(), ctx.is_super_seeding(), num, seed, empty)
+        (
+            ctx.bitfield.clone(),
+            ctx.is_super_seeding(),
+            num,
+            seed,
+            empty,
+        )
     };
 
     if !is_super_seeding && number_of_pieces > 0 {
@@ -275,43 +300,81 @@ pub async fn perform_handshake(
                     return Err(());
                 }
                 peer.lock().unwrap().update_last_message_sent();
-                log_debug!("[peer {}:{}] sent HaveAll", peer_details.ip, peer_details.port);
+                log_debug!(
+                    "[peer {}:{}] sent HaveAll",
+                    peer_details.ip,
+                    peer_details.port
+                );
             } else if is_empty {
                 if net.write_message(PeerMessage::HaveNone).await.is_err() {
                     mark_peer_dead(manager, &peer_details.ip);
                     return Err(());
                 }
                 peer.lock().unwrap().update_last_message_sent();
-                log_debug!("[peer {}:{}] sent HaveNone", peer_details.ip, peer_details.port);
+                log_debug!(
+                    "[peer {}:{}] sent HaveNone",
+                    peer_details.ip,
+                    peer_details.port
+                );
             } else if !bitfield.is_empty() {
-                if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
+                if net
+                    .write_message(PeerMessage::Bitfield(&bitfield))
+                    .await
+                    .is_err()
+                {
                     mark_peer_dead(manager, &peer_details.ip);
                     return Err(());
                 }
                 peer.lock().unwrap().update_last_message_sent();
-                log_debug!("[peer {}:{}] sent Bitfield", peer_details.ip, peer_details.port);
+                log_debug!(
+                    "[peer {}:{}] sent Bitfield",
+                    peer_details.ip,
+                    peer_details.port
+                );
             }
         } else if !bitfield.is_empty() {
-            if net.write_message(PeerMessage::Bitfield(&bitfield)).await.is_err() {
+            if net
+                .write_message(PeerMessage::Bitfield(&bitfield))
+                .await
+                .is_err()
+            {
                 mark_peer_dead(manager, &peer_details.ip);
                 return Err(());
             }
             peer.lock().unwrap().update_last_message_sent();
-            log_debug!("[peer {}:{}] sent Bitfield", peer_details.ip, peer_details.port);
+            log_debug!(
+                "[peer {}:{}] sent Bitfield",
+                peer_details.ip,
+                peer_details.port
+            );
         }
     }
 
     // BEP 6: Announce Allowed Fast pieces to remote peer upon connection
     if supports_fast_extension && number_of_pieces > 0 {
-        let fast_set = crate::util::generate_allowed_fast_set(10, number_of_pieces, info_hash, &peer_details.ip);
+        let fast_set = crate::util::generate_allowed_fast_set(
+            10,
+            number_of_pieces,
+            info_hash,
+            &peer_details.ip,
+        );
         for &fast_piece in &fast_set {
-            if net.write_message(PeerMessage::AllowedFast(fast_piece)).await.is_err() {
+            if net
+                .write_message(PeerMessage::AllowedFast(fast_piece))
+                .await
+                .is_err()
+            {
                 mark_peer_dead(manager, &peer_details.ip);
                 return Err(());
             }
             peer.lock().unwrap().update_last_message_sent();
         }
-        log_debug!("[peer {}:{}] sent {} AllowedFast pieces", peer_details.ip, peer_details.port, fast_set.len());
+        log_debug!(
+            "[peer {}:{}] sent {} AllowedFast pieces",
+            peer_details.ip,
+            peer_details.port,
+            fast_set.len()
+        );
     }
 
     if net.write_message(PeerMessage::Unchoke).await.is_err() {
@@ -320,16 +383,28 @@ pub async fn perform_handshake(
     }
     peer.lock().unwrap().update_last_message_sent();
     peer.lock().unwrap().am_choking = false;
-    log_debug!("[peer {}:{}] sent Unchoke", peer_details.ip, peer_details.port);
+    log_debug!(
+        "[peer {}:{}] sent Unchoke",
+        peer_details.ip,
+        peer_details.port
+    );
 
     if net.write_message(PeerMessage::Interested).await.is_err() {
         mark_peer_dead(manager, &peer_details.ip);
         return Err(());
     }
     peer.lock().unwrap().update_last_message_sent();
-    log_debug!("[peer {}:{}] sent Interested", peer_details.ip, peer_details.port);
+    log_debug!(
+        "[peer {}:{}] sent Interested",
+        peer_details.ip,
+        peer_details.port
+    );
 
-    Ok(HandshakeResult { peer, net, supports_extensions })
+    Ok(HandshakeResult {
+        peer,
+        net,
+        supports_extensions,
+    })
 }
 
 // ─── Magnet bootstrap ────────────────────────────────────────────────────────
@@ -358,12 +433,15 @@ pub async fn handle_magnet_bootstrap(
             if let Some(&peer_ext_id) = pg.extension_ids.get("ut_metadata") {
                 if let Some(size) = ctx.metadata_size {
                     let num_pieces = (size + 16383) / 16384;
-                    let timeout = Duration::from_secs(ctx.config.metadata_request_timeout_secs.max(1));
+                    let timeout =
+                        Duration::from_secs(ctx.config.metadata_request_timeout_secs.max(1));
                     let mut target_piece = None;
 
                     // Prioritize piece 0 for expedited partial manifest resolution
                     if num_pieces > 0 && !ctx.metadata_pieces.contains_key(&0) {
-                        let is_requested = ctx.requested_metadata_pieces.get(&0)
+                        let is_requested = ctx
+                            .requested_metadata_pieces
+                            .get(&0)
                             .map(|t| t.elapsed() < timeout)
                             .unwrap_or(false);
                         if !is_requested {
@@ -375,7 +453,9 @@ pub async fn handle_magnet_bootstrap(
                     if target_piece.is_none() {
                         for p in 0..num_pieces as u32 {
                             if !ctx.metadata_pieces.contains_key(&p) {
-                                let is_requested = ctx.requested_metadata_pieces.get(&p)
+                                let is_requested = ctx
+                                    .requested_metadata_pieces
+                                    .get(&p)
                                     .map(|t| t.elapsed() < timeout)
                                     .unwrap_or(false);
                                 if !is_requested {
@@ -400,7 +480,14 @@ pub async fn handle_magnet_bootstrap(
 
     if let Some((p, peer_ext_id)) = request_piece {
         let payload = alloc::format!("d8:msg_typei0e5:piecei{}ee", p).into_bytes();
-        if net.write_message(PeerMessage::Extended { ext_id: peer_ext_id, payload: &payload }).await.is_err() {
+        if net
+            .write_message(PeerMessage::Extended {
+                ext_id: peer_ext_id,
+                payload: &payload,
+            })
+            .await
+            .is_err()
+        {
             mark_peer_dead(manager, &peer_details.ip);
             return true; // break
         }
@@ -443,11 +530,20 @@ pub async fn handle_magnet_bootstrap(
         let mut ctx = context.lock().unwrap();
         let dl_path = ctx.download_path.clone();
         if let Err(e) = ctx.transition_from_metadata(&assembled, &dl_path) {
-            log_debug!("[peer {}:{}] failed transition from metadata: {}", peer_details.ip, peer_details.port, e);
+            log_debug!(
+                "[peer {}:{}] failed transition from metadata: {}",
+                peer_details.ip,
+                peer_details.port,
+                e
+            );
             mark_peer_dead(manager, &peer_details.ip);
             return true; // break
         }
-        log_debug!("[peer {}:{}] successfully transitioned from magnet to standard download", peer_details.ip, peer_details.port);
+        log_debug!(
+            "[peer {}:{}] successfully transitioned from magnet to standard download",
+            peer_details.ip,
+            peer_details.port
+        );
     }
 
     false // continue the main loop
@@ -485,7 +581,15 @@ pub async fn send_block_requests(
         };
         match next_req {
             Some((pn, begin, length)) => {
-                if net.write_message(PeerMessage::Request { index: pn, begin, length }).await.is_err() {
+                if net
+                    .write_message(PeerMessage::Request {
+                        index: pn,
+                        begin,
+                        length,
+                    })
+                    .await
+                    .is_err()
+                {
                     mark_peer_dead(manager, &peer_details.ip);
                     return true; // send error → break
                 }
@@ -501,14 +605,20 @@ pub async fn send_block_requests(
                     ctx.record_peer_request_sent(&peer_details.ip);
                 }
             }
-            None => { none_count += 1; break; }
+            None => {
+                none_count += 1;
+                break;
+            }
         }
     }
     if none_count > 0 {
-        log_debug!("[peer {}:{}] no blocks available (outstanding={} missing_pieces={})",
-            peer_details.ip, peer_details.port,
+        log_debug!(
+            "[peer {}:{}] no blocks available (outstanding={} missing_pieces={})",
+            peer_details.ip,
+            peer_details.port,
             outstanding_requests_count,
-            number_of_missing_pieces);
+            number_of_missing_pieces
+        );
     }
     false
 }
@@ -552,7 +662,10 @@ async fn run_peer_loop(
             let pg = peer.lock().unwrap();
             (pg.supports_extensions, ctx.is_pex_enabled())
         };
-        if supports_extensions && is_pex_enabled && last_pex_sent.elapsed() > Duration::from_secs(60) {
+        if supports_extensions
+            && is_pex_enabled
+            && last_pex_sent.elapsed() > Duration::from_secs(60)
+        {
             let pex_ext_id = {
                 let pg = peer.lock().unwrap();
                 pg.extension_ids.get("ut_pex").cloned()
@@ -566,7 +679,14 @@ async fn run_peer_loop(
 
                 if !pex_msg.is_empty() {
                     let pex_payload = pex_msg.encode();
-                    if net.write_message(PeerMessage::Extended { ext_id, payload: &pex_payload }).await.is_ok() {
+                    if net
+                        .write_message(PeerMessage::Extended {
+                            ext_id,
+                            payload: &pex_payload,
+                        })
+                        .await
+                        .is_ok()
+                    {
                         peer.lock().unwrap().update_last_message_sent();
                     }
                 }
@@ -590,15 +710,21 @@ async fn run_peer_loop(
                         };
 
                         if last_recv.elapsed() > Duration::from_secs(120) {
-                            log_debug!("[peer {}:{}] 120s idle timeout, dropping",
-                                peer_details.ip, peer_details.port);
+                            log_debug!(
+                                "[peer {}:{}] 120s idle timeout, dropping",
+                                peer_details.ip,
+                                peer_details.port
+                            );
                             mark_peer_dead(manager, &peer_details.ip);
                             break;
                         }
 
                         if last_sent.elapsed() > Duration::from_secs(120) {
-                            log_debug!("[peer {}:{}] sending keep-alive",
-                                peer_details.ip, peer_details.port);
+                            log_debug!(
+                                "[peer {}:{}] sending keep-alive",
+                                peer_details.ip,
+                                peer_details.port
+                            );
                             if net.write_message(PeerMessage::KeepAlive).await.is_ok() {
                                 peer.lock().unwrap().update_last_message_sent();
                             }
@@ -606,7 +732,12 @@ async fn run_peer_loop(
                         continue;
                     }
                 }
-                log_debug!("[peer {}:{}] read error: {}", peer_details.ip, peer_details.port, err);
+                log_debug!(
+                    "[peer {}:{}] read error: {}",
+                    peer_details.ip,
+                    peer_details.port,
+                    err
+                );
                 mark_peer_dead(manager, &peer_details.ip);
                 break;
             }
@@ -626,7 +757,10 @@ async fn run_peer_loop(
             }
         };
 
-        if Peer::execute_actions(peer, actions, net, context, &peer_details.ip, manager).await.is_err() {
+        if Peer::execute_actions(peer, actions, net, context, &peer_details.ip, manager)
+            .await
+            .is_err()
+        {
             mark_peer_dead(manager, &peer_details.ip);
             break;
         }
@@ -640,7 +774,12 @@ async fn run_peer_loop(
 
         check_request_timeouts(peer, context).await;
 
-        let (peer_choking_set, outstanding_requests_count, number_of_missing_pieces, can_request_fast) = {
+        let (
+            peer_choking_set,
+            outstanding_requests_count,
+            number_of_missing_pieces,
+            can_request_fast,
+        ) = {
             let pg = peer.lock().unwrap();
             (
                 pg.peer_choking.wait_one(0),
@@ -664,9 +803,16 @@ async fn run_peer_loop(
         // ── Block requests ────────────────────────────────────────────────
         if !is_magnet_bootstrap && (peer_choking_set || can_request_fast) && is_downloading {
             if send_block_requests(
-                peer_details, peer, net, context, manager,
-                outstanding_requests_count, number_of_missing_pieces,
-            ).await {
+                peer_details,
+                peer,
+                net,
+                context,
+                manager,
+                outstanding_requests_count,
+                number_of_missing_pieces,
+            )
+            .await
+            {
                 break;
             }
         }
@@ -700,11 +846,23 @@ pub async fn handle_peer_session(
         }
     }
 
-    if context.lock().unwrap().is_peer_blacklisted(&peer_details.ip) {
+    if context
+        .lock()
+        .unwrap()
+        .is_peer_blacklisted(&peer_details.ip)
+    {
         return;
     }
 
-    let hs = match perform_handshake(&peer_details, &context, &manager, &info_hash, &local_peer_id).await {
+    let hs = match perform_handshake(
+        &peer_details,
+        &context,
+        &manager,
+        &info_hash,
+        &local_peer_id,
+    )
+    .await
+    {
         Ok(hs) => hs,
         Err(()) => return,
     };
@@ -720,7 +878,11 @@ pub async fn handle_peer_session(
 
     run_peer_loop(&peer_details, &peer, &mut net, &context, &manager).await;
 
-    log_debug!("[peer {}:{}] thread exiting", peer_details.ip, peer_details.port);
+    log_debug!(
+        "[peer {}:{}] thread exiting",
+        peer_details.ip,
+        peer_details.port
+    );
     {
         let mut ctx = context.lock().unwrap();
         {

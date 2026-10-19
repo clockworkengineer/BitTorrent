@@ -1,7 +1,8 @@
 use crate::error::BitTorrentError;
-use alloc::vec::Vec;
-use alloc::string::String;
 use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 /// Parsed BitTorrent Magnet URI representation supporting BEP 9, BEP 19 WebSeeds,
 /// BEP 52 BitTorrent v2/Hybrid dual-hashes, and WebTorrent WebSocket trackers.
@@ -63,14 +64,20 @@ impl MagnetLink {
                         } else if let Some(bytes) = parse_base32_hash(hash_str) {
                             v1_info_hash = Some(bytes);
                         } else {
-                            return Err(BitTorrentError::Parse(format!("Invalid info hash format: {}", hash_str)));
+                            return Err(BitTorrentError::Parse(format!(
+                                "Invalid info hash format: {}",
+                                hash_str
+                            )));
                         }
                     } else if val.starts_with("urn:btmh:1220") {
                         let hash_str = &val["urn:btmh:1220".len()..];
                         if let Some(bytes) = parse_hex_hash_exact(hash_str, 32) {
                             v2_info_hash = Some(bytes);
                         } else {
-                            return Err(BitTorrentError::Parse(format!("Invalid v2 info hash format: {}", hash_str)));
+                            return Err(BitTorrentError::Parse(format!(
+                                "Invalid v2 info hash format: {}",
+                                hash_str
+                            )));
                         }
                     }
                 }
@@ -114,7 +121,9 @@ impl MagnetLink {
             (Some(v1), _) => v1,
             (None, Some(v2)) => v2[..20].to_vec(),
             (None, None) => {
-                return Err(BitTorrentError::Parse("Missing info hash (xt) in magnet link".into()));
+                return Err(BitTorrentError::Parse(
+                    "Missing info hash (xt) in magnet link".into(),
+                ));
             }
         };
 
@@ -133,7 +142,7 @@ impl MagnetLink {
     /// Returns `true` if this magnet link contains both v1 (SHA-1) and v2 (SHA-256) info-hashes.
     pub fn is_hybrid(&self) -> bool {
         if let Some(ref v2) = self.v2_info_hash {
-            self.info_hash.len() == 20 && &v2[..20] != &self.info_hash[..]
+            self.info_hash.len() == 20 && v2[..20] != self.info_hash[..]
         } else {
             false
         }
@@ -161,7 +170,9 @@ impl MagnetLink {
 
     /// Returns `true` if this magnet link contains at least one WebTorrent WebSocket tracker (`wss://` or `ws://`).
     pub fn is_webtorrent(&self) -> bool {
-        self.trackers.iter().any(|t| t.starts_with("wss://") || t.starts_with("ws://"))
+        self.trackers
+            .iter()
+            .any(|t| t.starts_with("wss://") || t.starts_with("ws://"))
     }
 
     /// Returns all registered WebSocket tracker URLs (`wss://` or `ws://`).
@@ -550,7 +561,7 @@ fn parse_base32_hash(b32: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::with_capacity(20);
     let mut current_byte = 0u8;
     let mut bits_buffered = 0;
-    
+
     for &c in b32.as_bytes() {
         let val = match c {
             b'A'..=b'Z' => c - b'A',
@@ -558,7 +569,7 @@ fn parse_base32_hash(b32: &str) -> Option<Vec<u8>> {
             b'2'..=b'7' => c - b'2' + 26,
             _ => return None,
         };
-        
+
         bits_buffered += 5;
         if bits_buffered >= 8 {
             bits_buffered -= 8;
@@ -569,11 +580,7 @@ fn parse_base32_hash(b32: &str) -> Option<Vec<u8>> {
             current_byte |= ((val as u16) << (8 - bits_buffered)) as u8;
         }
     }
-    if bytes.len() == 20 {
-        Some(bytes)
-    } else {
-        None
-    }
+    if bytes.len() == 20 { Some(bytes) } else { None }
 }
 
 /// Parses BEP 53 `so=` select-only file indices parameter.
@@ -634,4 +641,3 @@ pub fn format_bep53_select_only(indices: &[usize]) -> String {
     }
     parts.join(",")
 }
-

@@ -1,7 +1,7 @@
 use bittorrent_rs::io_traits::AsyncSocket;
 use bittorrent_rs::network::utp::{
-    detect_receive_gaps, LedbatCongestionController, LossRecoveryState, UtpPacketType,
-    UtpSocketAdapter,
+    LedbatCongestionController, LossRecoveryState, UtpPacketType, UtpSocketAdapter,
+    detect_receive_gaps,
 };
 use std::net::UdpSocket;
 use std::sync::Arc;
@@ -131,7 +131,9 @@ fn test_bounded_out_of_order_reassembly_capacity() {
     // Send out-of-order packets 3, 4, 5, 6, 7 (5 packets, exceeding capacity of 3)
     for seq in [3u16, 4, 5, 6, 7] {
         adapter_s.set_seq_nr(seq);
-        adapter_s.send_packet(UtpPacketType::Data, format!("pkt{}", seq).as_bytes()).unwrap();
+        adapter_s
+            .send_packet(UtpPacketType::Data, format!("pkt{}", seq).as_bytes())
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
@@ -195,10 +197,15 @@ fn test_sack_driven_fast_loss_detection_and_retransmit() {
 
     // Wait for receiver to buffer Packets 3, 4, 5 and emit SACK back to sender
     let start = std::time::Instant::now();
-    while adapter_r.out_of_order_count() < 3 && start.elapsed() < std::time::Duration::from_secs(2) {
+    while adapter_r.out_of_order_count() < 3 && start.elapsed() < std::time::Duration::from_secs(2)
+    {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_eq!(adapter_r.out_of_order_count(), 3, "Receiver must buffer packets 3, 4, 5");
+    assert_eq!(
+        adapter_r.out_of_order_count(),
+        3,
+        "Receiver must buffer packets 3, 4, 5"
+    );
 
     // Sender background reader processes the incoming SACK packet
     let s_clone = adapter_s.clone();
@@ -211,7 +218,9 @@ fn test_sack_driven_fast_loss_detection_and_retransmit() {
 
     // Verify SACK Fast Retransmission automatically triggered for Packet 2
     let start_wait = std::time::Instant::now();
-    while adapter_s.pipeline_metrics().retransmits_fast == 0 && start_wait.elapsed() < std::time::Duration::from_secs(2) {
+    while adapter_s.pipeline_metrics().retransmits_fast == 0
+        && start_wait.elapsed() < std::time::Duration::from_secs(2)
+    {
         std::thread::sleep(std::time::Duration::from_millis(15));
     }
 

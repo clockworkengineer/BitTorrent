@@ -5,7 +5,7 @@
 //! from initial metadata blocks without waiting for whole torrent hash trees.
 
 use crate::error::BitTorrentError;
-use crate::utils::bencode::{Bencode, BNode};
+use crate::utils::bencode::{BNode, Bencode};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
@@ -94,12 +94,14 @@ impl PartialMetadataManifest {
 
     /// Extracts manifest details from a parsed BNode dictionary.
     fn from_bnode(node: &BNode<'_>) -> Option<Self> {
-        let name = node.dict_get(b"name")
+        let name = node
+            .dict_get(b"name")
             .and_then(|n| n.as_string())
             .map(|b| String::from_utf8_lossy(b).to_string())
             .unwrap_or_else(|| "unnamed".to_string());
 
-        let piece_length = node.dict_get(b"piece length")
+        let piece_length = node
+            .dict_get(b"piece length")
             .and_then(|n| n.as_number_bytes())
             .and_then(|b| core::str::from_utf8(b).ok())
             .and_then(|s| s.parse::<u64>().ok())?;
@@ -114,7 +116,8 @@ impl PartialMetadataManifest {
         if let Some(files_node) = node.dict_get(b"files") {
             if let BNode::List(file_list) = files_node {
                 for (idx, file_node) in file_list.iter().enumerate() {
-                    let len = file_node.dict_get(b"length")
+                    let len = file_node
+                        .dict_get(b"length")
                         .and_then(|n| n.as_number_bytes())
                         .and_then(|b| core::str::from_utf8(b).ok())
                         .and_then(|s| s.parse::<u64>().ok())
@@ -155,13 +158,18 @@ impl PartialMetadataManifest {
             }
         } else if let Some(length_node) = node.dict_get(b"length") {
             // Single-file torrent
-            let len = length_node.as_number_bytes()
+            let len = length_node
+                .as_number_bytes()
                 .and_then(|b| core::str::from_utf8(b).ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
 
             total_bytes = len;
-            let end_piece = if len == 0 { 0 } else { ((len - 1) / piece_length) as u32 };
+            let end_piece = if len == 0 {
+                0
+            } else {
+                ((len - 1) / piece_length) as u32
+            };
             files.push(PartialFileInfo {
                 index: 0,
                 name: name.clone(),
@@ -409,7 +417,10 @@ impl MetadataRangeFetcher {
         };
 
         let current_peer_depth = self.peer_in_flight_count.get(peer_id).copied().unwrap_or(0);
-        let allowed = self.max_pipeline_depth.saturating_sub(current_peer_depth).min(limit);
+        let allowed = self
+            .max_pipeline_depth
+            .saturating_sub(current_peer_depth)
+            .min(limit);
         if allowed == 0 {
             return Vec::new();
         }
@@ -461,7 +472,10 @@ impl MetadataRangeFetcher {
                     }
                 }
             }
-            *self.peer_in_flight_count.entry(peer_id.to_string()).or_insert(0) += 1;
+            *self
+                .peer_in_flight_count
+                .entry(peer_id.to_string())
+                .or_insert(0) += 1;
         }
 
         candidates
@@ -497,7 +511,8 @@ impl MetadataRangeFetcher {
         if data.len() > METADATA_PIECE_SIZE {
             return Err(BitTorrentError::Parse(format!(
                 "Metadata piece length {} exceeds maximum piece size {}",
-                data.len(), METADATA_PIECE_SIZE
+                data.len(),
+                METADATA_PIECE_SIZE
             )));
         }
 
@@ -559,7 +574,10 @@ impl MetadataRangeFetcher {
 
     /// Assembles the complete metadata buffer and validates it against the expected info-hash.
     /// Supports 20-byte SHA-1 info-hashes (v1/hybrid) and 32-byte SHA-256 info-hashes (v2).
-    pub fn verify_and_assemble(&self, expected_info_hash: &[u8]) -> Result<Vec<u8>, BitTorrentError> {
+    pub fn verify_and_assemble(
+        &self,
+        expected_info_hash: &[u8],
+    ) -> Result<Vec<u8>, BitTorrentError> {
         let assembled = self.assemble().ok_or_else(|| {
             BitTorrentError::Parse("Metadata download incomplete, cannot assemble".into())
         })?;
@@ -587,7 +605,9 @@ impl MetadataRangeFetcher {
                 )));
             }
         } else {
-            return Err(BitTorrentError::Parse("Unrecognized info hash length for metadata verification".into()));
+            return Err(BitTorrentError::Parse(
+                "Unrecognized info hash length for metadata verification".into(),
+            ));
         }
 
         Ok(assembled)

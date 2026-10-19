@@ -3,9 +3,9 @@
 //! Verifies valid status transitions (such as Pause, Resume, Stop) and asserts
 //! that invalid state changes (e.g. pausing when already paused) return correct error results.
 
-use bittorrent_rs::{TorrentStatus, RarestFirstSelector};
 use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::session::SessionConfig;
+use bittorrent_rs::{RarestFirstSelector, TorrentStatus};
 use std::sync::Arc;
 
 /// Verifies that TorrentContext transitions correctly through a normal lifecycle:
@@ -20,7 +20,8 @@ fn test_context_status_transitions_flow() {
         selector,
         &std::path::PathBuf::from("."),
         config,
-    ).unwrap();
+    )
+    .unwrap();
     tc.total_bytes_to_download = 1024;
 
     assert_eq!(tc.status, TorrentStatus::Initialised);
@@ -49,7 +50,8 @@ fn test_context_status_transitions_errors() {
         selector,
         &std::path::PathBuf::from("."),
         config,
-    ).unwrap();
+    )
+    .unwrap();
     tc.total_bytes_to_download = 1024;
 
     assert!(tc.pause().is_err());
@@ -61,7 +63,7 @@ fn test_context_status_transitions_errors() {
     assert!(tc.resume().is_err());
 
     tc.pause().unwrap();
-    
+
     assert!(tc.pause().is_err());
 
     tc.resume().unwrap();

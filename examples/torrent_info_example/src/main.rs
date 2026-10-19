@@ -31,11 +31,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Is Private: {}", metainfo.is_private());
 
     if let Ok(info_hash) = metainfo.get_info_hash() {
-        println!("Info Hash: {}", bittorrent_rs::util::info_hash_to_string(&info_hash));
+        println!(
+            "Info Hash: {}",
+            bittorrent_rs::util::info_hash_to_string(&info_hash)
+        );
     }
 
     if let Ok(piece_length) = metainfo.get_piece_length() {
-        println!("Piece Length: {} bytes ({:.1} KB)", piece_length, piece_length as f32 / 1024.0);
+        println!(
+            "Piece Length: {} bytes ({:.1} KB)",
+            piece_length,
+            piece_length as f32 / 1024.0
+        );
     }
 
     if let Ok(tracker) = metainfo.get_tracker() {
@@ -61,10 +68,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Download Files ===");
     match metainfo.local_files_to_download_list(Path::new("downloads")) {
         Ok((total_size, files)) => {
-            println!("Total Size: {} bytes ({:.2} MB)", total_size, total_size as f64 / (1024.0 * 1024.0));
+            println!(
+                "Total Size: {} bytes ({:.2} MB)",
+                total_size,
+                total_size as f64 / (1024.0 * 1024.0)
+            );
             println!("Files ({}):", files.len());
             for file in files {
-                println!("  - {} ({} bytes, offset: {})", file.name, file.length, file.offset);
+                println!(
+                    "  - {} ({} bytes, offset: {})",
+                    file.name, file.length, file.offset
+                );
             }
         }
         Err(e) => {

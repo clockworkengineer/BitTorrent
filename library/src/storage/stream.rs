@@ -29,7 +29,6 @@ impl BlockReader for StorageBlockReader {
     }
 }
 
-
 /// A seekable streaming reader implementing [`std::io::Read`] and [`std::io::Seek`] over torrent data.
 ///
 /// Designed for media players, video streamers, and on-demand random file access.
@@ -124,7 +123,13 @@ impl TorrentStream {
             (reader, file.offset, file.length)
         };
 
-        Ok(Self::new(context, storage, start_offset, length, cursor_piece))
+        Ok(Self::new(
+            context,
+            storage,
+            start_offset,
+            length,
+            cursor_piece,
+        ))
     }
 
     /// Creates a seekable `TorrentStream` for a specific file index with a custom block reader.
@@ -149,7 +154,13 @@ impl TorrentStream {
             (file.offset, file.length)
         };
 
-        Ok(Self::new(context, storage, start_offset, length, cursor_piece))
+        Ok(Self::new(
+            context,
+            storage,
+            start_offset,
+            length,
+            cursor_piece,
+        ))
     }
 
     /// Configures the maximum timeout duration to wait for missing pieces during read operations.
@@ -181,7 +192,6 @@ impl TorrentStream {
     pub fn stream_len(&self) -> u64 {
         self.total_len()
     }
-
 
     /// Returns the current stream read position in bytes relative to the start of this stream.
     pub fn position(&self) -> u64 {
@@ -354,7 +364,6 @@ impl Seek for TorrentStream {
         };
 
         self.position = new_pos;
-
 
         if let Some(ref cursor) = self.cursor_piece {
             if self.piece_length > 0 {

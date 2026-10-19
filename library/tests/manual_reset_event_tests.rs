@@ -52,9 +52,7 @@ fn test_mre_multiple_waiters() {
 
     for _ in 0..5 {
         let mre_clone = mre.clone();
-        handles.push(thread::spawn(move || {
-            mre_clone.wait_one(2000)
-        }));
+        handles.push(thread::spawn(move || mre_clone.wait_one(2000)));
     }
 
     // Give the threads time to start and block

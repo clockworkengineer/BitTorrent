@@ -14,11 +14,11 @@
 //! - **Pieces Root**: The Merkle root hash of the file, recorded in the torrent metadata `file tree`.
 //! - **Piece Layers**: The hashes at the level corresponding to the torrent's piece length.
 
+use crate::error::BitTorrentError;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use sha2::{Digest, Sha256};
-use crate::error::BitTorrentError;
 
 /// Standard BitTorrent v2 block size in bytes (16 KiB).
 pub const BLOCK_SIZE: usize = 16_384;
@@ -325,7 +325,11 @@ impl MerkleTree {
         let mut j = idx / len;
         let mut uncles_included = 0;
 
-        while cur_layer < self.layers.len() && self.layers.len() > 1 && cur_layer < self.layers.len() - 1 && uncles_included < max_uncles {
+        while cur_layer < self.layers.len()
+            && self.layers.len() > 1
+            && cur_layer < self.layers.len() - 1
+            && uncles_included < max_uncles
+        {
             let uncle_idx = j ^ 1;
             if uncle_idx < self.layers[cur_layer].len() {
                 out.extend_from_slice(&self.layers[cur_layer][uncle_idx]);
@@ -354,14 +358,20 @@ impl MerkleTree {
         hashes_data: &[u8],
     ) -> Result<Vec<[u8; 32]>, BitTorrentError> {
         if length < 2 || (length & (length - 1)) != 0 {
-            return Err(BitTorrentError::Parse("Length must be a power of two and >= 2".into()));
+            return Err(BitTorrentError::Parse(
+                "Length must be a power of two and >= 2".into(),
+            ));
         }
         if index % length != 0 {
-            return Err(BitTorrentError::Parse("Index must be a multiple of length".into()));
+            return Err(BitTorrentError::Parse(
+                "Index must be a multiple of length".into(),
+            ));
         }
         let len = length as usize;
         if hashes_data.len() < len * 32 || hashes_data.len() % 32 != 0 {
-            return Err(BitTorrentError::Parse("Invalid hashes data byte length".into()));
+            return Err(BitTorrentError::Parse(
+                "Invalid hashes data byte length".into(),
+            ));
         }
 
         let num_hashes = hashes_data.len() / 32;
@@ -421,7 +431,10 @@ impl MerkleTree {
     #[cfg(feature = "std")]
     /// Constructs a `MerkleTree` from a readable stream, computing 16 KiB block hashes incrementally
     /// without loading the entire file into memory at once.
-    pub fn from_reader<R: std::io::Read>(reader: &mut R, file_length: u64) -> Result<Self, std::io::Error> {
+    pub fn from_reader<R: std::io::Read>(
+        reader: &mut R,
+        file_length: u64,
+    ) -> Result<Self, std::io::Error> {
         if file_length == 0 {
             return Ok(Self {
                 file_length: 0,
@@ -469,4 +482,3 @@ impl MerkleTree {
         Self::from_reader(&mut file, len)
     }
 }
-

@@ -5,8 +5,8 @@
 
 use bittorrent_rs::TorrentSession;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc};
-use torrent_client_shared::{SessionState, PendingSession};
+use std::sync::{Arc, mpsc};
+use torrent_client_shared::{PendingSession, SessionState};
 
 /// Sidebar filters for sorting active torrent sessions by status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -74,7 +74,9 @@ pub fn matches_filter(session: &SessionState, filter: SidebarFilter) -> bool {
         SidebarFilter::Downloading => session.last_status == "Downloading",
         SidebarFilter::Seeding => session.last_status == "Seeding",
         SidebarFilter::Paused => session.last_status == "Paused",
-        SidebarFilter::Completed => session.last_progress >= 1.0 || session.last_status == "Seeding",
+        SidebarFilter::Completed => {
+            session.last_progress >= 1.0 || session.last_status == "Seeding"
+        }
     }
 }
 
@@ -83,22 +85,33 @@ use crate::app::TorrentClientApp;
 impl TorrentClientApp {
     /// Saves the current client state (active download directory and torrent file paths with bitfields) to disk.
     pub fn save_state(&self) {
-        let torrents = self.sessions.iter().map(|s| {
-            let bitfield_hex = if let Ok(ctx) = s.session.context().lock() {
-                ctx.bitfield.iter().map(|b| format!("{:02x}", b)).collect::<String>()
-            } else {
-                String::new()
-            };
-            SavedTorrent {
-                torrent_path: s.torrent_path.clone(),
-                bitfield_hex,
-            }
-        })
-        .chain(self.pending_sessions.iter().filter(|s| s.error.is_none()).map(|s| SavedTorrent {
-            torrent_path: s.torrent_path.clone(),
-            bitfield_hex: String::new(),
-        }))
-        .collect::<Vec<_>>();
+        let torrents = self
+            .sessions
+            .iter()
+            .map(|s| {
+                let bitfield_hex = if let Ok(ctx) = s.session.context().lock() {
+                    ctx.bitfield
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>()
+                } else {
+                    String::new()
+                };
+                SavedTorrent {
+                    torrent_path: s.torrent_path.clone(),
+                    bitfield_hex,
+                }
+            })
+            .chain(
+                self.pending_sessions
+                    .iter()
+                    .filter(|s| s.error.is_none())
+                    .map(|s| SavedTorrent {
+                        torrent_path: s.torrent_path.clone(),
+                        bitfield_hex: String::new(),
+                    }),
+            )
+            .collect::<Vec<_>>();
 
         let state = ClientState {
             download_dir: self.download_dir.clone(),
@@ -123,7 +136,11 @@ impl TorrentClientApp {
             if let Ok(state) = serde_json::from_str::<ClientState>(&content) {
                 self.download_dir = state.download_dir;
                 for t in state.torrents {
-                    self.add_session_by_path(t.torrent_path, self.download_dir.clone(), Some(t.bitfield_hex));
+                    self.add_session_by_path(
+                        t.torrent_path,
+                        self.download_dir.clone(),
+                        Some(t.bitfield_hex),
+                    );
                 }
             } else if let Ok(legacy) = serde_json::from_str::<LegacyClientState>(&content) {
                 self.download_dir = legacy.download_dir;
@@ -156,9 +173,13 @@ impl TorrentClientApp {
         }
 
         if self.sessions.iter().any(|s| s.torrent_path == torrent_path)
-            || self.pending_sessions.iter().any(|s| s.torrent_path == torrent_path)
+            || self
+                .pending_sessions
+                .iter()
+                .any(|s| s.torrent_path == torrent_path)
         {
-            self.messages.push(format!("Torrent is already added: {}", torrent_path));
+            self.messages
+                .push(format!("Torrent is already added: {}", torrent_path));
             return;
         }
 
@@ -166,7 +187,12 @@ impl TorrentClientApp {
     }
 
     /// Spawns a background thread to asynchronously resolve metadata, verify disk space, and establish tracker connections for a torrent session.
-    pub fn add_session_by_path(&mut self, torrent_path: String, download_dir: String, bitfield_hex: Option<String>) {
+    pub fn add_session_by_path(
+        &mut self,
+        torrent_path: String,
+        download_dir: String,
+        bitfield_hex: Option<String>,
+    ) {
         let (session_tx, session_rx) = mpsc::channel::<Result<TorrentSession, String>>();
         let msg_tx = self.log_tx.clone();
         self.pending_sessions.push(PendingSession {
@@ -182,7 +208,9 @@ impl TorrentClientApp {
             let download_dir_buf = PathBuf::from(&download_dir);
             let session_id = if torrent_path.starts_with("magnet:?") {
                 if let Ok(mag) = bittorrent_rs::MagnetLink::parse(&torrent_path) {
-                    mag.display_name.clone().unwrap_or_else(|| bittorrent_rs::util::info_hash_to_string(&mag.info_hash))
+                    mag.display_name
+                        .clone()
+                        .unwrap_or_else(|| bittorrent_rs::util::info_hash_to_string(&mag.info_hash))
                 } else {
                     "Magnet Link".to_string()
                 }
@@ -227,35 +255,37 @@ impl TorrentClientApp {
             };
 
             // Restore bitfield from cached state if present
-            if let Some(ref hex_str) = bitfield_hex_clone {
-                if let Ok(mut ctx) = session.context.lock() {
-                    let mut bytes = Vec::new();
-                    for i in (0..hex_str.len()).step_by(2) {
-                        if i + 2 <= hex_str.len() {
-                            if let Ok(b) = u8::from_str_radix(&hex_str[i..i+2], 16) {
-                                bytes.push(b);
-                            }
+            if let Some(ref hex_str) = bitfield_hex_clone
+                && let Ok(mut ctx) = session.context.lock()
+            {
+                let mut bytes = Vec::new();
+                for i in (0..hex_str.len()).step_by(2) {
+                    if i + 2 <= hex_str.len()
+                        && let Ok(b) = u8::from_str_radix(&hex_str[i..i + 2], 16)
+                    {
+                        bytes.push(b);
+                    }
+                }
+                if bytes.len() == ctx.bitfield.len() {
+                    ctx.bitfield = bytes.clone();
+                    let mut downloaded = 0u64;
+                    let mut missing_count = 0;
+                    let number_of_pieces = ctx.number_of_pieces;
+                    for piece_num in 0..number_of_pieces {
+                        let (byte_idx, mask) =
+                            bittorrent_rs::util::get_bitfield_index_and_mask(piece_num as u32);
+                        let local = (bytes[byte_idx] & mask) != 0;
+                        ctx.mark_piece_missing(piece_num as u32, !local);
+                        if local {
+                            downloaded += ctx.get_piece_length(piece_num as u32) as u64;
+                        } else {
+                            missing_count += 1;
                         }
                     }
-                    if bytes.len() == ctx.bitfield.len() {
-                        ctx.bitfield = bytes.clone();
-                        let mut downloaded = 0u64;
-                        let mut missing_count = 0;
-                        let number_of_pieces = ctx.number_of_pieces;
-                        for piece_num in 0..number_of_pieces {
-                            let (byte_idx, mask) = bittorrent_rs::util::get_bitfield_index_and_mask(piece_num as u32);
-                            let local = (bytes[byte_idx] & mask) != 0;
-                            ctx.mark_piece_missing(piece_num as u32, !local);
-                            if local {
-                                downloaded += ctx.get_piece_length(piece_num as u32) as u64;
-                            } else {
-                                missing_count += 1;
-                            }
-                        }
-                        ctx.total_bytes_downloaded.store(downloaded, std::sync::atomic::Ordering::Relaxed);
-                        ctx.missing_pieces_count = missing_count;
-                        ctx.initial_bytes_downloaded = downloaded;
-                    }
+                    ctx.total_bytes_downloaded
+                        .store(downloaded, std::sync::atomic::Ordering::Relaxed);
+                    ctx.missing_pieces_count = missing_count;
+                    ctx.initial_bytes_downloaded = downloaded;
                 }
             }
 

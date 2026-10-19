@@ -35,9 +35,12 @@ pub fn parse_peer_client(peer_id: &[u8]) -> String {
         };
 
         let v_chars: Vec<char> = peer_id[3..7].iter().map(|&b| b as char).collect();
-        let version = format!("{}.{}.{}.{}", v_chars[0], v_chars[1], v_chars[2], v_chars[3])
-            .trim_end_matches(".0")
-            .to_string();
+        let version = format!(
+            "{}.{}.{}.{}",
+            v_chars[0], v_chars[1], v_chars[2], v_chars[3]
+        )
+        .trim_end_matches(".0")
+        .to_string();
 
         let client_name = match code {
             "qB" => "qBittorrent",
@@ -88,7 +91,10 @@ pub fn parse_peer_client(peer_id: &[u8]) -> String {
     }
 
     // Hex representation
-    format!("{:02X}{:02X}{:02X}{:02X}...", peer_id[0], peer_id[1], peer_id[2], peer_id[3])
+    format!(
+        "{:02X}{:02X}{:02X}{:02X}...",
+        peer_id[0], peer_id[1], peer_id[2], peer_id[3]
+    )
 }
 
 #[cfg(test)]
@@ -97,20 +103,34 @@ mod tests {
 
     #[test]
     fn test_parse_peer_client_known_clients() {
-        assert_eq!(parse_peer_client(b"-qB4600-abcdefghijkl"), "qBittorrent 4.6");
-        assert_eq!(parse_peer_client(b"-TR4030-123456789012"), "Transmission 4.0.3");
+        assert_eq!(
+            parse_peer_client(b"-qB4600-abcdefghijkl"),
+            "qBittorrent 4.6"
+        );
+        assert_eq!(
+            parse_peer_client(b"-TR4030-123456789012"),
+            "Transmission 4.0.3"
+        );
         assert_eq!(parse_peer_client(b"-UT3550-xxxxxxxxxxxx"), "µTorrent 3.5.5");
         assert_eq!(parse_peer_client(b"-DE2110-yyyyyyyyyyyy"), "Deluge 2.1.1");
-        assert_eq!(parse_peer_client(b"-AZ1000-zzzzzzzzzzzz"), "Vuze / Azureus 1");
-        assert_eq!(parse_peer_client(b"-WD0120-wwwwwwwwwwww"), "WebTorrent 0.1.2");
+        assert_eq!(
+            parse_peer_client(b"-AZ1000-zzzzzzzzzzzz"),
+            "Vuze / Azureus 1"
+        );
+        assert_eq!(
+            parse_peer_client(b"-WD0120-wwwwwwwwwwww"),
+            "WebTorrent 0.1.2"
+        );
         assert_eq!(parse_peer_client(b"-XX9999-111111111111"), "XX-9.9.9.9");
     }
 
     #[test]
     fn test_parse_peer_client_fallback() {
         assert_eq!(parse_peer_client(b"M4-3-6--unknownpeer!"), "Mainline 4-3-6");
-        assert_eq!(parse_peer_client(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]), "01020304...");
+        assert_eq!(
+            parse_peer_client(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]),
+            "01020304..."
+        );
         assert_eq!(parse_peer_client(b"short"), "Unknown");
     }
 }
-

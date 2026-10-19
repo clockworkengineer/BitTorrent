@@ -3,8 +3,8 @@
 //! Provides the pluggable `PieceSelector` trait to customize piece selection
 //! strategies (e.g. rarest-first vs. sequential download).
 
-use crate::peer::Peer;
 use crate::core::torrent_context::TorrentContext;
+use crate::peer::Peer;
 
 /// Pluggable piece selection strategy.
 pub trait PieceSelector: std::fmt::Debug + Send + Sync {
@@ -98,7 +98,10 @@ pub struct StreamingPieceSelector {
 
 impl StreamingPieceSelector {
     /// Creates a new `StreamingPieceSelector` with an atomic cursor and a lookahead window (in pieces).
-    pub fn new(cursor_piece: alloc::sync::Arc<core::sync::atomic::AtomicU32>, lookahead_window: u32) -> Self {
+    pub fn new(
+        cursor_piece: alloc::sync::Arc<core::sync::atomic::AtomicU32>,
+        lookahead_window: u32,
+    ) -> Self {
         Self {
             cursor_piece,
             lookahead_window,
@@ -112,7 +115,8 @@ impl StreamingPieceSelector {
 
     /// Sets or updates the playback cursor piece index.
     pub fn set_cursor_piece(&self, piece: u32) {
-        self.cursor_piece.store(piece, core::sync::atomic::Ordering::Relaxed);
+        self.cursor_piece
+            .store(piece, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Returns the lookahead window size in pieces.
@@ -123,7 +127,9 @@ impl StreamingPieceSelector {
 
 impl PieceSelector for StreamingPieceSelector {
     fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32> {
-        let cursor = self.cursor_piece.load(core::sync::atomic::Ordering::Relaxed);
+        let cursor = self
+            .cursor_piece
+            .load(core::sync::atomic::Ordering::Relaxed);
         let total_pieces = context.number_of_pieces as u32;
 
         if total_pieces == 0 {
@@ -168,4 +174,3 @@ impl PieceSelector for StreamingPieceSelector {
         None
     }
 }
-

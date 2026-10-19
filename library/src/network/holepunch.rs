@@ -167,44 +167,50 @@ impl HolepunchMessage {
         let msg_type = HolepunchMessageType::from_u8(payload[0])?;
         let addr_type = payload[1];
 
-        let (endpoint, err_code_offset) = match addr_type {
-            0x00 => {
-                // IPv4: 1 (msg_type) + 1 (addr_type) + 4 (ip) + 2 (port) + 4 (err_code) = 12 bytes
-                if payload.len() < 12 {
-                    return Err(BitTorrentError::Parse(
-                        "Payload too short for IPv4 ut_holepunch".into(),
-                    ));
+        let (endpoint, err_code_offset) =
+            match addr_type {
+                0x00 => {
+                    // IPv4: 1 (msg_type) + 1 (addr_type) + 4 (ip) + 2 (port) + 4 (err_code) = 12 bytes
+                    if payload.len() < 12 {
+                        return Err(BitTorrentError::Parse(
+                            "Payload too short for IPv4 ut_holepunch".into(),
+                        ));
+                    }
+                    let octets: [u8; 4] = payload[2..6]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Failed to read IPv4 octets".into()))?;
+                    let port =
+                        u16::from_be_bytes(payload[6..8].try_into().map_err(|_| {
+                            BitTorrentError::Parse("Failed to read port bytes".into())
+                        })?);
+                    (SocketAddr::new(IpAddr::V4(Ipv4Addr::from(octets)), port), 8)
                 }
-                let octets: [u8; 4] = payload[2..6].try_into().map_err(|_| {
-                    BitTorrentError::Parse("Failed to read IPv4 octets".into())
-                })?;
-                let port = u16::from_be_bytes(payload[6..8].try_into().map_err(|_| {
-                    BitTorrentError::Parse("Failed to read port bytes".into())
-                })?);
-                (SocketAddr::new(IpAddr::V4(Ipv4Addr::from(octets)), port), 8)
-            }
-            0x01 => {
-                // IPv6: 1 (msg_type) + 1 (addr_type) + 16 (ip) + 2 (port) + 4 (err_code) = 24 bytes
-                if payload.len() < 24 {
-                    return Err(BitTorrentError::Parse(
-                        "Payload too short for IPv6 ut_holepunch".into(),
-                    ));
+                0x01 => {
+                    // IPv6: 1 (msg_type) + 1 (addr_type) + 16 (ip) + 2 (port) + 4 (err_code) = 24 bytes
+                    if payload.len() < 24 {
+                        return Err(BitTorrentError::Parse(
+                            "Payload too short for IPv6 ut_holepunch".into(),
+                        ));
+                    }
+                    let octets: [u8; 16] = payload[2..18]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Failed to read IPv6 octets".into()))?;
+                    let port =
+                        u16::from_be_bytes(payload[18..20].try_into().map_err(|_| {
+                            BitTorrentError::Parse("Failed to read port bytes".into())
+                        })?);
+                    (
+                        SocketAddr::new(IpAddr::V6(Ipv6Addr::from(octets)), port),
+                        20,
+                    )
                 }
-                let octets: [u8; 16] = payload[2..18].try_into().map_err(|_| {
-                    BitTorrentError::Parse("Failed to read IPv6 octets".into())
-                })?;
-                let port = u16::from_be_bytes(payload[18..20].try_into().map_err(|_| {
-                    BitTorrentError::Parse("Failed to read port bytes".into())
-                })?);
-                (SocketAddr::new(IpAddr::V6(Ipv6Addr::from(octets)), port), 20)
-            }
-            _ => {
-                return Err(BitTorrentError::Parse(format!(
-                    "Unknown addr_type 0x{:02x} in ut_holepunch",
-                    addr_type
-                )));
-            }
-        };
+                _ => {
+                    return Err(BitTorrentError::Parse(format!(
+                        "Unknown addr_type 0x{:02x} in ut_holepunch",
+                        addr_type
+                    )));
+                }
+            };
 
         if payload.len() < err_code_offset + 4 {
             return Err(BitTorrentError::Parse(

@@ -26,17 +26,20 @@
 //! # }
 //! ```
 
-use std::net::{UdpSocket, ToSocketAddrs};
-use std::sync::{Arc, Mutex, mpsc::{Sender, channel}};
+use crate::bencode::{BNode, Bencode};
+use crate::error::BitTorrentError;
+use crate::tracker::PeerDetails;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use sha1::Digest;
+use std::net::{ToSocketAddrs, UdpSocket};
+use std::sync::{
+    Arc, Mutex,
+    mpsc::{Sender, channel},
+};
 use std::thread;
 use std::time::Duration;
-use alloc::vec::Vec;
-use alloc::string::{String, ToString};
-use alloc::collections::BTreeMap;
-use crate::error::BitTorrentError;
-use crate::bencode::{BNode, Bencode};
-use crate::tracker::PeerDetails;
-use sha1::Digest;
 
 pub type NodeId = [u8; 20];
 
@@ -94,7 +97,7 @@ impl RoutingTable {
         }
         let bucket_idx = count_leading_zeros(&self.local_id, &node.id).min(159);
         let bucket = &mut self.buckets[bucket_idx];
-        
+
         if let Some(pos) = bucket.iter().position(|n| n.id == node.id) {
             // Update node position to mark it as recently active
             let active_node = bucket.remove(pos);
@@ -112,13 +115,13 @@ impl RoutingTable {
                 all_nodes.push(node.clone());
             }
         }
-        
+
         all_nodes.sort_by(|a, b| {
             let dist_a = xor_distance(&a.id, target);
             let dist_b = xor_distance(&b.id, target);
             dist_a.cmp(&dist_b)
         });
-        
+
         all_nodes.truncate(count);
         all_nodes
     }
@@ -154,8 +157,10 @@ impl Dht {
         let socket = UdpSocket::bind(format!("0.0.0.0:{}", port))
             .or_else(|_| UdpSocket::bind("0.0.0.0:0"))
             .map_err(BitTorrentError::Io)?;
-        
-        socket.set_read_timeout(Some(Duration::from_millis(500))).map_err(BitTorrentError::Io)?;
+
+        socket
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .map_err(BitTorrentError::Io)?;
 
         let mut node_id = [0u8; 20];
         for i in 0..20 {
@@ -225,7 +230,8 @@ impl Dht {
                                     let query = bnode.dict_get(b"q").and_then(|n| n.as_string());
                                     let args = bnode.dict_get(b"a");
                                     if let (Some(q), Some(a)) = (query, args) {
-                                        let sender_id = a.dict_get(b"id").and_then(|n| n.as_string());
+                                        let sender_id =
+                                            a.dict_get(b"id").and_then(|n| n.as_string());
                                         if let Some(s_id) = sender_id {
                                             let mut id = [0u8; 20];
                                             if s_id.len() == 20 {
@@ -243,12 +249,12 @@ impl Dht {
                                         // r: response payload
                                         encode_string("r", &mut reply);
                                         encode_dict_start(&mut reply);
-                                        
+
                                         if q == b"ping" {
                                             encode_string("id", &mut reply);
                                             encode_bytes(&local_id, &mut reply);
                                             encode_dict_end(&mut reply); // end r
-                                            
+
                                             // t: tid
                                             encode_string("t", &mut reply);
                                             encode_bytes(t, &mut reply);
@@ -256,25 +262,35 @@ impl Dht {
                                             encode_string("y", &mut reply);
                                             encode_string("r", &mut reply);
                                             encode_dict_end(&mut reply);
-                                            
+
                                             let _ = socket.send_to(&reply, src_addr);
                                         } else if q == b"find_node" {
-                                            let target_id_bytes = a.dict_get(b"target").and_then(|n| n.as_string());
+                                            let target_id_bytes =
+                                                a.dict_get(b"target").and_then(|n| n.as_string());
                                             if let Some(target_bytes) = target_id_bytes {
                                                 let mut target = [0u8; 20];
                                                 if target_bytes.len() == 20 {
                                                     target.copy_from_slice(target_bytes);
                                                 }
-                                                let closest = routing_table.lock().unwrap().closest_nodes(&target, 8);
+                                                let closest = routing_table
+                                                    .lock()
+                                                    .unwrap()
+                                                    .closest_nodes(&target, 8);
                                                 let mut compact_nodes = Vec::new();
                                                 for node in closest {
                                                     compact_nodes.extend_from_slice(&node.id);
-                                                    if let Ok(ip_addr) = node.ip.parse::<std::net::Ipv4Addr>() {
-                                                        compact_nodes.extend_from_slice(&ip_addr.octets());
+                                                    if let Ok(ip_addr) =
+                                                        node.ip.parse::<std::net::Ipv4Addr>()
+                                                    {
+                                                        compact_nodes
+                                                            .extend_from_slice(&ip_addr.octets());
                                                     } else {
-                                                        compact_nodes.extend_from_slice(&[0, 0, 0, 0]);
+                                                        compact_nodes
+                                                            .extend_from_slice(&[0, 0, 0, 0]);
                                                     }
-                                                    compact_nodes.extend_from_slice(&node.port.to_be_bytes());
+                                                    compact_nodes.extend_from_slice(
+                                                        &node.port.to_be_bytes(),
+                                                    );
                                                 }
 
                                                 encode_string("id", &mut reply);
@@ -282,7 +298,7 @@ impl Dht {
                                                 encode_string("nodes", &mut reply);
                                                 encode_bytes(&compact_nodes, &mut reply);
                                                 encode_dict_end(&mut reply); // end r
-                                                
+
                                                 encode_string("t", &mut reply);
                                                 encode_bytes(t, &mut reply);
                                                 encode_string("y", &mut reply);
@@ -292,17 +308,21 @@ impl Dht {
                                                 let _ = socket.send_to(&reply, src_addr);
                                             }
                                         } else if q == b"get_peers" {
-                                            let ih_bytes = a.dict_get(b"info_hash").and_then(|n| n.as_string());
+                                            let ih_bytes = a
+                                                .dict_get(b"info_hash")
+                                                .and_then(|n| n.as_string());
                                             if let Some(ih) = ih_bytes {
                                                 let mut target = [0u8; 20];
                                                 if ih.len() == 20 {
                                                     target.copy_from_slice(ih);
                                                 }
-                                                
+
                                                 // Generate token
                                                 let token = {
                                                     let mut hasher = sha1::Sha1::default();
-                                                    hasher.update(src_addr.ip().to_string().as_bytes());
+                                                    hasher.update(
+                                                        src_addr.ip().to_string().as_bytes(),
+                                                    );
                                                     hasher.update(&token_salt.to_be_bytes());
                                                     hasher.finalize().to_vec()
                                                 };
@@ -310,29 +330,44 @@ impl Dht {
                                                 encode_string("id", &mut reply);
                                                 encode_bytes(&local_id, &mut reply);
 
-                                                let cached_peers = peer_cache.lock().unwrap().get(&target).cloned();
+                                                let cached_peers = peer_cache
+                                                    .lock()
+                                                    .unwrap()
+                                                    .get(&target)
+                                                    .cloned();
                                                 if let Some(peers) = cached_peers {
                                                     encode_string("token", &mut reply);
                                                     encode_bytes(&token, &mut reply);
                                                     encode_string("values", &mut reply);
                                                     // Encode compact peers list
-                                                    let compact = Self::encode_compact_peers(&peers);
+                                                    let compact =
+                                                        Self::encode_compact_peers(&peers);
                                                     reply.push(b'l');
                                                     for item in compact {
                                                         encode_bytes(&item, &mut reply);
                                                     }
                                                     reply.push(b'e');
                                                 } else {
-                                                    let closest = routing_table.lock().unwrap().closest_nodes(&target, 8);
+                                                    let closest = routing_table
+                                                        .lock()
+                                                        .unwrap()
+                                                        .closest_nodes(&target, 8);
                                                     let mut compact_nodes = Vec::new();
                                                     for node in closest {
                                                         compact_nodes.extend_from_slice(&node.id);
-                                                        if let Ok(ip_addr) = node.ip.parse::<std::net::Ipv4Addr>() {
-                                                            compact_nodes.extend_from_slice(&ip_addr.octets());
+                                                        if let Ok(ip_addr) =
+                                                            node.ip.parse::<std::net::Ipv4Addr>()
+                                                        {
+                                                            compact_nodes.extend_from_slice(
+                                                                &ip_addr.octets(),
+                                                            );
                                                         } else {
-                                                            compact_nodes.extend_from_slice(&[0, 0, 0, 0]);
+                                                            compact_nodes
+                                                                .extend_from_slice(&[0, 0, 0, 0]);
                                                         }
-                                                        compact_nodes.extend_from_slice(&node.port.to_be_bytes());
+                                                        compact_nodes.extend_from_slice(
+                                                            &node.port.to_be_bytes(),
+                                                        );
                                                     }
                                                     encode_string("nodes", &mut reply);
                                                     encode_bytes(&compact_nodes, &mut reply);
@@ -340,7 +375,7 @@ impl Dht {
                                                     encode_bytes(&token, &mut reply);
                                                 }
                                                 encode_dict_end(&mut reply); // end r
-                                                
+
                                                 encode_string("t", &mut reply);
                                                 encode_bytes(t, &mut reply);
                                                 encode_string("y", &mut reply);
@@ -350,16 +385,25 @@ impl Dht {
                                                 let _ = socket.send_to(&reply, src_addr);
                                             }
                                         } else if q == b"announce_peer" {
-                                            let ih_bytes = a.dict_get(b"info_hash").and_then(|n| n.as_string());
-                                            let port_node = a.dict_get(b"port").and_then(|n| n.as_number_bytes());
-                                            let token_bytes = a.dict_get(b"token").and_then(|n| n.as_string());
-                                            
-                                            if let (Some(ih), Some(p_bytes), Some(tok)) = (ih_bytes, port_node, token_bytes) {
+                                            let ih_bytes = a
+                                                .dict_get(b"info_hash")
+                                                .and_then(|n| n.as_string());
+                                            let port_node = a
+                                                .dict_get(b"port")
+                                                .and_then(|n| n.as_number_bytes());
+                                            let token_bytes =
+                                                a.dict_get(b"token").and_then(|n| n.as_string());
+
+                                            if let (Some(ih), Some(p_bytes), Some(tok)) =
+                                                (ih_bytes, port_node, token_bytes)
+                                            {
                                                 let p_str = String::from_utf8_lossy(p_bytes);
                                                 let port = p_str.parse::<u16>().unwrap_or(0);
                                                 let expected_token = {
                                                     let mut hasher = sha1::Sha1::default();
-                                                    hasher.update(src_addr.ip().to_string().as_bytes());
+                                                    hasher.update(
+                                                        src_addr.ip().to_string().as_bytes(),
+                                                    );
                                                     hasher.update(&token_salt.to_be_bytes());
                                                     hasher.finalize().to_vec()
                                                 };
@@ -370,9 +414,16 @@ impl Dht {
                                                         target.copy_from_slice(ih);
                                                     }
                                                     let mut cache = peer_cache.lock().unwrap();
-                                                    let list = cache.entry(target).or_insert_with(Vec::new);
+                                                    let list = cache
+                                                        .entry(target)
+                                                        .or_insert_with(Vec::new);
                                                     let ip = src_addr.ip().to_string();
-                                                    if !list.iter().any(|(existing_ip, existing_port)| *existing_ip == ip && *existing_port == port) {
+                                                    if !list.iter().any(
+                                                        |(existing_ip, existing_port)| {
+                                                            *existing_ip == ip
+                                                                && *existing_port == port
+                                                        },
+                                                    ) {
                                                         list.push((ip, port));
                                                     }
                                                 }
@@ -380,7 +431,7 @@ impl Dht {
                                                 encode_string("id", &mut reply);
                                                 encode_bytes(&local_id, &mut reply);
                                                 encode_dict_end(&mut reply); // end r
-                                                
+
                                                 encode_string("t", &mut reply);
                                                 encode_bytes(t, &mut reply);
                                                 encode_string("y", &mut reply);
@@ -419,8 +470,6 @@ impl Dht {
         *self.running.lock().unwrap() = false;
     }
 
-
-
     /// Performs bootstrap seeding from common routers.
     pub fn bootstrap(&self) {
         let routers = vec![
@@ -440,14 +489,14 @@ impl Dht {
             encode_string("target", &mut out);
             encode_bytes(&local_id, &mut out);
             encode_dict_end(&mut out);
-            
+
             encode_string("q", &mut out);
             encode_string("find_node", &mut out);
-            
+
             let tid = vec![1, 2];
             encode_string("t", &mut out);
             encode_bytes(&tid, &mut out);
-            
+
             encode_string("y", &mut out);
             encode_string("q", &mut out);
             encode_dict_end(&mut out);
@@ -501,10 +550,10 @@ impl Dht {
                 encode_string("info_hash", &mut out);
                 encode_bytes(&info_hash, &mut out);
                 encode_dict_end(&mut out);
-                
+
                 encode_string("q", &mut out);
                 encode_string("get_peers", &mut out);
-                
+
                 let tid = vec![node.id[0], node.id[1]];
                 encode_string("t", &mut out);
                 encode_bytes(&tid, &mut out);
@@ -514,7 +563,7 @@ impl Dht {
 
                 let (tx, rx) = channel();
                 outstanding_queries.lock().unwrap().insert(tid.clone(), tx);
-                
+
                 let target_addr = crate::util::format_socket_addr(&node.ip, node.port);
                 if let Ok(mut resolved) = target_addr.to_socket_addrs() {
                     if let Some(addr) = resolved.next() {
@@ -538,8 +587,17 @@ impl Dht {
                                 for item in list {
                                     if let Some(peer_bytes) = item.as_string() {
                                         if peer_bytes.len() == 6 {
-                                            let ip = format!("{}.{}.{}.{}", peer_bytes[0], peer_bytes[1], peer_bytes[2], peer_bytes[3]);
-                                            let port = peer_bytes[4..6].try_into().map(u16::from_be_bytes).unwrap_or(0);
+                                            let ip = format!(
+                                                "{}.{}.{}.{}",
+                                                peer_bytes[0],
+                                                peer_bytes[1],
+                                                peer_bytes[2],
+                                                peer_bytes[3]
+                                            );
+                                            let port = peer_bytes[4..6]
+                                                .try_into()
+                                                .map(u16::from_be_bytes)
+                                                .unwrap_or(0);
                                             let _ = peer_sender.send(PeerDetails {
                                                 info_hash: info_hash.to_vec(),
                                                 peer_id: None,
@@ -547,7 +605,9 @@ impl Dht {
                                                 port,
                                             });
                                         } else if peer_bytes.len() == 18 {
-                                            let decoded = crate::util::decode_compact_ipv6_peers(peer_bytes, 0);
+                                            let decoded = crate::util::decode_compact_ipv6_peers(
+                                                peer_bytes, 0,
+                                            );
                                             for (ip, port) in decoded {
                                                 let _ = peer_sender.send(PeerDetails {
                                                     info_hash: info_hash.to_vec(),
@@ -566,7 +626,9 @@ impl Dht {
                             if let Some(BNode::String(nodes_bytes)) = nodes {
                                 let closer = parse_compact_nodes_slice(nodes_bytes);
                                 for c_node in closer {
-                                    if !queried.contains(&c_node.id) && !candidates.iter().any(|c| c.id == c_node.id) {
+                                    if !queried.contains(&c_node.id)
+                                        && !candidates.iter().any(|c| c.id == c_node.id)
+                                    {
                                         candidates.push(c_node);
                                     }
                                 }
@@ -577,7 +639,9 @@ impl Dht {
                             if let Some(BNode::String(nodes6_bytes)) = nodes6 {
                                 let closer6 = parse_compact_ipv6_nodes_slice(nodes6_bytes);
                                 for c_node in closer6 {
-                                    if !queried.contains(&c_node.id) && !candidates.iter().any(|c| c.id == c_node.id) {
+                                    if !queried.contains(&c_node.id)
+                                        && !candidates.iter().any(|c| c.id == c_node.id)
+                                    {
                                         candidates.push(c_node);
                                     }
                                 }
@@ -596,9 +660,18 @@ fn parse_compact_nodes_slice(bytes: &[u8]) -> Vec<DhtNode> {
     let mut offset = 0;
     while offset + 26 <= bytes.len() {
         let mut id = [0u8; 20];
-        id.copy_from_slice(&bytes[offset..offset+20]);
-        let ip = format!("{}.{}.{}.{}", bytes[offset+20], bytes[offset+21], bytes[offset+22], bytes[offset+23]);
-        let port = bytes[offset+24..offset+26].try_into().map(u16::from_be_bytes).unwrap_or(0);
+        id.copy_from_slice(&bytes[offset..offset + 20]);
+        let ip = format!(
+            "{}.{}.{}.{}",
+            bytes[offset + 20],
+            bytes[offset + 21],
+            bytes[offset + 22],
+            bytes[offset + 23]
+        );
+        let port = bytes[offset + 24..offset + 26]
+            .try_into()
+            .map(u16::from_be_bytes)
+            .unwrap_or(0);
         nodes.push(DhtNode { id, ip, port });
         offset += 26;
     }
@@ -611,11 +684,14 @@ fn parse_compact_ipv6_nodes_slice(bytes: &[u8]) -> Vec<DhtNode> {
     let mut offset = 0;
     while offset + 38 <= bytes.len() {
         let mut id = [0u8; 20];
-        id.copy_from_slice(&bytes[offset..offset+20]);
+        id.copy_from_slice(&bytes[offset..offset + 20]);
         let mut ip_bytes = [0u8; 16];
-        ip_bytes.copy_from_slice(&bytes[offset+20..offset+36]);
+        ip_bytes.copy_from_slice(&bytes[offset + 20..offset + 36]);
         let ip = std::net::Ipv6Addr::from(ip_bytes).to_string();
-        let port = bytes[offset+36..offset+38].try_into().map(u16::from_be_bytes).unwrap_or(0);
+        let port = bytes[offset + 36..offset + 38]
+            .try_into()
+            .map(u16::from_be_bytes)
+            .unwrap_or(0);
         nodes.push(DhtNode { id, ip, port });
         offset += 38;
     }

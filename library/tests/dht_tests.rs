@@ -1,6 +1,6 @@
 #![cfg(all(feature = "std", feature = "dht"))]
 
-use bittorrent_rs::dht::{count_leading_zeros, xor_distance, RoutingTable, DhtNode, Dht};
+use bittorrent_rs::dht::{Dht, DhtNode, RoutingTable, count_leading_zeros, xor_distance};
 use std::sync::mpsc::channel;
 
 #[test]
@@ -73,7 +73,10 @@ fn test_dht_query_server_and_client() {
         ip: "127.0.0.1".to_string(),
         port: dht2.socket.local_addr().unwrap().port(),
     };
-    dht1.routing_table.lock().unwrap().add_node(dht2_node.clone());
+    dht1.routing_table
+        .lock()
+        .unwrap()
+        .add_node(dht2_node.clone());
 
     // Perform recursive lookup for dummy info hash
     let (tx, _rx) = channel();

@@ -1,7 +1,7 @@
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher, EventKind};
 
 #[allow(dead_code)]
 #[derive(Debug)]

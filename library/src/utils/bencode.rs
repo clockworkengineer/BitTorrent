@@ -3,10 +3,10 @@
 //! Provides structures and functions for decoding and encoding data in the
 //! Bencode format, which is the standard serialization format used by BitTorrent.
 
-use crate::error::{BitTorrentError, BencodeError};
-use alloc::vec::Vec;
+use crate::error::{BencodeError, BitTorrentError};
 use alloc::string::String;
 use alloc::string::ToString;
+use alloc::vec::Vec;
 
 /// Represents a node in a parsed Bencode structure.
 #[derive(Debug, Clone, PartialEq)]
@@ -22,10 +22,7 @@ impl<'a> BNode<'a> {
     /// Returns `None` if the node is not a dictionary or if the key does not exist.
     pub fn dict_get(&self, key: &[u8]) -> Option<&BNode<'a>> {
         match self {
-            BNode::Dictionary(entries) => entries
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, v)| v),
+            BNode::Dictionary(entries) => entries.iter().find(|(k, _)| *k == key).map(|(_, v)| v),
             _ => None,
         }
     }

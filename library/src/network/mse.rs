@@ -73,10 +73,10 @@ impl Rc4 {
     }
 }
 
-use crypto_bigint::{Encoding, U768};
 use crypto_bigint::modular::runtime_mod::{DynResidue, DynResidueParams};
-use rand::{RngCore, SeedableRng};
+use crypto_bigint::{Encoding, U768};
 use rand::rngs::StdRng;
+use rand::{RngCore, SeedableRng};
 
 const PRIME: U768 = U768::from_be_hex(
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74\
@@ -114,13 +114,16 @@ impl DiffieHellman {
         let mut private_bytes = [0u8; 96];
         rng.fill_bytes(&mut private_bytes);
         let private_key = U768::from_be_slice(&private_bytes);
-        
+
         let params = DynResidueParams::new(&PRIME);
         let g = DynResidue::new(&U768::from(2u8), params);
         let public_key_big = g.pow(&private_key).retrieve();
         let public_key = public_key_big.to_be_bytes();
-        
-        DiffieHellman { private_key, public_key }
+
+        DiffieHellman {
+            private_key,
+            public_key,
+        }
     }
 
     /// Computes the 96-byte shared secret from the remote peer's public key.

@@ -1,10 +1,10 @@
 use bittorrent_rs::{
-    internals::TorrentContext,
-    storage::piece_layers_cache::{
-        decode_layers, encode_layers, reconstruct_tree_from_piece_layer, PieceLayersDiskCache,
-    },
     FileDetails, FilePriority, MerkleTree, SequentialSelector, SessionConfig,
     TorrentSessionBuilder,
+    internals::TorrentContext,
+    storage::piece_layers_cache::{
+        PieceLayersDiskCache, decode_layers, encode_layers, reconstruct_tree_from_piece_layer,
+    },
 };
 use std::sync::Arc;
 
@@ -55,12 +55,17 @@ fn test_piece_layers_cache_disk_persistence_and_memory_tier() {
     assert!(!cache.has_layers(&root));
 
     // Save to cache
-    cache.save_layers(&root, tree.layers()).expect("Save layers");
+    cache
+        .save_layers(&root, tree.layers())
+        .expect("Save layers");
     assert!(cache.has_layers(&root));
     assert!(cache.path_for_root(&root).exists());
 
     // Load from memory tier
-    let loaded_mem = cache.load_layers(&root).expect("Load from cache").expect("Layers present");
+    let loaded_mem = cache
+        .load_layers(&root)
+        .expect("Load from cache")
+        .expect("Layers present");
     assert_eq!(loaded_mem.len(), tree.layers().len());
     assert_eq!(cache.metrics().cache_hits, 1);
     assert_eq!(cache.metrics().disk_reads, 0);
@@ -69,7 +74,10 @@ fn test_piece_layers_cache_disk_persistence_and_memory_tier() {
     let cold_cache = PieceLayersDiskCache::new(&temp_dir, 16).expect("Create cold cache");
     assert!(cold_cache.has_layers(&root));
 
-    let loaded_disk = cold_cache.load_layers(&root).expect("Load from disk").expect("Layers present");
+    let loaded_disk = cold_cache
+        .load_layers(&root)
+        .expect("Load from disk")
+        .expect("Layers present");
     assert_eq!(loaded_disk.len(), tree.layers().len());
     assert_eq!(cold_cache.metrics().cache_misses, 1);
     assert_eq!(cold_cache.metrics().disk_reads, 1);
@@ -90,10 +98,14 @@ fn test_serve_bep52_hash_request_from_cached_layers() {
     let cache = PieceLayersDiskCache::new(&temp_dir, 16).expect("Create cache");
     let tree = create_sample_merkle_tree(8);
     let root = tree.root();
-    cache.save_layers(&root, tree.layers()).expect("Save layers");
+    cache
+        .save_layers(&root, tree.layers())
+        .expect("Save layers");
 
     // Serve hash request for block range [0..2] with 2 proof layers
-    let resp = cache.serve_hash_request(&root, 0, 0, 2, 2).expect("Serve hash request [0..2]");
+    let resp = cache
+        .serve_hash_request(&root, 0, 0, 2, 2)
+        .expect("Serve hash request [0..2]");
     let verified = MerkleTree::verify_hashes_response(&root, 0, 0, 2, 2, &resp)
         .expect("Verify served hashes response");
     assert_eq!(verified.len(), 2);
@@ -101,7 +113,9 @@ fn test_serve_bep52_hash_request_from_cached_layers() {
     assert_eq!(verified[1], tree.layers()[0][1]);
 
     // Serve hash request for block range [4..6] with 2 proof layers
-    let resp2 = cache.serve_hash_request(&root, 0, 4, 2, 2).expect("Serve hash request [4..6]");
+    let resp2 = cache
+        .serve_hash_request(&root, 0, 4, 2, 2)
+        .expect("Serve hash request [4..6]");
     let verified2 = MerkleTree::verify_hashes_response(&root, 0, 4, 2, 2, &resp2)
         .expect("Verify served hashes response 2");
     assert_eq!(verified2.len(), 2);
@@ -135,11 +149,15 @@ fn test_serve_bep52_hash_request_from_reconstructed_piece_layer() {
     assert_eq!(recon_layers.len(), tree.layers().len());
 
     // Save only the piece layer
-    cache.save_piece_layer(&root, piece_layer).expect("Save piece layer");
+    cache
+        .save_piece_layer(&root, piece_layer)
+        .expect("Save piece layer");
     assert!(cache.has_layers(&root));
 
     // Serve hash request from reconstructed layers
-    let resp = cache.serve_hash_request(&root, 0, 2, 2, 2).expect("Serve from reconstructed layers");
+    let resp = cache
+        .serve_hash_request(&root, 0, 2, 2, 2)
+        .expect("Serve from reconstructed layers");
     let verified = MerkleTree::verify_hashes_response(&root, 0, 2, 2, 2, &resp)
         .expect("Verify reconstructed response");
     assert_eq!(verified.len(), 2);
@@ -236,17 +254,23 @@ fn test_session_builder_piece_layers_cache_configuration() {
     let custom_cache_dir = temp_dir.join("custom_layers");
     let _ = std::fs::remove_dir_all(&temp_dir);
 
-    let session = TorrentSessionBuilder::from_magnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", &temp_dir)
-        .enable_piece_layers_cache(true)
-        .piece_layers_cache_dir(&custom_cache_dir)
-        .piece_layers_cache_max_mb(128)
-        .build()
-        .expect("Build session with custom piece layers cache");
+    let session = TorrentSessionBuilder::from_magnet(
+        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+        &temp_dir,
+    )
+    .enable_piece_layers_cache(true)
+    .piece_layers_cache_dir(&custom_cache_dir)
+    .piece_layers_cache_max_mb(128)
+    .build()
+    .expect("Build session with custom piece layers cache");
 
     let ctx_mutex = session.context();
     let ctx = ctx_mutex.lock().unwrap();
     assert!(ctx.config.v2_piece_layers_cache_enabled);
-    assert_eq!(ctx.config.v2_piece_layers_cache_dir.as_deref(), Some(custom_cache_dir.as_path()));
+    assert_eq!(
+        ctx.config.v2_piece_layers_cache_dir.as_deref(),
+        Some(custom_cache_dir.as_path())
+    );
     assert_eq!(ctx.config.v2_piece_layers_cache_max_mb, 128);
 
     let _ = std::fs::remove_dir_all(&temp_dir);

@@ -4,9 +4,9 @@
 //! NAT router gateway using either NAT-PMP (RFC 6886) or UPnP (SOAP over SSDP).
 
 use crate::error::BitTorrentError;
-use std::net::{UdpSocket, TcpStream, Ipv4Addr, SocketAddrV4};
-use std::time::Duration;
 use std::io::{Read, Write};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpStream, UdpSocket};
+use std::time::Duration;
 
 /// Infers the default gateway IP address from the local machine's IP.
 pub fn get_default_gateway() -> Ipv4Addr {
@@ -67,7 +67,10 @@ impl NatPmpClient {
             return Err(BitTorrentError::Parse("NAT-PMP response too short".into()));
         }
         if buf[0] != 0 {
-            return Err(BitTorrentError::Parse(format!("Unsupported NAT-PMP version: {}", buf[0])));
+            return Err(BitTorrentError::Parse(format!(
+                "Unsupported NAT-PMP version: {}",
+                buf[0]
+            )));
         }
         let result_code = u16::from_be_bytes([buf[2], buf[3]]);
         if result_code != 0 {
@@ -92,11 +95,16 @@ impl PortMapper for NatPmpClient {
         lifetime_secs: u32,
     ) -> Result<u16, BitTorrentError> {
         let socket = UdpSocket::bind("0.0.0.0:0").map_err(BitTorrentError::Io)?;
-        socket.set_read_timeout(Some(Duration::from_secs(2))).map_err(BitTorrentError::Io)?;
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(BitTorrentError::Io)?;
 
-        let request = self.build_mapping_request(is_tcp, internal_port, external_port, lifetime_secs);
+        let request =
+            self.build_mapping_request(is_tcp, internal_port, external_port, lifetime_secs);
         let dest = SocketAddrV4::new(self.gateway, 5351);
-        socket.send_to(&request, dest).map_err(BitTorrentError::Io)?;
+        socket
+            .send_to(&request, dest)
+            .map_err(BitTorrentError::Io)?;
 
         let mut buf = [0u8; 64];
         let (n, _src) = socket.recv_from(&mut buf).map_err(BitTorrentError::Io)?;
@@ -106,7 +114,9 @@ impl PortMapper for NatPmpClient {
             let (_, mapped_external_port, _) = Self::parse_mapping_response(&buf[..n])?;
             Ok(mapped_external_port)
         } else {
-            Err(BitTorrentError::Parse("Invalid NAT-PMP response OP code".into()))
+            Err(BitTorrentError::Parse(
+                "Invalid NAT-PMP response OP code".into(),
+            ))
         }
     }
 
@@ -194,7 +204,8 @@ pub fn extract_xml_tag_content(xml: &str, tag: &str) -> Option<String> {
             let full_tag_content = &xml[tag_start..tag_start + close_bracket];
             let tag_name = full_tag_content.split_whitespace().next().unwrap_or("");
             let matches = tag_name.eq_ignore_ascii_case(tag)
-                || (tag_name.ends_with(tag) && tag_name[..tag_name.len() - tag.len()].ends_with(':'));
+                || (tag_name.ends_with(tag)
+                    && tag_name[..tag_name.len() - tag.len()].ends_with(':'));
 
             if matches && !tag_name.starts_with('/') {
                 let content_start = tag_start + close_bracket + 1;
@@ -203,9 +214,14 @@ pub fn extract_xml_tag_content(xml: &str, tag: &str) -> Option<String> {
                     if let Some(close_tag_end) = xml[close_tag_start..].find('>') {
                         let close_name = &xml[close_tag_start..close_tag_start + close_tag_end];
                         let close_matches = close_name.eq_ignore_ascii_case(tag)
-                            || (close_name.ends_with(tag) && close_name[..close_name.len() - tag.len()].ends_with(':'));
+                            || (close_name.ends_with(tag)
+                                && close_name[..close_name.len() - tag.len()].ends_with(':'));
                         if close_matches {
-                            return Some(xml[content_start..content_start + close_tag_pos].trim().to_string());
+                            return Some(
+                                xml[content_start..content_start + close_tag_pos]
+                                    .trim()
+                                    .to_string(),
+                            );
                         }
                     }
                 }
@@ -267,7 +283,12 @@ pub fn parse_device_description(xml: &str) -> Option<(String, String)> {
 }
 
 /// Fetches an HTTP resource and returns its body as a String.
-pub fn fetch_http_resource(host: &str, port: u16, path: &str, timeout: Duration) -> Result<String, BitTorrentError> {
+pub fn fetch_http_resource(
+    host: &str,
+    port: u16,
+    path: &str,
+    timeout: Duration,
+) -> Result<String, BitTorrentError> {
     use std::net::ToSocketAddrs;
     let addr_str = format!("{}:{}", host, port);
     let socket_addr = addr_str
@@ -276,9 +297,14 @@ pub fn fetch_http_resource(host: &str, port: u16, path: &str, timeout: Duration)
         .next()
         .ok_or_else(|| BitTorrentError::Protocol(format!("Could not resolve host: {}", host)))?;
 
-    let mut stream = TcpStream::connect_timeout(&socket_addr, timeout).map_err(BitTorrentError::Io)?;
-    stream.set_read_timeout(Some(timeout)).map_err(BitTorrentError::Io)?;
-    stream.set_write_timeout(Some(timeout)).map_err(BitTorrentError::Io)?;
+    let mut stream =
+        TcpStream::connect_timeout(&socket_addr, timeout).map_err(BitTorrentError::Io)?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(BitTorrentError::Io)?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(BitTorrentError::Io)?;
 
     let request = format!(
         "GET {} HTTP/1.1\r\n\
@@ -287,7 +313,9 @@ pub fn fetch_http_resource(host: &str, port: u16, path: &str, timeout: Duration)
          \r\n",
         path, host, port
     );
-    stream.write_all(request.as_bytes()).map_err(BitTorrentError::Io)?;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(BitTorrentError::Io)?;
 
     let mut response = Vec::new();
     let _ = stream.read_to_end(&mut response);
@@ -303,7 +331,9 @@ pub fn fetch_http_resource(host: &str, port: u16, path: &str, timeout: Duration)
 /// Discovers a UPnP IGD endpoint via SSDP multicast.
 pub fn discover_upnp_endpoint(timeout: Duration) -> Result<UpnpEndpoint, BitTorrentError> {
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(BitTorrentError::Io)?;
-    socket.set_read_timeout(Some(timeout)).map_err(BitTorrentError::Io)?;
+    socket
+        .set_read_timeout(Some(timeout))
+        .map_err(BitTorrentError::Io)?;
 
     let search_targets = [
         "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
@@ -328,11 +358,18 @@ pub fn discover_upnp_endpoint(timeout: Duration) -> Result<UpnpEndpoint, BitTorr
             if let Some(loc) = parse_ssdp_location(&resp_str) {
                 if let Ok((host, port, path)) = parse_url_components(&loc) {
                     if let Ok(desc_xml) = fetch_http_resource(&host, port, &path, timeout) {
-                        if let Some((service_type, control_url)) = parse_device_description(&desc_xml) {
-                            let (control_host, control_port, control_path) = if control_url.starts_with("http://")
+                        if let Some((service_type, control_url)) =
+                            parse_device_description(&desc_xml)
+                        {
+                            let (control_host, control_port, control_path) = if control_url
+                                .starts_with("http://")
                                 || control_url.starts_with("https://")
                             {
-                                parse_url_components(&control_url).unwrap_or((host, port, control_url))
+                                parse_url_components(&control_url).unwrap_or((
+                                    host,
+                                    port,
+                                    control_url,
+                                ))
                             } else {
                                 (host, port, control_url)
                             };
@@ -350,7 +387,9 @@ pub fn discover_upnp_endpoint(timeout: Duration) -> Result<UpnpEndpoint, BitTorr
         }
     }
 
-    Err(BitTorrentError::Protocol("No UPnP IGD responded to SSDP discovery".into()))
+    Err(BitTorrentError::Protocol(
+        "No UPnP IGD responded to SSDP discovery".into(),
+    ))
 }
 
 /// A UPnP client that discovers router control endpoints via SSDP and manages port mappings using SOAP.
@@ -406,18 +445,28 @@ impl UpnpClient {
             return Ok(fallback_ep);
         }
 
-        Err(BitTorrentError::Protocol("No UPnP IGD endpoint discovered".into()))
+        Err(BitTorrentError::Protocol(
+            "No UPnP IGD endpoint discovered".into(),
+        ))
     }
 
     /// Queries the router for its external public IP address via UPnP SOAP.
     pub fn get_external_ip(&self) -> Result<Ipv4Addr, BitTorrentError> {
         let endpoint = self.resolve_endpoint()?;
-        let body = format!("<u:GetExternalIPAddress xmlns:u=\"{}\"></u:GetExternalIPAddress>", endpoint.service_type);
+        let body = format!(
+            "<u:GetExternalIPAddress xmlns:u=\"{}\"></u:GetExternalIPAddress>",
+            endpoint.service_type
+        );
         let resp = self.perform_soap_request_to(&endpoint, "GetExternalIPAddress", &body)?;
         if let Some(ip_str) = extract_xml_tag_content(&resp, "NewExternalIPAddress") {
-            ip_str.trim().parse::<Ipv4Addr>().map_err(|e| BitTorrentError::Parse(e.to_string()))
+            ip_str
+                .trim()
+                .parse::<Ipv4Addr>()
+                .map_err(|e| BitTorrentError::Parse(e.to_string()))
         } else {
-            Err(BitTorrentError::Parse("Missing NewExternalIPAddress in SOAP response".into()))
+            Err(BitTorrentError::Parse(
+                "Missing NewExternalIPAddress in SOAP response".into(),
+            ))
         }
     }
 
@@ -463,14 +512,22 @@ impl UpnpClient {
             .to_socket_addrs()
             .map_err(BitTorrentError::Io)?
             .next()
-            .ok_or_else(|| BitTorrentError::Protocol(format!("Could not resolve host: {}", endpoint.host)))?;
+            .ok_or_else(|| {
+                BitTorrentError::Protocol(format!("Could not resolve host: {}", endpoint.host))
+            })?;
 
         let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))
             .map_err(BitTorrentError::Io)?;
-        stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(BitTorrentError::Io)?;
-        stream.set_write_timeout(Some(Duration::from_secs(2))).map_err(BitTorrentError::Io)?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(BitTorrentError::Io)?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .map_err(BitTorrentError::Io)?;
 
-        stream.write_all(request_str.as_bytes()).map_err(BitTorrentError::Io)?;
+        stream
+            .write_all(request_str.as_bytes())
+            .map_err(BitTorrentError::Io)?;
         let mut response = Vec::new();
         let _ = stream.read_to_end(&mut response);
 
@@ -478,7 +535,10 @@ impl UpnpClient {
         if resp_str.contains("200 OK") || resp_str.contains("200") {
             Ok(resp_str)
         } else {
-            Err(BitTorrentError::Parse(format!("UPnP SOAP action '{}' failed: {}", action, resp_str)))
+            Err(BitTorrentError::Parse(format!(
+                "UPnP SOAP action '{}' failed: {}",
+                action, resp_str
+            )))
         }
     }
 }
@@ -562,10 +622,14 @@ impl PortMapper for FallbackPortMapper {
         external_port: u16,
         lifetime_secs: u32,
     ) -> Result<u16, BitTorrentError> {
-        if let Ok(port) = self.nat_pmp.request_mapping(is_tcp, internal_port, external_port, lifetime_secs) {
+        if let Ok(port) =
+            self.nat_pmp
+                .request_mapping(is_tcp, internal_port, external_port, lifetime_secs)
+        {
             return Ok(port);
         }
-        self.upnp.request_mapping(is_tcp, internal_port, external_port, lifetime_secs)
+        self.upnp
+            .request_mapping(is_tcp, internal_port, external_port, lifetime_secs)
     }
 
     fn release_mapping(&self, is_tcp: bool, internal_port: u16) -> Result<(), BitTorrentError> {

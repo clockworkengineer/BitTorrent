@@ -1,8 +1,8 @@
+use crate::constants::BLOCK_SIZE;
+use crate::core::torrent_context::{TorrentContext, TorrentStatus};
+use crate::error::BitTorrentError;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use crate::error::BitTorrentError;
-use crate::core::torrent_context::{TorrentContext, TorrentStatus};
-use crate::constants::BLOCK_SIZE;
 
 /// Starts a background thread driving WebSeed HTTP mirror block requests.
 pub fn start_webseed_loop(
@@ -80,18 +80,28 @@ pub fn start_webseed_loop(
                 // Try downloading from candidate web seed mirrors in ranked order
                 for url in &candidate_mirrors {
                     let req_start = Instant::now();
-                    match download_block_from_webseed(&context, url, global_offset, length, timeout_secs) {
+                    match download_block_from_webseed(
+                        &context,
+                        url,
+                        global_offset,
+                        length,
+                        timeout_secs,
+                    ) {
                         Ok(data) => {
                             let req_duration = req_start.elapsed();
                             let mut ctx = context.lock().unwrap();
                             if enable_tracker {
-                                ctx.webseed_tracker
-                                    .lock()
-                                    .unwrap()
-                                    .record_success(url, req_duration, data.len());
+                                ctx.webseed_tracker.lock().unwrap().record_success(
+                                    url,
+                                    req_duration,
+                                    data.len(),
+                                );
                             }
                             let storage = ctx.storage.clone();
-                            if ctx.process_piece_block(&*storage, piece, begin, &data, url).is_ok() {
+                            if ctx
+                                .process_piece_block(&*storage, piece, begin, &data, url)
+                                .is_ok()
+                            {
                                 success = true;
                                 break;
                             }
@@ -100,10 +110,7 @@ pub fn start_webseed_loop(
                             crate::log_debug!("WebSeed download failed from {}: {}", url, e);
                             let ctx = context.lock().unwrap();
                             if enable_tracker {
-                                ctx.webseed_tracker
-                                    .lock()
-                                    .unwrap()
-                                    .record_failure(url);
+                                ctx.webseed_tracker.lock().unwrap().record_failure(url);
                             }
                         }
                     }
@@ -149,7 +156,8 @@ fn download_block_from_webseed(
         let file_end = file.offset + file.length;
 
         if current_offset >= file_start && current_offset < file_end {
-            let file_segment_len = std::cmp::min(remaining as u64, file_end - current_offset) as u32;
+            let file_segment_len =
+                std::cmp::min(remaining as u64, file_end - current_offset) as u32;
             let file_offset = current_offset - file_start;
 
             // Use pre-computed torrent-relative path (e.g. "Sintel/Sintel.mp4").
@@ -171,7 +179,8 @@ fn download_block_from_webseed(
     if block_data.len() != length as usize {
         return Err(BitTorrentError::Parse(format!(
             "WebSeed mapped length mismatch: expected {}, got {}",
-            length, block_data.len()
+            length,
+            block_data.len()
         )));
     }
 
@@ -198,9 +207,14 @@ fn download_segment(
 
     let response = ureq::get(&target_url)
         .timeout(Duration::from_secs(timeout_secs.max(1)))
-        .set("Range", &format!("bytes={}-{}", file_offset, file_offset + length as u64 - 1))
+        .set(
+            "Range",
+            &format!("bytes={}-{}", file_offset, file_offset + length as u64 - 1),
+        )
         .call()
-        .map_err(|e| BitTorrentError::Parse(format!("WebSeed HTTP error: {}: {}", target_url, e)))?;
+        .map_err(|e| {
+            BitTorrentError::Parse(format!("WebSeed HTTP error: {}: {}", target_url, e))
+        })?;
 
     let mut data = Vec::new();
     response.into_reader().read_to_end(&mut data)?;
@@ -208,7 +222,8 @@ fn download_segment(
     if data.len() != length as usize {
         return Err(BitTorrentError::Parse(format!(
             "WebSeed segment length mismatch: expected {}, got {}",
-            length, data.len()
+            length,
+            data.len()
         )));
     }
 

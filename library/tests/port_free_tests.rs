@@ -1,20 +1,27 @@
-use bittorrent_rs::{AsyncSocket, BlockReader, BlockWriter, MemStorage, MockSocket, SocketFactory, BitTorrentError, Socket};
 #[cfg(feature = "http-tracker")]
 use bittorrent_rs::HttpClient;
+use bittorrent_rs::{
+    AsyncSocket, BitTorrentError, BlockReader, BlockWriter, MemStorage, MockSocket, Socket,
+    SocketFactory,
+};
 use std::sync::Arc;
 
 #[test]
 fn test_mem_storage_read_write() {
     let storage = MemStorage::new(1024);
     let test_data = b"Hello BitTorrent In-Memory Storage!";
-    
+
     // Write block
-    storage.write_block(10, test_data).expect("Failed to write to MemStorage");
-    
+    storage
+        .write_block(10, test_data)
+        .expect("Failed to write to MemStorage");
+
     // Read block back
     let mut read_buf = vec![0u8; test_data.len()];
-    let read_len = storage.read_block(10, &mut read_buf).expect("Failed to read from MemStorage");
-    
+    let read_len = storage
+        .read_block(10, &mut read_buf)
+        .expect("Failed to read from MemStorage");
+
     assert_eq!(read_len, test_data.len());
     assert_eq!(&read_buf, test_data);
 }
@@ -26,24 +33,34 @@ fn test_mock_socket_communication() {
 
     // Seed bytes into incoming side of MockSocket
     let test_msg = b"incoming message";
-    in_tx.send(test_msg.to_vec()).expect("Failed to send incoming test bytes");
+    in_tx
+        .send(test_msg.to_vec())
+        .expect("Failed to send incoming test bytes");
 
     // Run async socket read/write verification
     futures::executor::block_on(async {
         // Read incoming bytes
         let mut read_buf = vec![0u8; test_msg.len()];
-        let n = socket.read(&mut read_buf).await.expect("Failed to read from MockSocket");
+        let n = socket
+            .read(&mut read_buf)
+            .await
+            .expect("Failed to read from MockSocket");
         assert_eq!(n, test_msg.len());
         assert_eq!(&read_buf, test_msg);
 
         // Write outgoing bytes
         let out_msg = b"outgoing message";
-        let written = socket.write(out_msg).await.expect("Failed to write to MockSocket");
+        let written = socket
+            .write(out_msg)
+            .await
+            .expect("Failed to write to MockSocket");
         assert_eq!(written, out_msg.len());
     });
 
     // Verify written bytes received on outgoing channel
-    let received = out_rx.recv().expect("Failed to receive from outgoing channel");
+    let received = out_rx
+        .recv()
+        .expect("Failed to receive from outgoing channel");
     assert_eq!(&received, b"outgoing message");
 }
 
@@ -77,8 +94,10 @@ fn test_socket_factory_injection() {
 
     let (socket, _in_tx, _out_rx) = MockSocket::new();
     let socket = Arc::new(Socket::Mock(socket));
-    let factory = TestSocketFactory { socket: socket.clone() };
-    
+    let factory = TestSocketFactory {
+        socket: socket.clone(),
+    };
+
     let connected_socket = factory.connect("127.0.0.1", 6881).unwrap();
     futures::executor::block_on(async {
         let written = connected_socket.write(b"hello").await.unwrap();
@@ -92,7 +111,9 @@ fn test_http_client_injection() {
     use bittorrent_rs::HttpClient;
 
     let mock_response = b"d8:intervali1800e12:min intervali1800e5:peers0:e".to_vec();
-    let client = TestHttpClient { response: mock_response.clone() };
+    let client = TestHttpClient {
+        response: mock_response.clone(),
+    };
     let response = client.get("http://tracker.example.com/announce").unwrap();
     assert_eq!(response, mock_response);
 }
@@ -120,7 +141,7 @@ fn test_spinlock_mutex() {
 #[test]
 fn test_mem_storage_out_of_bounds() {
     let storage = MemStorage::new(10);
-    
+
     let err_write = storage.write_block(5, &[0; 6]);
     assert!(err_write.is_err());
     assert!(format!("{}", err_write.unwrap_err()).contains("exceeds storage capacity"));
@@ -148,11 +169,11 @@ fn test_mock_socket_closed() {
 
 #[test]
 fn test_role_based_segregated_traits() {
+    use bittorrent_rs::internals::TorrentContext;
     use bittorrent_rs::{
-        Bencode, BNode, MetaInfoFile, PieceWriteAccess, RarestFirstSelector, SessionConfig,
+        BNode, Bencode, MetaInfoFile, PieceWriteAccess, RarestFirstSelector, SessionConfig,
         SessionStatusQuery, SwarmReadAccess, TorrentStatus,
     };
-    use bittorrent_rs::internals::TorrentContext;
     use std::path::PathBuf;
 
     let info_dict = BNode::Dictionary(vec![
@@ -162,7 +183,10 @@ fn test_role_based_segregated_traits() {
         (b"length" as &[u8], BNode::Number(b"32768")),
     ]);
     let root_dict = BNode::Dictionary(vec![
-        (b"announce" as &[u8], BNode::String(b"http://tracker.example.com/announce")),
+        (
+            b"announce" as &[u8],
+            BNode::String(b"http://tracker.example.com/announce"),
+        ),
         (b"info" as &[u8], info_dict),
     ]);
     let meta_bytes = Bencode::encode(&root_dict);
@@ -211,4 +235,3 @@ fn test_role_based_segregated_traits() {
     }
     query_status(&context);
 }
-

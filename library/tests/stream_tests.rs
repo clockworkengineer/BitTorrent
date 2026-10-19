@@ -15,7 +15,9 @@ fn sample_file(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn create_test_context_and_storage(torrent_name: &str) -> (Arc<Mutex<TorrentContext>>, Arc<MemStorage>) {
+fn create_test_context_and_storage(
+    torrent_name: &str,
+) -> (Arc<Mutex<TorrentContext>>, Arc<MemStorage>) {
     let mut meta = MetaInfoFile::new(sample_file(torrent_name)).expect("Failed to load torrent");
     meta.parse().expect("Failed to parse torrent");
 
@@ -137,7 +139,11 @@ fn test_torrent_stream_seek_and_read() {
 
     // 7. Negative seek produces InvalidInput error
     assert!(stream.seek(SeekFrom::Start(u64::MAX)).is_ok()); // Seeking past end is allowed
-    assert!(stream.seek(SeekFrom::Current(-((u64::MAX / 2) as i64))).is_ok());
+    assert!(
+        stream
+            .seek(SeekFrom::Current(-((u64::MAX / 2) as i64)))
+            .is_ok()
+    );
     assert!(stream.seek(SeekFrom::Start(0)).is_ok());
     assert!(stream.seek(SeekFrom::Current(-1)).is_err());
 }
@@ -188,7 +194,10 @@ fn test_torrent_stream_for_file() {
         let ctx = context.lock().unwrap();
         (ctx.files_to_download.len(), ctx.files_to_download.clone())
     };
-    assert!(num_files >= 2, "multifile.torrent must have at least 2 files");
+    assert!(
+        num_files >= 2,
+        "multifile.torrent must have at least 2 files"
+    );
 
     let total_bytes = { context.lock().unwrap().total_bytes_to_download };
     let num_pieces = { context.lock().unwrap().number_of_pieces as u32 };
@@ -214,7 +223,10 @@ fn test_torrent_stream_for_file() {
 
     let mut file0_data = vec![0u8; files[0].length as usize];
     file0_stream.read_exact(&mut file0_data).unwrap();
-    assert_eq!(&file0_data[..], &data[files[0].offset as usize..files[0].offset as usize + files[0].length as usize]);
+    assert_eq!(
+        &file0_data[..],
+        &data[files[0].offset as usize..files[0].offset as usize + files[0].length as usize]
+    );
 
     // Test file 1 stream
     let mut file1_stream = TorrentStream::for_file(context.clone(), 1, None).unwrap();
@@ -222,7 +234,10 @@ fn test_torrent_stream_for_file() {
 
     let mut file1_data = vec![0u8; files[1].length as usize];
     file1_stream.read_exact(&mut file1_data).unwrap();
-    assert_eq!(&file1_data[..], &data[files[1].offset as usize..files[1].offset as usize + files[1].length as usize]);
+    assert_eq!(
+        &file1_data[..],
+        &data[files[1].offset as usize..files[1].offset as usize + files[1].length as usize]
+    );
 
     // Out of bounds file index error
     assert!(TorrentStream::for_file(context.clone(), 9999, None).is_err());
@@ -416,7 +431,11 @@ fn test_http_range_stream_server() {
                     let spec = &r["bytes=".len()..];
                     let parts: Vec<&str> = spec.split('-').collect();
                     let s: u64 = parts[0].parse().unwrap();
-                    let e: u64 = if !parts[1].is_empty() { parts[1].parse().unwrap() } else { total_len - 1 };
+                    let e: u64 = if !parts[1].is_empty() {
+                        parts[1].parse().unwrap()
+                    } else {
+                        total_len - 1
+                    };
                     (s, e, 206)
                 } else {
                     (0, total_len - 1, 200)
@@ -427,7 +446,10 @@ fn test_http_range_stream_server() {
 
             let content_len = end.saturating_sub(start) + 1;
             let header = if status == 206 {
-                format!("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n", start, end, total_len, content_len)
+                format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n",
+                    start, end, total_len, content_len
+                )
             } else {
                 format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", total_len)
             };
@@ -441,7 +463,9 @@ fn test_http_range_stream_server() {
             while remaining > 0 {
                 let to_read = (buf.len() as u64).min(remaining) as usize;
                 let n = torrent_stream.read(&mut buf[..to_read]).unwrap();
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 if std::io::Write::write_all(&mut tcp_stream, &buf[..n]).is_err() {
                     break;
                 }
@@ -453,7 +477,8 @@ fn test_http_range_stream_server() {
     // Test 1: Full content GET
     {
         let mut client = std::net::TcpStream::connect(addr).unwrap();
-        std::io::Write::write_all(&mut client, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").unwrap();
+        std::io::Write::write_all(&mut client, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .unwrap();
         let mut reader = std::io::BufReader::new(client);
         let mut status_line = String::new();
         std::io::BufRead::read_line(&mut reader, &mut status_line).unwrap();
@@ -472,11 +497,14 @@ fn test_http_range_stream_server() {
         assert_eq!(&body[..], &data[..]);
     }
 
-
     // Test 2: Range request bytes=100-199
     {
         let mut client = std::net::TcpStream::connect(addr).unwrap();
-        std::io::Write::write_all(&mut client, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=100-199\r\n\r\n").unwrap();
+        std::io::Write::write_all(
+            &mut client,
+            b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=100-199\r\n\r\n",
+        )
+        .unwrap();
         let mut reader = std::io::BufReader::new(client);
         let mut status_line = String::new();
         std::io::BufRead::read_line(&mut reader, &mut status_line).unwrap();
@@ -498,7 +526,11 @@ fn test_http_range_stream_server() {
     // Test 3: Range request bytes=500-
     {
         let mut client = std::net::TcpStream::connect(addr).unwrap();
-        std::io::Write::write_all(&mut client, b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=500-\r\n\r\n").unwrap();
+        std::io::Write::write_all(
+            &mut client,
+            b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=500-\r\n\r\n",
+        )
+        .unwrap();
         let mut reader = std::io::BufReader::new(client);
         let mut status_line = String::new();
         std::io::BufRead::read_line(&mut reader, &mut status_line).unwrap();
@@ -519,4 +551,3 @@ fn test_http_range_stream_server() {
 
     server_handle.join().unwrap();
 }
-

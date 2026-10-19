@@ -10,8 +10,8 @@ use std::io::Write;
 #[cfg(feature = "std")]
 use std::sync::{Mutex, OnceLock};
 
-use alloc::string::String;
 use alloc::format;
+use alloc::string::String;
 
 /// Packs a 32-bit unsigned integer into a 4-byte big-endian array.
 pub fn pack_u32(value: u32) -> [u8; 4] {
@@ -109,6 +109,7 @@ pub fn decode_compact_ipv6_peers(peers: &[u8], offset: usize) -> alloc::vec::Vec
 
 /// Encodes an IPv6 peer list into compact 18-byte representation (16 bytes IPv6, 2 bytes port) (BEP 7).
 pub fn encode_compact_ipv6_peers(peers: &[(String, u16)]) -> alloc::vec::Vec<u8> {
+    #[allow(unused_mut)]
     let mut bytes = alloc::vec::Vec::new();
     for (ip, port) in peers {
         let clean_ip = ip.trim_start_matches('[').trim_end_matches(']');
@@ -216,7 +217,10 @@ pub struct YieldNow {
 impl core::future::Future for YieldNow {
     type Output = ();
 
-    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+    fn poll(
+        mut self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
         if self.yielded {
             core::task::Poll::Ready(())
         } else {
@@ -231,8 +235,8 @@ pub fn yield_now() -> YieldNow {
     YieldNow { yielded: false }
 }
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const BUFFER_SIZE: usize = crate::constants::BLOCK_SIZE + 9;
 const MAX_BUFFERS: usize = 8;
@@ -242,8 +246,15 @@ pub struct StaticBuffer {
 }
 
 impl StaticBuffer {
-    pub fn as_mut(&mut self) -> &mut [u8] {
+    /// Returns a mutable slice reference to the underlying pooled memory buffer.
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { &mut *POOL.buffers[self.index].get() }
+    }
+}
+
+impl AsMut<[u8]> for StaticBuffer {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.as_mut_slice()
     }
 }
 
@@ -260,6 +271,7 @@ struct Pool {
 
 unsafe impl Sync for Pool {}
 
+#[allow(clippy::declare_interior_mutable_const, clippy::large_const_arrays)]
 static POOL: Pool = {
     const INIT_BOOL: AtomicBool = AtomicBool::new(false);
     const INIT_BUF: UnsafeCell<[u8; BUFFER_SIZE]> = UnsafeCell::new([0; BUFFER_SIZE]);
@@ -310,7 +322,10 @@ pub fn generate_allowed_fast_set(
     {
         use std::net::{IpAddr, SocketAddr};
         let stripped = peer_ip.trim_start_matches("webrtc:");
-        if let Ok(addr) = stripped.parse::<IpAddr>().or_else(|_| stripped.parse::<SocketAddr>().map(|s| s.ip())) {
+        if let Ok(addr) = stripped
+            .parse::<IpAddr>()
+            .or_else(|_| stripped.parse::<SocketAddr>().map(|s| s.ip()))
+        {
             match addr {
                 IpAddr::V4(v4) => {
                     let oct = v4.octets();
@@ -381,7 +396,9 @@ mod tests {
         assert_eq!(fast_7, alloc::vec![1059, 431, 808, 1217, 287, 376, 1188]);
 
         let fast_9 = generate_allowed_fast_set(9, num_pieces, &info_hash, ip);
-        assert_eq!(fast_9, alloc::vec![1059, 431, 808, 1217, 287, 376, 1188, 353, 508]);
+        assert_eq!(
+            fast_9,
+            alloc::vec![1059, 431, 808, 1217, 287, 376, 1188, 353, 508]
+        );
     }
 }
-

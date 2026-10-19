@@ -12,15 +12,11 @@ pub enum BlockArrivalOutcome {
     /// First time this block has arrived.
     /// It must be written to storage and committed to the piece buffer,
     /// and cancellation messages should be dispatched to all other peers who had it requested.
-    CommitAndCancelOthers {
-        peers_to_cancel: Vec<String>,
-    },
+    CommitAndCancelOthers { peers_to_cancel: Vec<String> },
     /// Redundant duplicate block arrival from a slower/preempted peer.
     /// The block was already committed; safely absorbed and dropped in memory
     /// without writing duplicate bytes to disk.
-    AbsorbDuplicate {
-        source_peer: String,
-    },
+    AbsorbDuplicate { source_peer: String },
 }
 
 /// Metadata for an in-flight block request staged across one or more swarm sources.
@@ -165,7 +161,12 @@ impl AdaptiveErasureStaging {
     }
 
     /// Handles an incoming block payload, determining whether to commit or absorb as erasure duplicate.
-    pub fn on_block_arrived(&mut self, piece: u32, block_index: u32, from_peer: &str) -> BlockArrivalOutcome {
+    pub fn on_block_arrived(
+        &mut self,
+        piece: u32,
+        block_index: u32,
+        from_peer: &str,
+    ) -> BlockArrivalOutcome {
         let key = (piece, block_index);
 
         if self.committed_blocks.contains(&key) {

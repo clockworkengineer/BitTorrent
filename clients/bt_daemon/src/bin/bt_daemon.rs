@@ -4,15 +4,15 @@
 //! and listens on a local Unix socket or Named Pipe for command-line instructions.
 
 use bittorrent_rs::TorrentSession;
-use torrent_client_shared::{
-    extract_peer_infos, extract_piece_availability, FileInfo, IpcMessage, IpcReply,
-    SessionState, TorrentStatusInfo,
-};
+use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::io::{Read, Write, Seek, SeekFrom, BufRead, BufReader};
 use std::time::Duration;
-use serde::{Serialize, Deserialize};
+use torrent_client_shared::{
+    FileInfo, IpcMessage, IpcReply, SessionState, TorrentStatusInfo, extract_peer_infos,
+    extract_piece_availability,
+};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct DaemonState {
@@ -52,32 +52,42 @@ impl Engine {
     }
 
     fn save_state(&self) {
-        let torrents = self.sessions.iter().map(|s| {
-            let (bitfield_hex, hash_hex) = if let Ok(ctx) = s.session.context().lock() {
-                let bf = ctx.bitfield.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                let ih = bittorrent_rs::util::info_hash_to_string(&ctx.info_hash);
-                (bf, ih)
-            } else {
-                (String::new(), String::new())
-            };
+        let torrents = self
+            .sessions
+            .iter()
+            .map(|s| {
+                let (bitfield_hex, hash_hex) = if let Ok(ctx) = s.session.context().lock() {
+                    let bf = ctx
+                        .bitfield
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>();
+                    let ih = bittorrent_rs::util::info_hash_to_string(&ctx.info_hash);
+                    (bf, ih)
+                } else {
+                    (String::new(), String::new())
+                };
 
-            let fast_resume_file = if !hash_hex.is_empty() {
-                let resume_path = self.state_file.with_file_name(format!("{}.fastresume", hash_hex));
-                if s.session.save_fast_resume(&resume_path).is_ok() {
-                    Some(resume_path.to_string_lossy().to_string())
+                let fast_resume_file = if !hash_hex.is_empty() {
+                    let resume_path = self
+                        .state_file
+                        .with_file_name(format!("{}.fastresume", hash_hex));
+                    if s.session.save_fast_resume(&resume_path).is_ok() {
+                        Some(resume_path.to_string_lossy().to_string())
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
-            SavedTorrent {
-                torrent_path: s.torrent_path.clone(),
-                bitfield_hex,
-                fast_resume_file,
-            }
-        }).collect::<Vec<_>>();
+                SavedTorrent {
+                    torrent_path: s.torrent_path.clone(),
+                    bitfield_hex,
+                    fast_resume_file,
+                }
+            })
+            .collect::<Vec<_>>();
 
         let state = DaemonState {
             download_dir: self.download_dir.clone(),
@@ -90,14 +100,13 @@ impl Engine {
     }
 
     fn load_state(&mut self) {
-        if self.state_file.exists() {
-            if let Ok(content) = std::fs::read_to_string(&self.state_file) {
-                if let Ok(state) = serde_json::from_str::<DaemonState>(&content) {
-                    self.download_dir = state.download_dir;
-                    for t in state.torrents {
-                        let _ = self.add_session(t.torrent_path, Some(t.bitfield_hex), t.fast_resume_file);
-                    }
-                }
+        if self.state_file.exists()
+            && let Ok(content) = std::fs::read_to_string(&self.state_file)
+            && let Ok(state) = serde_json::from_str::<DaemonState>(&content)
+        {
+            self.download_dir = state.download_dir;
+            for t in state.torrents {
+                let _ = self.add_session(t.torrent_path, Some(t.bitfield_hex), t.fast_resume_file);
             }
         }
     }
@@ -141,35 +150,37 @@ impl Engine {
         };
 
         // Restore bitfield
-        if let Some(ref hex_str) = bitfield_hex {
-            if let Ok(mut ctx) = session.context.lock() {
-                let mut bytes = Vec::new();
-                for i in (0..hex_str.len()).step_by(2) {
-                    if i + 2 <= hex_str.len() {
-                        if let Ok(b) = u8::from_str_radix(&hex_str[i..i+2], 16) {
-                            bytes.push(b);
-                        }
+        if let Some(ref hex_str) = bitfield_hex
+            && let Ok(mut ctx) = session.context.lock()
+        {
+            let mut bytes = Vec::new();
+            for i in (0..hex_str.len()).step_by(2) {
+                if i + 2 <= hex_str.len()
+                    && let Ok(b) = u8::from_str_radix(&hex_str[i..i + 2], 16)
+                {
+                    bytes.push(b);
+                }
+            }
+            if bytes.len() == ctx.bitfield.len() {
+                ctx.bitfield = bytes.clone();
+                let mut downloaded = 0u64;
+                let mut missing_count = 0;
+                let number_of_pieces = ctx.number_of_pieces;
+                for piece_num in 0..number_of_pieces {
+                    let (byte_idx, mask) =
+                        bittorrent_rs::util::get_bitfield_index_and_mask(piece_num as u32);
+                    let local = (bytes[byte_idx] & mask) != 0;
+                    ctx.mark_piece_missing(piece_num as u32, !local);
+                    if local {
+                        downloaded += ctx.get_piece_length(piece_num as u32) as u64;
+                    } else {
+                        missing_count += 1;
                     }
                 }
-                if bytes.len() == ctx.bitfield.len() {
-                    ctx.bitfield = bytes.clone();
-                    let mut downloaded = 0u64;
-                    let mut missing_count = 0;
-                    let number_of_pieces = ctx.number_of_pieces;
-                    for piece_num in 0..number_of_pieces {
-                        let (byte_idx, mask) = bittorrent_rs::util::get_bitfield_index_and_mask(piece_num as u32);
-                        let local = (bytes[byte_idx] & mask) != 0;
-                        ctx.mark_piece_missing(piece_num as u32, !local);
-                        if local {
-                            downloaded += ctx.get_piece_length(piece_num as u32) as u64;
-                        } else {
-                            missing_count += 1;
-                        }
-                    }
-                    ctx.total_bytes_downloaded.store(downloaded, std::sync::atomic::Ordering::Relaxed);
-                    ctx.missing_pieces_count = missing_count;
-                    ctx.initial_bytes_downloaded = downloaded;
-                }
+                ctx.total_bytes_downloaded
+                    .store(downloaded, std::sync::atomic::Ordering::Relaxed);
+                ctx.missing_pieces_count = missing_count;
+                ctx.initial_bytes_downloaded = downloaded;
             }
         }
 
@@ -184,7 +195,11 @@ impl Engine {
     }
 
     fn pause_session(&mut self, target_hash: &str) -> Result<(), String> {
-        if let Some(s) = self.sessions.iter_mut().find(|s| info_hash_hex(&s.session).to_lowercase() == target_hash.to_lowercase()) {
+        if let Some(s) = self
+            .sessions
+            .iter_mut()
+            .find(|s| info_hash_hex(&s.session).to_lowercase() == target_hash.to_lowercase())
+        {
             s.session.pause().map_err(|e| e.to_string())?;
             self.save_state();
             Ok(())
@@ -194,7 +209,11 @@ impl Engine {
     }
 
     fn resume_session(&mut self, target_hash: &str) -> Result<(), String> {
-        if let Some(s) = self.sessions.iter_mut().find(|s| info_hash_hex(&s.session).to_lowercase() == target_hash.to_lowercase()) {
+        if let Some(s) = self
+            .sessions
+            .iter_mut()
+            .find(|s| info_hash_hex(&s.session).to_lowercase() == target_hash.to_lowercase())
+        {
             s.session.resume().map_err(|e| e.to_string())?;
             self.save_state();
             Ok(())
@@ -204,16 +223,18 @@ impl Engine {
     }
 
     fn remove_session(&mut self, target_hash: &str, delete_data: bool) -> Result<(), String> {
-        if let Some(pos) = self.sessions.iter().position(|s| info_hash_hex(&s.session).to_lowercase() == target_hash.to_lowercase()) {
+        if let Some(pos) = self
+            .sessions
+            .iter()
+            .position(|s| info_hash_hex(&s.session).to_lowercase() == target_hash.to_lowercase())
+        {
             let mut state = self.sessions.remove(pos);
             let _ = state.session.stop();
-            if delete_data {
-                if let Ok(ctx) = state.session.context().lock() {
-                    for file in &ctx.files_to_download {
-                        let path = Path::new(&file.name);
-                        if path.exists() {
-                            let _ = std::fs::remove_file(path);
-                        }
+            if delete_data && let Ok(ctx) = state.session.context().lock() {
+                for file in &ctx.files_to_download {
+                    let path = Path::new(&file.name);
+                    if path.exists() {
+                        let _ = std::fs::remove_file(path);
                     }
                 }
             }
@@ -266,11 +287,20 @@ impl Engine {
 
 pub fn is_media_filename(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower.ends_with(".mp4") || lower.ends_with(".mkv") || lower.ends_with(".webm") ||
-    lower.ends_with(".avi") || lower.ends_with(".mov") || lower.ends_with(".m4v") ||
-    lower.ends_with(".flv") || lower.ends_with(".wmv") || lower.ends_with(".mp3") ||
-    lower.ends_with(".flac") || lower.ends_with(".ogg") || lower.ends_with(".wav") ||
-    lower.ends_with(".aac") || lower.ends_with(".m4a")
+    lower.ends_with(".mp4")
+        || lower.ends_with(".mkv")
+        || lower.ends_with(".webm")
+        || lower.ends_with(".avi")
+        || lower.ends_with(".mov")
+        || lower.ends_with(".m4v")
+        || lower.ends_with(".flv")
+        || lower.ends_with(".wmv")
+        || lower.ends_with(".mp3")
+        || lower.ends_with(".flac")
+        || lower.ends_with(".ogg")
+        || lower.ends_with(".wav")
+        || lower.ends_with(".aac")
+        || lower.ends_with(".m4a")
 }
 
 pub fn detect_mime_type(name: &str) -> &'static str {
@@ -303,7 +333,10 @@ fn start_stream_server(engine: Arc<Mutex<Engine>>, port: u16) {
         let addr = format!("0.0.0.0:{}", port);
         let listener = match std::net::TcpListener::bind(&addr) {
             Ok(l) => {
-                println!("HTTP Media Streaming Server listening on http://127.0.0.1:{}", port);
+                println!(
+                    "HTTP Media Streaming Server listening on http://127.0.0.1:{}",
+                    port
+                );
                 l
             }
             Err(e) => {
@@ -312,13 +345,11 @@ fn start_stream_server(engine: Arc<Mutex<Engine>>, port: u16) {
             }
         };
 
-        for stream in listener.incoming() {
-            if let Ok(tcp_stream) = stream {
-                let eng = engine.clone();
-                std::thread::spawn(move || {
-                    handle_stream_client(tcp_stream, eng);
-                });
-            }
+        for tcp_stream in listener.incoming().flatten() {
+            let eng = engine.clone();
+            std::thread::spawn(move || {
+                handle_stream_client(tcp_stream, eng);
+            });
         }
     });
 }
@@ -382,7 +413,11 @@ Access-Control-Max-Age: 86400\r\n\r\n";
 
     let (torrent_stream_res, file_name) = {
         let e = engine.lock().unwrap();
-        let session_state = match e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(target_hash)) {
+        let session_state = match e
+            .sessions
+            .iter()
+            .find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(target_hash))
+        {
             Some(s) => s,
             None => {
                 let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\nTorrent not found");
@@ -390,31 +425,35 @@ Access-Control-Max-Age: 86400\r\n\r\n";
             }
         };
 
-        if segments.len() >= 3 && segments[2] == "files" {
-            if let Ok(ctx) = session_state.session.context().lock() {
-                let files: Vec<FileInfo> = ctx.files_to_download.iter().enumerate().map(|(idx, f)| {
-                    FileInfo {
-                        index: idx,
-                        name: f.torrent_path.clone(),
-                        length: f.length,
-                        is_media: is_media_filename(&f.torrent_path),
-                        priority: f.priority.as_str().to_string(),
-                    }
-                }).collect();
-                drop(ctx);
-                drop(e);
-                let json = serde_json::to_string(&files).unwrap_or_else(|_| "[]".into());
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\n\
+        if segments.len() >= 3
+            && segments[2] == "files"
+            && let Ok(ctx) = session_state.session.context().lock()
+        {
+            let files: Vec<FileInfo> = ctx
+                .files_to_download
+                .iter()
+                .enumerate()
+                .map(|(idx, f)| FileInfo {
+                    index: idx,
+                    name: f.torrent_path.clone(),
+                    length: f.length,
+                    is_media: is_media_filename(&f.torrent_path),
+                    priority: f.priority.as_str().to_string(),
+                })
+                .collect();
+            drop(ctx);
+            drop(e);
+            let json = serde_json::to_string(&files).unwrap_or_else(|_| "[]".into());
+            let response = format!(
+                "HTTP/1.1 200 OK\r\n\
 Content-Type: application/json\r\n\
 Access-Control-Allow-Origin: *\r\n\
 Content-Length: {}\r\n\r\n{}",
-                    json.len(),
-                    json
-                );
-                let _ = stream.write_all(response.as_bytes());
-                return;
-            }
+                json.len(),
+                json
+            );
+            let _ = stream.write_all(response.as_bytes());
+            return;
         }
 
         let file_index_opt: Option<usize> = if segments.len() >= 3 {
@@ -452,7 +491,10 @@ Content-Length: {}\r\n\r\n{}",
 
         let file_name = if let Some(idx) = target_file_index {
             if let Ok(ctx) = session_state.session.context().lock() {
-                ctx.files_to_download.get(idx).map(|f| f.torrent_path.clone()).unwrap_or_else(|| session_state.last_file_name.clone())
+                ctx.files_to_download
+                    .get(idx)
+                    .map(|f| f.torrent_path.clone())
+                    .unwrap_or_else(|| session_state.last_file_name.clone())
             } else {
                 session_state.last_file_name.clone()
             }
@@ -472,7 +514,11 @@ Content-Length: {}\r\n\r\n{}",
         Ok(s) => s,
         Err(err) => {
             let msg = format!("Failed to create stream: {}", err);
-            let response = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}", msg.len(), msg);
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
+                msg.len(),
+                msg
+            );
             let _ = stream.write_all(response.as_bytes());
             return;
         }
@@ -489,17 +535,16 @@ Content-Length: {}\r\n\r\n{}",
     let mut range_start = 0u64;
     let mut range_end = total_len - 1;
     let is_range_request = if let Some(ref r) = range_header {
-        if r.starts_with("bytes=") {
-            let spec = &r["bytes=".len()..];
+        if let Some(spec) = r.strip_prefix("bytes=") {
             let parts: Vec<&str> = spec.split('-').collect();
             if parts.len() == 2 {
                 if let Ok(s) = parts[0].parse::<u64>() {
                     range_start = s;
                 }
-                if !parts[1].is_empty() {
-                    if let Ok(e) = parts[1].parse::<u64>() {
-                        range_end = e.min(total_len - 1);
-                    }
+                if !parts[1].is_empty()
+                    && let Ok(e) = parts[1].parse::<u64>()
+                {
+                    range_end = e.min(total_len - 1);
                 }
                 true
             } else {
@@ -582,8 +627,8 @@ Connection: keep-alive\r\n\r\n",
 
 #[cfg(unix)]
 mod ipc {
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
-    use std::io::{Write, BufRead, BufReader};
 
     pub struct IpcServer {
         socket_path: String,
@@ -591,12 +636,14 @@ mod ipc {
 
     impl IpcServer {
         pub fn new(name: &str) -> Self {
-            Self { socket_path: format!("/tmp/{}.sock", name) }
+            Self {
+                socket_path: format!("/tmp/{}.sock", name),
+            }
         }
 
         pub fn listen<F>(&self, handler: F) -> std::io::Result<()>
         where
-            F: Fn(String) -> String + Send + Sync + 'static
+            F: Fn(String) -> String + Send + Sync + 'static,
         {
             let _ = std::fs::remove_file(&self.socket_path);
             let listener = UnixListener::bind(&self.socket_path)?;
@@ -641,9 +688,12 @@ mod ipc {
 #[cfg(windows)]
 mod ipc {
     use std::ptr;
-    use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, CloseHandle};
-    use windows_sys::Win32::System::Pipes::{CreateNamedPipeW, ConnectNamedPipe, DisconnectNamedPipe, PIPE_TYPE_BYTE, PIPE_READMODE_BYTE, PIPE_WAIT};
-    use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile, PIPE_ACCESS_DUPLEX};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{PIPE_ACCESS_DUPLEX, ReadFile, WriteFile};
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
+        PIPE_TYPE_BYTE, PIPE_WAIT,
+    };
 
     pub struct IpcServer {
         pipe_name: Vec<u16>,
@@ -659,7 +709,7 @@ mod ipc {
 
         pub fn listen<F>(&self, handler: F) -> std::io::Result<()>
         where
-            F: Fn(String) -> String + Send + Sync + 'static
+            F: Fn(String) -> String + Send + Sync + 'static,
         {
             let handler = std::sync::Arc::new(handler);
             loop {
@@ -668,10 +718,10 @@ mod ipc {
                         self.pipe_name.as_ptr(),
                         PIPE_ACCESS_DUPLEX,
                         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                        255, // max instances
+                        255,  // max instances
                         4096, // out buffer
                         4096, // in buffer
-                        0, // default timeout
+                        0,    // default timeout
                         ptr::null(),
                     )
                 };
@@ -686,7 +736,10 @@ mod ipc {
                 } else {
                     0
                 };
-                if connected != 0 || last_err == 997 || last_err == windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
+                if connected != 0
+                    || last_err == 997
+                    || last_err == windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED
+                {
                     let handler_clone = handler.clone();
                     let pipe_raw = pipe as usize;
                     std::thread::spawn(move || {
@@ -740,7 +793,9 @@ mod ipc {
                         }
                     });
                 } else {
-                    unsafe { CloseHandle(pipe); }
+                    unsafe {
+                        CloseHandle(pipe);
+                    }
                 }
             }
         }
@@ -768,18 +823,20 @@ fn main() {
     let state_file = state_dir.join("daemon_state.json");
 
     let engine = Arc::new(Mutex::new(Engine::new(state_file, "downloads".to_string())));
-    
+
     // Load existing state
     {
         let mut e = engine.lock().unwrap();
         e.load_state();
-        println!("Daemon initialized. Loaded {} active sessions.", e.sessions.len());
+        println!(
+            "Daemon initialized. Loaded {} active sessions.",
+            e.sessions.len()
+        );
     }
 
     // Launch HTTP Media Stream Server
     let engine_stream = engine.clone();
     start_stream_server(engine_stream, stream_port);
-
 
     // Set up shutdown channel
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
@@ -789,7 +846,8 @@ fn main() {
     ctrlc::set_handler(move || {
         println!("\nShutdown signal received (Ctrl+C)...");
         let _ = shutdown_tx_ctrlc.send(());
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
 
     // Launch IPC Server
     let engine_ipc = engine.clone();
@@ -797,124 +855,188 @@ fn main() {
     std::thread::spawn(move || {
         let server = ipc::IpcServer::new("bt-daemon");
         println!("IPC server listening...");
-        let _ = server.listen(move |req_str| {
-            let req: IpcMessage = match serde_json::from_str(&req_str) {
-                Ok(m) => m,
-                Err(e) => return serde_json::to_string(&IpcReply::Error { reason: format!("JSON Parse Error: {}", e) }).unwrap(),
-            };
+        let _ =
+            server.listen(move |req_str| {
+                let req: IpcMessage = match serde_json::from_str(&req_str) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        return serde_json::to_string(&IpcReply::Error {
+                            reason: format!("JSON Parse Error: {}", e),
+                        })
+                        .unwrap();
+                    }
+                };
 
-            let reply = match req {
-                IpcMessage::Add { torrent_path, download_dir } => {
-                    let mut e = engine_ipc.lock().unwrap();
-                    if let Some(dir) = download_dir {
-                        e.download_dir = dir;
-                    }
-                    match e.add_session(torrent_path, None, None) {
-                        Ok(_) => IpcReply::Success { message: "Torrent added successfully".to_string() },
-                        Err(err) => IpcReply::Error { reason: err },
-                    }
-                }
-                IpcMessage::Status => {
-                    let mut e = engine_ipc.lock().unwrap();
-                    IpcReply::StatusList { torrents: e.get_status_info() }
-                }
-                IpcMessage::Pause { info_hash } => {
-                    let mut e = engine_ipc.lock().unwrap();
-                    match e.pause_session(&info_hash) {
-                        Ok(_) => IpcReply::Success { message: "Torrent paused".to_string() },
-                        Err(err) => IpcReply::Error { reason: err },
-                    }
-                }
-                IpcMessage::Resume { info_hash } => {
-                    let mut e = engine_ipc.lock().unwrap();
-                    match e.resume_session(&info_hash) {
-                        Ok(_) => IpcReply::Success { message: "Torrent resumed".to_string() },
-                        Err(err) => IpcReply::Error { reason: err },
-                    }
-                }
-                IpcMessage::Remove { info_hash, delete_data } => {
-                    let mut e = engine_ipc.lock().unwrap();
-                    match e.remove_session(&info_hash, delete_data) {
-                        Ok(_) => IpcReply::Success { message: "Torrent removed".to_string() },
-                        Err(err) => IpcReply::Error { reason: err },
-                    }
-                }
-                IpcMessage::Shutdown => {
-                    let _ = shutdown_tx_ipc.send(());
-                    IpcReply::Success { message: "Daemon shutting down...".to_string() }
-                }
-                IpcMessage::Files { info_hash } => {
-                    let e = engine_ipc.lock().unwrap();
-                    let files = if let Some(s) = e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
-                        if let Ok(ctx) = s.session.context().lock() {
-                            ctx.files_to_download.iter().enumerate().map(|(idx, f)| {
-                                FileInfo {
-                                    index: idx,
-                                    name: f.torrent_path.clone(),
-                                    length: f.length,
-                                    is_media: is_media_filename(&f.torrent_path),
-                                    priority: f.priority.as_str().to_string(),
+                let reply =
+                    match req {
+                        IpcMessage::Add {
+                            torrent_path,
+                            download_dir,
+                        } => {
+                            let mut e = engine_ipc.lock().unwrap();
+                            if let Some(dir) = download_dir {
+                                e.download_dir = dir;
+                            }
+                            match e.add_session(torrent_path, None, None) {
+                                Ok(_) => IpcReply::Success {
+                                    message: "Torrent added successfully".to_string(),
+                                },
+                                Err(err) => IpcReply::Error { reason: err },
+                            }
+                        }
+                        IpcMessage::Status => {
+                            let mut e = engine_ipc.lock().unwrap();
+                            IpcReply::StatusList {
+                                torrents: e.get_status_info(),
+                            }
+                        }
+                        IpcMessage::Pause { info_hash } => {
+                            let mut e = engine_ipc.lock().unwrap();
+                            match e.pause_session(&info_hash) {
+                                Ok(_) => IpcReply::Success {
+                                    message: "Torrent paused".to_string(),
+                                },
+                                Err(err) => IpcReply::Error { reason: err },
+                            }
+                        }
+                        IpcMessage::Resume { info_hash } => {
+                            let mut e = engine_ipc.lock().unwrap();
+                            match e.resume_session(&info_hash) {
+                                Ok(_) => IpcReply::Success {
+                                    message: "Torrent resumed".to_string(),
+                                },
+                                Err(err) => IpcReply::Error { reason: err },
+                            }
+                        }
+                        IpcMessage::Remove {
+                            info_hash,
+                            delete_data,
+                        } => {
+                            let mut e = engine_ipc.lock().unwrap();
+                            match e.remove_session(&info_hash, delete_data) {
+                                Ok(_) => IpcReply::Success {
+                                    message: "Torrent removed".to_string(),
+                                },
+                                Err(err) => IpcReply::Error { reason: err },
+                            }
+                        }
+                        IpcMessage::Shutdown => {
+                            let _ = shutdown_tx_ipc.send(());
+                            IpcReply::Success {
+                                message: "Daemon shutting down...".to_string(),
+                            }
+                        }
+                        IpcMessage::Files { info_hash } => {
+                            let e = engine_ipc.lock().unwrap();
+                            let files = if let Some(s) = e.sessions.iter().find(|s| {
+                                info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)
+                            }) {
+                                if let Ok(ctx) = s.session.context().lock() {
+                                    ctx.files_to_download
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(idx, f)| FileInfo {
+                                            index: idx,
+                                            name: f.torrent_path.clone(),
+                                            length: f.length,
+                                            is_media: is_media_filename(&f.torrent_path),
+                                            priority: f.priority.as_str().to_string(),
+                                        })
+                                        .collect()
+                                } else {
+                                    Vec::new()
                                 }
-                            }).collect()
-                        } else {
-                            Vec::new()
+                            } else {
+                                Vec::new()
+                            };
+                            IpcReply::FileList { files }
                         }
-                    } else {
-                        Vec::new()
+                        IpcMessage::Peers { info_hash } => {
+                            let e = engine_ipc.lock().unwrap();
+                            let peers = if let Some(s) = e.sessions.iter().find(|s| {
+                                info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)
+                            }) {
+                                if let Ok(ctx) = s.session.context().lock() {
+                                    extract_peer_infos(&ctx)
+                                } else {
+                                    Vec::new()
+                                }
+                            } else {
+                                Vec::new()
+                            };
+                            IpcReply::PeerList { peers }
+                        }
+                        IpcMessage::Pieces { info_hash } => {
+                            let e = engine_ipc.lock().unwrap();
+                            if let Some(s) = e.sessions.iter().find(|s| {
+                                info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)
+                            }) {
+                                if let Ok(ctx) = s.session.context().lock() {
+                                    let info = extract_piece_availability(&ctx);
+                                    IpcReply::PieceStates { info }
+                                } else {
+                                    IpcReply::Error {
+                                        reason: "Unable to lock session context".to_string(),
+                                    }
+                                }
+                            } else {
+                                IpcReply::Error {
+                                    reason: "Torrent not found".to_string(),
+                                }
+                            }
+                        }
+                        IpcMessage::SetFilePriority {
+                            info_hash,
+                            file_index,
+                            priority,
+                        } => {
+                            let mut e = engine_ipc.lock().unwrap();
+                            if let Some(s) = e.sessions.iter_mut().find(|s| {
+                                info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)
+                            }) {
+                                let prio = bittorrent_rs::FilePriority::from_str_loose(&priority);
+                                match s.session.set_file_priority(file_index, prio) {
+                                    Ok(()) => IpcReply::Success {
+                                        message: format!(
+                                            "Set file {} priority to {}",
+                                            file_index,
+                                            prio.as_str()
+                                        ),
+                                    },
+                                    Err(err) => IpcReply::Error {
+                                        reason: err.to_string(),
+                                    },
+                                }
+                            } else {
+                                IpcReply::Error {
+                                    reason: "Torrent not found".to_string(),
+                                }
+                            }
+                        }
+                        IpcMessage::SetSuperSeeding { info_hash, enabled } => {
+                            let mut e = engine_ipc.lock().unwrap();
+                            if let Some(s) = e.sessions.iter_mut().find(|s| {
+                                info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)
+                            }) {
+                                s.session.set_super_seeding(enabled);
+                                IpcReply::Success {
+                                    message: format!(
+                                        "Super-seeding set to {} for {}",
+                                        enabled, info_hash
+                                    ),
+                                }
+                            } else {
+                                IpcReply::Error {
+                                    reason: "Torrent not found".to_string(),
+                                }
+                            }
+                        }
                     };
-                    IpcReply::FileList { files }
-                }
-                IpcMessage::Peers { info_hash } => {
-                    let e = engine_ipc.lock().unwrap();
-                    let peers = if let Some(s) = e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
-                        if let Ok(ctx) = s.session.context().lock() {
-                            extract_peer_infos(&ctx)
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    };
-                    IpcReply::PeerList { peers }
-                }
-                IpcMessage::Pieces { info_hash } => {
-                    let e = engine_ipc.lock().unwrap();
-                    if let Some(s) = e.sessions.iter().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
-                        if let Ok(ctx) = s.session.context().lock() {
-                            let info = extract_piece_availability(&ctx);
-                            IpcReply::PieceStates { info }
-                        } else {
-                            IpcReply::Error { reason: "Unable to lock session context".to_string() }
-                        }
-                    } else {
-                        IpcReply::Error { reason: "Torrent not found".to_string() }
-                    }
-                }
-                IpcMessage::SetFilePriority { info_hash, file_index, priority } => {
-                    let mut e = engine_ipc.lock().unwrap();
-                    if let Some(s) = e.sessions.iter_mut().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
-                        let prio = bittorrent_rs::FilePriority::from_str_loose(&priority);
-                        match s.session.set_file_priority(file_index, prio) {
-                            Ok(()) => IpcReply::Success { message: format!("Set file {} priority to {}", file_index, prio.as_str()) },
-                            Err(err) => IpcReply::Error { reason: err.to_string() },
-                        }
-                    } else {
-                        IpcReply::Error { reason: "Torrent not found".to_string() }
-                    }
-                }
-                IpcMessage::SetSuperSeeding { info_hash, enabled } => {
-                    let mut e = engine_ipc.lock().unwrap();
-                    if let Some(s) = e.sessions.iter_mut().find(|s| info_hash_hex(&s.session).eq_ignore_ascii_case(&info_hash)) {
-                        s.session.set_super_seeding(enabled);
-                        IpcReply::Success { message: format!("Super-seeding set to {} for {}", enabled, info_hash) }
-                    } else {
-                        IpcReply::Error { reason: "Torrent not found".to_string() }
-                    }
-                }
-            };
 
-            serde_json::to_string(&reply).unwrap_or_else(|_| "{\"type\":\"Error\",\"data\":{\"reason\":\"Serialization error\"}}".to_string())
-        });
+                serde_json::to_string(&reply).unwrap_or_else(|_| {
+                    "{\"type\":\"Error\",\"data\":{\"reason\":\"Serialization error\"}}".to_string()
+                })
+            });
     });
 
     // Wait for shutdown signal

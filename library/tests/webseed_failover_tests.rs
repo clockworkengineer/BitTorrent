@@ -1,11 +1,11 @@
+use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::{
+    TorrentSession, TorrentStatus,
     io_traits::MemStorage,
     network::webseed_tracker::{MirrorHealthProfile, WebSeedMirrorTracker},
     selector::SequentialSelector,
     session::config::SessionConfig,
-    TorrentSession, TorrentStatus,
 };
-use bittorrent_rs::internals::TorrentContext;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -183,14 +183,22 @@ fn test_context_and_session_webseed_integration() {
     assert_eq!(ctx.web_seeds.len(), 3);
     let summaries2 = ctx.webseed_mirror_summary();
     assert_eq!(summaries2.len(), 3);
-    assert!(summaries2.iter().any(|s| s.endpoint_url == "http://seed-gamma.net"));
+    assert!(
+        summaries2
+            .iter()
+            .any(|s| s.endpoint_url == "http://seed-gamma.net")
+    );
 
     // Remove WebSeed dynamically
     assert!(ctx.remove_webseed("http://seed-beta.net"));
     assert_eq!(ctx.web_seeds.len(), 2);
     let summaries3 = ctx.webseed_mirror_summary();
     assert_eq!(summaries3.len(), 2);
-    assert!(!summaries3.iter().any(|s| s.endpoint_url == "http://seed-beta.net"));
+    assert!(
+        !summaries3
+            .iter()
+            .any(|s| s.endpoint_url == "http://seed-beta.net")
+    );
 }
 
 #[test]

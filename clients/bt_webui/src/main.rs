@@ -4,16 +4,19 @@
 //! and forwards commands to the running bt_daemon via Unix Domain Sockets or Named Pipes.
 
 use axum::{
-    routing::{get, post},
-    response::{Html, IntoResponse},
-    http::StatusCode,
-    extract::{Path as AxumPath, Query, ws::{WebSocketUpgrade, WebSocket, Message}, State},
     Json, Router,
+    extract::{
+        Path as AxumPath, Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
+    http::StatusCode,
+    response::{Html, IntoResponse},
+    routing::{get, post},
 };
-use torrent_client_shared::{IpcMessage, IpcReply};
-use std::time::Duration;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
+use torrent_client_shared::{IpcMessage, IpcReply};
 
 #[derive(Clone)]
 struct AppState {
@@ -23,11 +26,11 @@ struct AppState {
 
 fn execute_ipc(msg: IpcMessage) -> Result<IpcReply, String> {
     let serialized = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
-    
+
     #[cfg(unix)]
     let response_str = {
+        use std::io::{BufRead, BufReader, Write};
         use std::os::unix::net::UnixStream;
-        use std::io::{Write, BufRead, BufReader};
         let mut stream = UnixStream::connect("/tmp/bt-daemon.sock").map_err(|e| e.to_string())?;
         let mut msg_bytes = serialized.into_bytes();
         msg_bytes.push(b'\n');
@@ -43,7 +46,7 @@ fn execute_ipc(msg: IpcMessage) -> Result<IpcReply, String> {
     #[cfg(windows)]
     let response_str = {
         use std::fs::OpenOptions;
-        use std::io::{Write, BufReader, BufRead};
+        use std::io::{BufRead, BufReader, Write};
         let mut file = None;
         for _ in 0..10 {
             match OpenOptions::new()
@@ -87,42 +90,99 @@ struct AddPayload {
     download_dir: Option<String>,
 }
 
-async fn add_torrent(State(state): State<AppState>, Json(payload): Json<AddPayload>) -> impl IntoResponse {
+async fn add_torrent(
+    State(state): State<AppState>,
+    Json(payload): Json<AddPayload>,
+) -> impl IntoResponse {
     match execute_ipc(IpcMessage::Add {
         torrent_path: payload.torrent_path,
         download_dir: payload.download_dir,
     }) {
         Ok(IpcReply::Success { message }) => {
             state.notify.notify_waiters();
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": message }))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "success", "message": message })),
+            )
+                .into_response()
         }
-        Ok(IpcReply::Error { reason }) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response(),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
-async fn pause_torrent(State(state): State<AppState>, AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
+async fn pause_torrent(
+    State(state): State<AppState>,
+    AxumPath(info_hash): AxumPath<String>,
+) -> impl IntoResponse {
     match execute_ipc(IpcMessage::Pause { info_hash }) {
         Ok(IpcReply::Success { message }) => {
             state.notify.notify_waiters();
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": message }))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "success", "message": message })),
+            )
+                .into_response()
         }
-        Ok(IpcReply::Error { reason }) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response(),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
-async fn resume_torrent(State(state): State<AppState>, AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
+async fn resume_torrent(
+    State(state): State<AppState>,
+    AxumPath(info_hash): AxumPath<String>,
+) -> impl IntoResponse {
     match execute_ipc(IpcMessage::Resume { info_hash }) {
         Ok(IpcReply::Success { message }) => {
             state.notify.notify_waiters();
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": message }))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "success", "message": message })),
+            )
+                .into_response()
         }
-        Ok(IpcReply::Error { reason }) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response(),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
@@ -132,30 +192,63 @@ struct DeleteParams {
     purge: bool,
 }
 
-async fn delete_torrent(State(state): State<AppState>, AxumPath(info_hash): AxumPath<String>, Query(params): Query<DeleteParams>) -> impl IntoResponse {
-    match execute_ipc(IpcMessage::Remove { info_hash, delete_data: params.purge }) {
+async fn delete_torrent(
+    State(state): State<AppState>,
+    AxumPath(info_hash): AxumPath<String>,
+    Query(params): Query<DeleteParams>,
+) -> impl IntoResponse {
+    match execute_ipc(IpcMessage::Remove {
+        info_hash,
+        delete_data: params.purge,
+    }) {
         Ok(IpcReply::Success { message }) => {
             state.notify.notify_waiters();
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": message }))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "success", "message": message })),
+            )
+                .into_response()
         }
-        Ok(IpcReply::Error { reason }) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response(),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
 async fn get_torrent_files(AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
     match execute_ipc(IpcMessage::Files { info_hash }) {
-        Ok(IpcReply::FileList { files }) => {
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "files": files }))).into_response()
-        }
-        Ok(IpcReply::Error { reason }) => {
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
-        }
-        Err(err) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::FileList { files }) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "success", "files": files })),
+        )
+            .into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
@@ -173,16 +266,26 @@ async fn set_file_priority(
         file_index,
         priority: payload.priority,
     }) {
-        Ok(IpcReply::Success { message }) => {
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": message }))).into_response()
-        }
-        Ok(IpcReply::Error { reason }) => {
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
-        }
-        Err(err) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::Success { message }) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "success", "message": message })),
+        )
+            .into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
@@ -202,45 +305,77 @@ async fn set_super_seeding(
     }) {
         Ok(IpcReply::Success { message }) => {
             state.notify.notify_waiters();
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": message }))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "success", "message": message })),
+            )
+                .into_response()
         }
-        Ok(IpcReply::Error { reason }) => {
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
-        }
-        Err(err) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
 async fn get_torrent_peers(AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
     match execute_ipc(IpcMessage::Peers { info_hash }) {
-        Ok(IpcReply::PeerList { peers }) => {
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "peers": peers }))).into_response()
-        }
-        Ok(IpcReply::Error { reason }) => {
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
-        }
-        Err(err) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::PeerList { peers }) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "success", "peers": peers })),
+        )
+            .into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
 async fn get_torrent_pieces(AxumPath(info_hash): AxumPath<String>) -> impl IntoResponse {
     match execute_ipc(IpcMessage::Pieces { info_hash }) {
-        Ok(IpcReply::PieceStates { info }) => {
-            (StatusCode::OK, Json(serde_json::json!({ "status": "success", "pieces": info }))).into_response()
-        }
-        Ok(IpcReply::Error { reason }) => {
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "status": "error", "reason": reason }))).into_response()
-        }
-        Err(err) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": err }))).into_response()
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" }))).into_response(),
+        Ok(IpcReply::PieceStates { info }) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "success", "pieces": info })),
+        )
+            .into_response(),
+        Ok(IpcReply::Error { reason }) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "reason": reason })),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": err })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "reason": "Unexpected daemon reply" })),
+        )
+            .into_response(),
     }
 }
 
@@ -248,7 +383,10 @@ async fn stream_redirect(
     State(state): State<AppState>,
     AxumPath(info_hash): AxumPath<String>,
 ) -> impl IntoResponse {
-    let url = format!("http://127.0.0.1:{}/stream/{}", state.stream_port, info_hash);
+    let url = format!(
+        "http://127.0.0.1:{}/stream/{}",
+        state.stream_port, info_hash
+    );
     axum::response::Redirect::temporary(&url).into_response()
 }
 
@@ -256,7 +394,10 @@ async fn stream_file_redirect(
     State(state): State<AppState>,
     AxumPath((info_hash, file_index)): AxumPath<(String, usize)>,
 ) -> impl IntoResponse {
-    let url = format!("http://127.0.0.1:{}/stream/{}/{}", state.stream_port, info_hash, file_index);
+    let url = format!(
+        "http://127.0.0.1:{}/stream/{}/{}",
+        state.stream_port, info_hash, file_index
+    );
     axum::response::Redirect::temporary(&url).into_response()
 }
 
@@ -284,10 +425,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
         };
 
-        if let Ok(serialized) = serde_json::to_string(&reply) {
-            if socket.send(Message::Text(serialized.into())).await.is_err() {
-                break;
-            }
+        if let Ok(serialized) = serde_json::to_string(&reply)
+            && socket.send(Message::Text(serialized)).await.is_err()
+        {
+            break;
         }
 
         tokio::select! {
@@ -321,7 +462,7 @@ async fn serve_js() -> impl IntoResponse {
 async fn main() {
     let mut port = 8080;
     let mut stream_port = 8081;
-    
+
     // Parse arguments
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -342,7 +483,10 @@ async fn main() {
     }
 
     let notify = Arc::new(tokio::sync::Notify::new());
-    let state = AppState { notify, stream_port };
+    let state = AppState {
+        notify,
+        stream_port,
+    };
 
     let app = Router::new()
         // Serve SPA assets
@@ -355,19 +499,31 @@ async fn main() {
         .route("/api/torrents/:info_hash/pause", post(pause_torrent))
         .route("/api/torrents/:info_hash/resume", post(resume_torrent))
         .route("/api/torrents/:info_hash/files", get(get_torrent_files))
-        .route("/api/torrents/:info_hash/files/:file_index/priority", post(set_file_priority))
-        .route("/api/torrents/:info_hash/super-seeding", post(set_super_seeding))
+        .route(
+            "/api/torrents/:info_hash/files/:file_index/priority",
+            post(set_file_priority),
+        )
+        .route(
+            "/api/torrents/:info_hash/super-seeding",
+            post(set_super_seeding),
+        )
         .route("/api/torrents/:info_hash/peers", get(get_torrent_peers))
         .route("/api/torrents/:info_hash/pieces", get(get_torrent_pieces))
-        .route("/api/torrents/:info_hash", axum::routing::delete(delete_torrent))
+        .route(
+            "/api/torrents/:info_hash",
+            axum::routing::delete(delete_torrent),
+        )
         // Stream redirect routes
         .route("/api/stream/:info_hash", get(stream_redirect))
-        .route("/api/stream/:info_hash/:file_index", get(stream_file_redirect))
+        .route(
+            "/api/stream/:info_hash/:file_index",
+            get(stream_file_redirect),
+        )
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     println!("WebUI Server running at http://{}", addr);
-    
+
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

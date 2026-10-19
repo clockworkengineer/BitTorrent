@@ -1,19 +1,22 @@
-use bittorrent_rs::{MagnetLink, Bencode, BNode, PeerMessage};
+use bittorrent_rs::{BNode, Bencode, MagnetLink, PeerMessage};
 
 #[test]
 fn test_magnet_link_parse_hex() {
     let uri = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu+Desktop&tr=http%3A%2F%2Ftracker.ubuntu.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969";
     let magnet = MagnetLink::parse(uri).unwrap();
-    
+
     let expected_hash = vec![
-        0x3f, 0x06, 0x91, 0x23, 0xcd, 0x20, 0x52, 0xc9, 0x35, 0x40,
-        0xc4, 0x90, 0x8e, 0xf4, 0x8d, 0xf8, 0xf4, 0x80, 0x39, 0x3c,
+        0x3f, 0x06, 0x91, 0x23, 0xcd, 0x20, 0x52, 0xc9, 0x35, 0x40, 0xc4, 0x90, 0x8e, 0xf4, 0x8d,
+        0xf8, 0xf4, 0x80, 0x39, 0x3c,
     ];
-    
+
     assert_eq!(magnet.info_hash, expected_hash);
     assert_eq!(magnet.display_name.as_deref(), Some("Ubuntu Desktop"));
     assert_eq!(magnet.trackers.len(), 2);
-    assert_eq!(magnet.trackers[0], "http://tracker.ubuntu.com:6969/announce");
+    assert_eq!(
+        magnet.trackers[0],
+        "http://tracker.ubuntu.com:6969/announce"
+    );
     assert_eq!(magnet.trackers[1], "udp://tracker.coppersurfer.tk:6969");
 }
 
@@ -23,12 +26,12 @@ fn test_magnet_link_parse_base32() {
     // Let's test standard base32
     let uri = "magnet:?xt=urn:btih:h4djci6nebjm5nkaosaip5em7d2ibwj4&dn=Ubuntu+Desktop";
     let magnet = MagnetLink::parse(uri).unwrap();
-    
+
     let expected_hash = vec![
-        0x3f, 0x06, 0x91, 0x23, 0xcd, 0x20, 0x52, 0xce, 0xb5, 0x40,
-        0x74, 0x80, 0x87, 0xf4, 0x8c, 0xf8, 0xf4, 0x80, 0xd9, 0x3c,
+        0x3f, 0x06, 0x91, 0x23, 0xcd, 0x20, 0x52, 0xce, 0xb5, 0x40, 0x74, 0x80, 0x87, 0xf4, 0x8c,
+        0xf8, 0xf4, 0x80, 0xd9, 0x3c,
     ];
-    
+
     assert_eq!(magnet.info_hash, expected_hash);
     assert_eq!(magnet.display_name.as_deref(), Some("Ubuntu Desktop"));
 }
@@ -39,7 +42,7 @@ fn test_bencode_decode_partial() {
     // Bencoded: d8:msg_typei1e5:piecei0ee
     let payload = b"d8:msg_typei1e5:piecei0ee\xDE\xAD\xBE\xEF";
     let (node, consumed) = Bencode::decode_partial(payload).unwrap();
-    
+
     assert_eq!(consumed, 25); // "d8:msg_typei1e5:piecei0ee" has 25 bytes
     assert!(matches!(node, BNode::Dictionary(_)));
     assert_eq!(&payload[consumed..], b"\xDE\xAD\xBE\xEF");
@@ -50,12 +53,12 @@ fn test_peer_message_extended_encode_decode() {
     let payload = b"d1:md11:ut_metadatai1eee";
     let msg = PeerMessage::Extended { ext_id: 0, payload };
     let bytes = msg.encode();
-    
+
     // length prefix (4 bytes) + message_id (20) (1 byte) + ext_id (1 byte) + payload
     assert_eq!(bytes.len(), 4 + 1 + 1 + payload.len());
     assert_eq!(bytes[4], 20); // ID 20 for Extended
-    assert_eq!(bytes[5], 0);  // ID 0 for handshake
-    
+    assert_eq!(bytes[5], 0); // ID 0 for handshake
+
     let decoded = PeerMessage::decode(&bytes[4..]).unwrap();
     assert_eq!(decoded, msg);
 }
@@ -81,7 +84,8 @@ fn test_magnet_link_parse_missing_xt() {
 #[test]
 fn test_magnet_link_parse_invalid_infohash() {
     // Info hash too short (hex should be 40 chars)
-    let uri_too_short = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f48039&dn=Ubuntu+Desktop";
+    let uri_too_short =
+        "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f48039&dn=Ubuntu+Desktop";
     match MagnetLink::parse(uri_too_short) {
         Err(e) => assert!(format!("{}", e).contains("Invalid info hash format")),
         Ok(_) => panic!("Expected error"),
@@ -92,7 +96,8 @@ fn test_magnet_link_parse_invalid_infohash() {
     assert!(MagnetLink::parse(uri_b32_too_short).is_err());
 
     // Invalid hex character
-    let uri_invalid_hex = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393g&dn=Ubuntu+Desktop";
+    let uri_invalid_hex =
+        "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393g&dn=Ubuntu+Desktop";
     assert!(MagnetLink::parse(uri_invalid_hex).is_err());
 }
 
@@ -104,13 +109,20 @@ fn test_magnet_link_percent_decode_edge_cases() {
     assert_eq!(magnet.display_name.as_deref(), Some("Ubuntu Desktop%"));
 
     // Plus decoded to space
-    let uri_plus = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu+Desktop+21.04";
+    let uri_plus =
+        "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu+Desktop+21.04";
     let magnet_plus = MagnetLink::parse(uri_plus).unwrap();
-    assert_eq!(magnet_plus.display_name.as_deref(), Some("Ubuntu Desktop 21.04"));
+    assert_eq!(
+        magnet_plus.display_name.as_deref(),
+        Some("Ubuntu Desktop 21.04")
+    );
 
     // Non-hex characters in escape sequence
-    let uri_non_hex = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu%2GDesktop";
+    let uri_non_hex =
+        "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=Ubuntu%2GDesktop";
     let magnet_non_hex = MagnetLink::parse(uri_non_hex).unwrap();
-    assert_eq!(magnet_non_hex.display_name.as_deref(), Some("Ubuntu%Desktop"));
+    assert_eq!(
+        magnet_non_hex.display_name.as_deref(),
+        Some("Ubuntu%Desktop")
+    );
 }
-

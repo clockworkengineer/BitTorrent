@@ -3,11 +3,11 @@
 //! Orchestrates app startup, window repaint loop timing, sidebar selection updates,
 //! status metrics tracking, and mapping background messages to the main UI logger.
 
+use crate::state::{DetailTab, SidebarFilter, matches_filter};
 use eframe::egui;
 use std::sync::mpsc;
 use std::time::Duration;
-use torrent_client_shared::{SessionState, PendingSession, fmt_bytes};
-use crate::state::{SidebarFilter, DetailTab, matches_filter};
+use torrent_client_shared::{PendingSession, SessionState, fmt_bytes};
 
 /// The main application state container holding UI variables, logs, and active session buffers.
 pub struct TorrentClientApp {
@@ -25,7 +25,7 @@ pub struct TorrentClientApp {
     pub log_rx: mpsc::Receiver<String>,
     /// Sender channel for writing logs from spawned worker threads.
     pub log_tx: mpsc::Sender<String>,
-    
+
     // UI state
     /// Index of the currently highlighted torrent session inside self.sessions.
     pub selected_session_index: Option<usize>,
@@ -44,7 +44,9 @@ pub struct TorrentClientApp {
 impl TorrentClientApp {
     /// Creates a new, uninitialized `TorrentClientApp` instance using the log channels.
     pub fn new(log_rx: mpsc::Receiver<String>, log_tx: mpsc::Sender<String>) -> Self {
-        let stream_server = crate::stream_server::StreamServer::new().ok().map(std::sync::Arc::new);
+        let stream_server = crate::stream_server::StreamServer::new()
+            .ok()
+            .map(std::sync::Arc::new);
         Self {
             torrent_path: String::new(),
             download_dir: String::new(),
@@ -64,13 +66,20 @@ impl TorrentClientApp {
 
     /// Counts how many of the currently loaded sessions match a given status category filter.
     pub fn count_torrents_for_filter(&self, filter: SidebarFilter) -> usize {
-        self.sessions.iter().filter(|s| matches_filter(s, filter)).count()
+        self.sessions
+            .iter()
+            .filter(|s| matches_filter(s, filter))
+            .count()
     }
 
     /// Starts streaming the selected torrent session or a specific file within it.
     pub fn start_streaming(&mut self, session_idx: usize, file_idx: Option<usize>) {
-        let Some(session_state) = self.sessions.get(session_idx) else { return; };
-        let Some(server) = &self.stream_server else { return; };
+        let Some(session_state) = self.sessions.get(session_idx) else {
+            return;
+        };
+        let Some(server) = &self.stream_server else {
+            return;
+        };
 
         let context = session_state.session.context.clone();
         let (file_name, total_size, actual_file_idx) = {
@@ -79,14 +88,20 @@ impl TorrentClientApp {
                     if let Some(f) = ctx.files_to_download.get(idx) {
                         (f.torrent_path.clone(), f.length, Some(idx))
                     } else {
-                        (session_state.last_file_name.clone(), ctx.total_bytes_to_download, None)
+                        (
+                            session_state.last_file_name.clone(),
+                            ctx.total_bytes_to_download,
+                            None,
+                        )
                     }
                 } else {
                     // Automatically find the largest media file
                     let mut best = None;
                     let mut max_len = 0;
                     for (i, f) in ctx.files_to_download.iter().enumerate() {
-                        if torrent_client_shared::is_media_filename(&f.torrent_path) && f.length > max_len {
+                        if torrent_client_shared::is_media_filename(&f.torrent_path)
+                            && f.length > max_len
+                        {
                             max_len = f.length;
                             best = Some(i);
                         }
@@ -103,11 +118,19 @@ impl TorrentClientApp {
                         let f = &ctx.files_to_download[idx];
                         (f.torrent_path.clone(), f.length, Some(idx))
                     } else {
-                        (session_state.last_file_name.clone(), ctx.total_bytes_to_download, None)
+                        (
+                            session_state.last_file_name.clone(),
+                            ctx.total_bytes_to_download,
+                            None,
+                        )
                     }
                 }
             } else {
-                (session_state.last_file_name.clone(), session_state.last_total, None)
+                (
+                    session_state.last_file_name.clone(),
+                    session_state.last_total,
+                    None,
+                )
             }
         };
 
@@ -163,7 +186,8 @@ impl eframe::App for TorrentClientApp {
         for (i, pending) in self.pending_sessions.iter_mut().enumerate() {
             match pending.rx.try_recv() {
                 Ok(Ok(session)) => {
-                    self.sessions.push(SessionState::new(session, pending.torrent_path.clone()));
+                    self.sessions
+                        .push(SessionState::new(session, pending.torrent_path.clone()));
                     ready.push(i);
                     should_save = true;
                 }
@@ -172,7 +196,10 @@ impl eframe::App for TorrentClientApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     if pending.error.is_none() {
-                        pending.error = Some("Failed to initialize session (file missing or thread terminated)".to_string());
+                        pending.error = Some(
+                            "Failed to initialize session (file missing or thread terminated)"
+                                .to_string(),
+                        );
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -193,7 +220,11 @@ impl eframe::App for TorrentClientApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut is_dark = ctx.style().visuals.dark_mode;
                     if ui.checkbox(&mut is_dark, "Dark Mode").changed() {
-                        ctx.set_visuals(if is_dark { egui::Visuals::dark() } else { egui::Visuals::light() });
+                        ctx.set_visuals(if is_dark {
+                            egui::Visuals::dark()
+                        } else {
+                            egui::Visuals::light()
+                        });
                     }
                     ui.add_space(8.0);
                     if ui.button("ℹ About").clicked() {
@@ -205,40 +236,53 @@ impl eframe::App for TorrentClientApp {
         });
 
         // Active Streaming Banner
-        if let Some(server) = &self.stream_server {
-            if let Some(active) = server.active_stream() {
-                egui::TopBottomPanel::top("stream_banner").show(ctx, |ui| {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("🎬 Streaming:").strong().color(egui::Color32::from_rgb(52, 152, 219)));
-                        let stream_title = if active.file_name != active.torrent_name {
-                            format!("{}: {}", active.torrent_name, active.file_name)
-                        } else {
-                            active.file_name.clone()
-                        };
-                        ui.label(egui::RichText::new(stream_title).strong());
+        if let Some(server) = &self.stream_server
+            && let Some(active) = server.active_stream()
+        {
+            egui::TopBottomPanel::top("stream_banner").show(ctx, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("🎬 Streaming:")
+                            .strong()
+                            .color(egui::Color32::from_rgb(52, 152, 219)),
+                    );
+                    let stream_title = if active.file_name != active.torrent_name {
+                        format!("{}: {}", active.torrent_name, active.file_name)
+                    } else {
+                        active.file_name.clone()
+                    };
+                    ui.label(egui::RichText::new(stream_title).strong());
 
-                        let cur = active.current_position.load(std::sync::atomic::Ordering::Relaxed);
-                        let prog = if active.total_size > 0 { (cur as f32) / (active.total_size as f32) } else { 0.0 };
-                        ui.add_sized([120.0, 14.0], egui::ProgressBar::new(prog).text(format!("{:.1}%", prog * 100.0)));
+                    let cur = active
+                        .current_position
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let prog = if active.total_size > 0 {
+                        (cur as f32) / (active.total_size as f32)
+                    } else {
+                        0.0
+                    };
+                    ui.add_sized(
+                        [120.0, 14.0],
+                        egui::ProgressBar::new(prog).text(format!("{:.1}%", prog * 100.0)),
+                    );
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("⏹ Stop").clicked() {
-                                server.stop_active_stream();
-                            }
-                            ui.add_space(6.0);
-                            if ui.button("📋 Copy URL").clicked() {
-                                ui.output_mut(|o| o.copied_text = server.stream_url());
-                            }
-                            ui.add_space(6.0);
-                            if ui.button("🚀 Open Player").clicked() {
-                                let _ = server.open_in_player();
-                            }
-                        });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("⏹ Stop").clicked() {
+                            server.stop_active_stream();
+                        }
+                        ui.add_space(6.0);
+                        if ui.button("📋 Copy URL").clicked() {
+                            ui.output_mut(|o| o.copied_text = server.stream_url());
+                        }
+                        ui.add_space(6.0);
+                        if ui.button("🚀 Open Player").clicked() {
+                            let _ = server.open_in_player();
+                        }
                     });
-                    ui.add_space(4.0);
                 });
-            }
+                ui.add_space(4.0);
+            });
         }
 
         // About Dialog Window
@@ -260,12 +304,25 @@ impl eframe::App for TorrentClientApp {
 
                 ui.label(format!("Active Torrents: {}", active_count));
                 ui.separator();
-                ui.label(format!("Total Speed: ↓ {}/s  ↑ {}/s", fmt_bytes(total_down_bps), fmt_bytes(total_up_bps)));
+                ui.label(format!(
+                    "Total Speed: ↓ {}/s  ↑ {}/s",
+                    fmt_bytes(total_down_bps),
+                    fmt_bytes(total_up_bps)
+                ));
                 ui.separator();
-                ui.label(format!("Total Peers: {}", self.sessions.iter().map(|s| s.last_peers_connected).sum::<usize>()));
+                ui.label(format!(
+                    "Total Peers: {}",
+                    self.sessions
+                        .iter()
+                        .map(|s| s.last_peers_connected)
+                        .sum::<usize>()
+                ));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new("✔ Online").color(egui::Color32::from_rgb(46, 204, 113)));
+                    ui.label(
+                        egui::RichText::new("✔ Online")
+                            .color(egui::Color32::from_rgb(46, 204, 113)),
+                    );
                 });
             });
         });
@@ -276,17 +333,23 @@ impl eframe::App for TorrentClientApp {
             .default_width(150.0)
             .show(ctx, |ui| {
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("STATUS").strong().size(11.0).color(ui.visuals().weak_text_color()));
+                ui.label(
+                    egui::RichText::new("STATUS")
+                        .strong()
+                        .size(11.0)
+                        .color(ui.visuals().weak_text_color()),
+                );
                 ui.add_space(6.0);
 
-                let mut draw_filter_button = |ui: &mut egui::Ui, filter: SidebarFilter, icon: &str, text: &str| {
-                    let count = self.count_torrents_for_filter(filter);
-                    let label = format!("{} {} ({})", icon, text, count);
-                    let is_selected = self.active_filter == filter;
-                    if ui.selectable_label(is_selected, label).clicked() {
-                        self.active_filter = filter;
-                    }
-                };
+                let mut draw_filter_button =
+                    |ui: &mut egui::Ui, filter: SidebarFilter, icon: &str, text: &str| {
+                        let count = self.count_torrents_for_filter(filter);
+                        let label = format!("{} {} ({})", icon, text, count);
+                        let is_selected = self.active_filter == filter;
+                        if ui.selectable_label(is_selected, label).clicked() {
+                            self.active_filter = filter;
+                        }
+                    };
 
                 draw_filter_button(ui, SidebarFilter::All, "📁", "All");
                 ui.add_space(4.0);
@@ -314,14 +377,16 @@ impl eframe::App for TorrentClientApp {
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.label("Torrent File / Magnet:");
-                    ui.add_sized([300.0, 20.0], egui::TextEdit::singleline(&mut self.torrent_path));
-                    if ui.button("📂 Browse File").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
+                    ui.add_sized(
+                        [300.0, 20.0],
+                        egui::TextEdit::singleline(&mut self.torrent_path),
+                    );
+                    if ui.button("📂 Browse File").clicked()
+                        && let Some(path) = rfd::FileDialog::new()
                             .add_filter("Torrent Files", &["torrent"])
                             .pick_file()
-                        {
-                            self.torrent_path = path.to_string_lossy().to_string();
-                        }
+                    {
+                        self.torrent_path = path.to_string_lossy().to_string();
                     }
                 });
 
@@ -329,15 +394,21 @@ impl eframe::App for TorrentClientApp {
 
                 ui.horizontal(|ui| {
                     ui.label("Download Directory:");
-                    ui.add_sized([300.0, 20.0], egui::TextEdit::singleline(&mut self.download_dir));
-                    if ui.button("📂 Browse Directory").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                            self.download_dir = path.to_string_lossy().to_string();
-                            self.save_state();
-                        }
+                    ui.add_sized(
+                        [300.0, 20.0],
+                        egui::TextEdit::singleline(&mut self.download_dir),
+                    );
+                    if ui.button("📂 Browse Directory").clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_folder()
+                    {
+                        self.download_dir = path.to_string_lossy().to_string();
+                        self.save_state();
                     }
                     ui.add_space(10.0);
-                    if ui.button(egui::RichText::new("➕ Add Torrent").strong()).clicked() {
+                    if ui
+                        .button(egui::RichText::new("➕ Add Torrent").strong())
+                        .clicked()
+                    {
                         self.create_session();
                     }
                 });
@@ -371,22 +442,32 @@ impl eframe::App for TorrentClientApp {
                                     egui::Color32::from_rgb(230, 126, 34)
                                 };
                                 ui.label(egui::RichText::new(&name).strong().color(title_color));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("🗑 Delete").clicked() {
-                                        delete_pending_indices.push(p_idx);
-                                    }
-                                    ui.add_space(6.0);
-                                    if pending.error.is_some() {
-                                        ui.label(egui::RichText::new("Failed").color(egui::Color32::from_rgb(231, 76, 60)).strong());
-                                    } else {
-                                        ui.add(egui::Spinner::new());
-                                        ui.label("Loading... ");
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.button("🗑 Delete").clicked() {
+                                            delete_pending_indices.push(p_idx);
+                                        }
+                                        ui.add_space(6.0);
+                                        if pending.error.is_some() {
+                                            ui.label(
+                                                egui::RichText::new("Failed")
+                                                    .color(egui::Color32::from_rgb(231, 76, 60))
+                                                    .strong(),
+                                            );
+                                        } else {
+                                            ui.add(egui::Spinner::new());
+                                            ui.label("Loading... ");
+                                        }
+                                    },
+                                );
                             });
                             ui.horizontal(|ui| {
                                 if let Some(ref err) = pending.error {
-                                    ui.label(egui::RichText::new(format!("⚠ {}", err)).color(egui::Color32::from_rgb(231, 76, 60)));
+                                    ui.label(
+                                        egui::RichText::new(format!("⚠ {}", err))
+                                            .color(egui::Color32::from_rgb(231, 76, 60)),
+                                    );
                                 } else {
                                     ui.label("Verifying local storage and resolving metadata...");
                                 }
@@ -421,47 +502,54 @@ impl eframe::App for TorrentClientApp {
 
                         ui.group(|ui| {
                             ui.horizontal(|ui| {
-                                let name = egui::RichText::new(&session_state.last_file_name).strong();
+                                let name =
+                                    egui::RichText::new(&session_state.last_file_name).strong();
                                 let label_response = if is_selected {
                                     ui.label(name.color(ui.visuals().selection.bg_fill))
                                 } else {
                                     ui.label(name)
                                 };
-                                
+
                                 // Make only name label clickable to select the torrent
                                 let label_click = label_response.interact(egui::Sense::click());
                                 if label_click.clicked() {
                                     select_idx = Some(i);
                                 }
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("🗑 Delete").clicked() {
-                                        delete_indices.push(i);
-                                    }
-                                    ui.add_space(6.0);
-                                    if session_state.last_status == "Paused" {
-                                        if ui.button("▶ Resume").clicked() {
-                                            let _ = session_state.session.resume();
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.button("🗑 Delete").clicked() {
+                                            delete_indices.push(i);
                                         }
-                                    } else if session_state.last_status != "Ended" {
-                                        if ui.button("⏸ Pause").clicked() {
+                                        ui.add_space(6.0);
+                                        if session_state.last_status == "Paused" {
+                                            if ui.button("▶ Resume").clicked() {
+                                                let _ = session_state.session.resume();
+                                            }
+                                        } else if session_state.last_status != "Ended"
+                                            && ui.button("⏸ Pause").clicked()
+                                        {
                                             let _ = session_state.session.pause();
                                         }
-                                    }
-                                    ui.add_space(6.0);
-                                    if session_state.last_status != "Ended" {
-                                        if ui.button("▶ Stream").clicked() {
+                                        ui.add_space(6.0);
+                                        if session_state.last_status != "Ended"
+                                            && ui.button("▶ Stream").clicked()
+                                        {
                                             stream_torrent_idx = Some(i);
                                         }
-                                    }
-                                });
+                                    },
+                                );
                             });
 
                             ui.horizontal(|ui| {
                                 let progress = session_state.last_progress;
                                 let bar = egui::ProgressBar::new(progress)
                                     .text(format!("{:.1}%", progress * 100.0))
-                                    .animate(progress < 1.0 && session_state.last_status == "Downloading");
+                                    .animate(
+                                        progress < 1.0
+                                            && session_state.last_status == "Downloading",
+                                    );
                                 ui.add_sized([180.0, 16.0], bar);
 
                                 ui.separator();
@@ -492,10 +580,10 @@ impl eframe::App for TorrentClientApp {
                             let _ = state.session.stop();
                             if self.selected_session_index == Some(idx) {
                                 self.selected_session_index = None;
-                            } else if let Some(s_idx) = self.selected_session_index {
-                                if s_idx > idx {
-                                    self.selected_session_index = Some(s_idx - 1);
-                                }
+                            } else if let Some(s_idx) = self.selected_session_index
+                                && s_idx > idx
+                            {
+                                self.selected_session_index = Some(s_idx - 1);
                             }
                         }
                         self.save_state();

@@ -1,14 +1,14 @@
 use bittorrent_rs::{
+    Socket,
     io_traits::AsyncSocket,
     network::announcer::{AnnouncerEnum, AnnouncerFactory},
     network::peer::Peer,
     network::peer_message::PeerMessage,
     network::tracker::{TrackerAnnounceContext, TrackerEvent},
     network::webrtc::{
-        create_webtorrent_answer, create_webtorrent_offer, DataChannelState, WebRtcSocketAdapter,
-        WebTorrentAnnouncer,
+        DataChannelState, WebRtcSocketAdapter, WebTorrentAnnouncer, create_webtorrent_answer,
+        create_webtorrent_offer,
     },
-    Socket,
 };
 use std::sync::Arc;
 
@@ -113,7 +113,9 @@ fn test_webtorrent_announce_request_payload_construction() {
         http_client: Arc::new(bittorrent_rs::io_traits::UreqHttpClient),
     };
 
-    let payload = announcer.build_announce_payload(&tracker_ctx, "offer-abc-123").unwrap();
+    let payload = announcer
+        .build_announce_payload(&tracker_ctx, "offer-abc-123")
+        .unwrap();
     assert!(payload.contains("\"action\":\"announce\""));
     assert!(payload.contains("\"peer_id\":\"-BR0110-123456789012\""));
     assert!(payload.contains("\"offer_id\":\"offer-abc-123\""));
@@ -142,7 +144,10 @@ fn test_webtorrent_announce_response_parsing() {
     assert_eq!(res.incomplete, 3);
     assert_eq!(res.peer_list.len(), 1);
     assert_eq!(res.peer_list[0].ip, "webrtc:browser-peer");
-    assert_eq!(res.peer_list[0].peer_id, Some("browser-peer-xyz".to_string()));
+    assert_eq!(
+        res.peer_list[0].peer_id,
+        Some("browser-peer-xyz".to_string())
+    );
 
     // Failure response
     let json_fail = r#"{

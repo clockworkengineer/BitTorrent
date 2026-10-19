@@ -152,7 +152,10 @@ fn create_torrent_stream(
     }
 }
 
-fn handle_stream_connection(mut socket: TcpStream, active_stream: Arc<Mutex<Option<ActiveStream>>>) {
+fn handle_stream_connection(
+    mut socket: TcpStream,
+    active_stream: Arc<Mutex<Option<ActiveStream>>>,
+) {
     let _ = socket.set_read_timeout(Some(std::time::Duration::from_secs(5)));
     let _ = socket.set_write_timeout(Some(std::time::Duration::from_secs(10)));
 
@@ -190,7 +193,8 @@ fn handle_stream_connection(mut socket: TcpStream, active_stream: Arc<Mutex<Opti
 
     let is_head = request_line.starts_with("HEAD");
 
-    let mut torrent_stream = match create_torrent_stream(active.context.clone(), active.file_index) {
+    let mut torrent_stream = match create_torrent_stream(active.context.clone(), active.file_index)
+    {
         Ok(s) => s,
         Err(e) => {
             let msg = format!("Failed to initialize stream: {}", e);
@@ -215,17 +219,16 @@ fn handle_stream_connection(mut socket: TcpStream, active_stream: Arc<Mutex<Opti
     let mut range_start = 0u64;
     let mut range_end = total_len - 1;
     let is_range_request = if let Some(ref r) = range_header {
-        if r.starts_with("bytes=") {
-            let spec = &r["bytes=".len()..];
+        if let Some(spec) = r.strip_prefix("bytes=") {
             let parts: Vec<&str> = spec.split('-').collect();
             if parts.len() == 2 {
                 if let Ok(s) = parts[0].parse::<u64>() {
                     range_start = s;
                 }
-                if !parts[1].is_empty() {
-                    if let Ok(e) = parts[1].parse::<u64>() {
-                        range_end = e.min(total_len - 1);
-                    }
+                if !parts[1].is_empty()
+                    && let Ok(e) = parts[1].parse::<u64>()
+                {
+                    range_end = e.min(total_len - 1);
                 }
                 true
             } else {
@@ -279,7 +282,9 @@ fn handle_stream_connection(mut socket: TcpStream, active_stream: Arc<Mutex<Opti
         return;
     }
 
-    active.current_position.store(range_start, Ordering::Relaxed);
+    active
+        .current_position
+        .store(range_start, Ordering::Relaxed);
 
     let mut remaining = content_len;
     let mut buf = vec![0u8; 64 * 1024];

@@ -68,9 +68,8 @@ fn test_next_block_request_from_peer_reserves_request() {
     assert_eq!(peer.outstanding_requests_count, 0);
 
     let (_, begin, length) = request;
-    futures::executor::block_on(async {
-        peer.send_request(0, begin, length).await
-    }).expect("Failed to send request");
+    futures::executor::block_on(async { peer.send_request(0, begin, length).await })
+        .expect("Failed to send request");
     peer.outstanding_requests_count = peer.outstanding_requests_count.saturating_add(1);
 
     assert_eq!(peer.outstanding_requests_count, 1);
@@ -83,10 +82,10 @@ fn test_sequential_and_rarest_first_selectors() {
     let mut meta = bittorrent_rs::MetaInfoFile::new(sample_file("singlefile.torrent"))
         .expect("Failed to load torrent metadata");
     meta.parse().expect("Failed to parse torrent metadata");
-    
+
     let storage = std::sync::Arc::new(bittorrent_rs::MemStorage::new(1024 * 1024));
     let seq_selector = std::sync::Arc::new(bittorrent_rs::selector::SequentialSelector);
-    
+
     let mut context = bittorrent_rs::internals::TorrentContext::new(
         &meta,
         seq_selector.clone(),
@@ -105,15 +104,29 @@ fn test_sequential_and_rarest_first_selectors() {
     }
 
     // Set up peer counts: piece 0 (3 peers), piece 1 (1 peer), piece 2 (2 peers), piece 3 (4 peers), piece 4 (2 peers)
-    for _ in 0..3 { context.increment_peer_count(0); }
-    for _ in 0..1 { context.increment_peer_count(1); }
-    for _ in 0..2 { context.increment_peer_count(2); }
-    for _ in 0..4 { context.increment_peer_count(3); }
-    for _ in 0..2 { context.increment_peer_count(4); }
+    for _ in 0..3 {
+        context.increment_peer_count(0);
+    }
+    for _ in 0..1 {
+        context.increment_peer_count(1);
+    }
+    for _ in 0..2 {
+        context.increment_peer_count(2);
+    }
+    for _ in 0..4 {
+        context.increment_peer_count(3);
+    }
+    for _ in 0..2 {
+        context.increment_peer_count(4);
+    }
 
     // Create a peer that has all pieces
     let (socket, _, _) = bittorrent_rs::MockSocket::new();
-    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, std::sync::Arc::new(bittorrent_rs::Socket::Mock(socket)));
+    let mut peer = Peer::new_with_socket(
+        "127.0.0.1".to_string(),
+        6881,
+        std::sync::Arc::new(bittorrent_rs::Socket::Mock(socket)),
+    );
     let context_ref = std::sync::Arc::new(std::sync::Mutex::new(context));
     peer.set_torrent_context(context_ref.clone());
     peer.connected = true;
@@ -142,4 +155,3 @@ fn test_sequential_and_rarest_first_selectors() {
     let selected_rarest_2 = rarest_selector.select_piece(&context_guard, &peer);
     assert_eq!(selected_rarest_2, Some(2));
 }
-

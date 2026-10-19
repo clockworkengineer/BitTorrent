@@ -57,12 +57,16 @@ impl<T> SpinLock<T> {
     }
 
     pub fn lock(&self) -> SpinLockGuard<'_, T> {
-        while self.lock.compare_exchange_weak(
-            false,
-            true,
-            core::sync::atomic::Ordering::Acquire,
-            core::sync::atomic::Ordering::Relaxed,
-        ).is_err() {
+        while self
+            .lock
+            .compare_exchange_weak(
+                false,
+                true,
+                core::sync::atomic::Ordering::Acquire,
+                core::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
             core::hint::spin_loop();
         }
         SpinLockGuard { parent: self }
@@ -88,7 +92,9 @@ impl<'a, T> core::ops::DerefMut for SpinLockGuard<'a, T> {
 
 impl<'a, T> Drop for SpinLockGuard<'a, T> {
     fn drop(&mut self) {
-        self.parent.lock.store(false, core::sync::atomic::Ordering::Release);
+        self.parent
+            .lock
+            .store(false, core::sync::atomic::Ordering::Release);
     }
 }
 
@@ -132,7 +138,9 @@ impl MockReceiver {
             }
             spins += 1;
             if spins >= MAX_SPIN_ITERS {
-                return Err(BitTorrentError::Protocol("MockReceiver::recv timed out (no data)".into()));
+                return Err(BitTorrentError::Protocol(
+                    "MockReceiver::recv timed out (no data)".into(),
+                ));
             }
             core::hint::spin_loop();
         }
@@ -208,7 +216,8 @@ impl AsyncSocket for MockSocket {
     }
 
     fn close(&self) {
-        self.closed.store(true, core::sync::atomic::Ordering::Relaxed);
+        self.closed
+            .store(true, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -239,7 +248,9 @@ impl BlockReader for MemStorage {
                 "read offset + length exceeds storage capacity",
             )));
             #[cfg(not(feature = "std"))]
-            return Err(BitTorrentError::Protocol("read offset + length exceeds storage capacity".into()));
+            return Err(BitTorrentError::Protocol(
+                "read offset + length exceeds storage capacity".into(),
+            ));
         }
         buffer.copy_from_slice(&guard[start..end]);
         Ok(buffer.len())
@@ -258,7 +269,9 @@ impl BlockWriter for MemStorage {
                 "write offset + length exceeds storage capacity",
             )));
             #[cfg(not(feature = "std"))]
-            return Err(BitTorrentError::Protocol("write offset + length exceeds storage capacity".into()));
+            return Err(BitTorrentError::Protocol(
+                "write offset + length exceeds storage capacity".into(),
+            ));
         }
         guard[start..end].copy_from_slice(data);
         Ok(())
@@ -347,17 +360,13 @@ impl HttpClient for UreqHttpClient {
         let response = ureq::get(url)
             .timeout(std::time::Duration::from_secs(5))
             .call()
-            .map_err(|err| {
-                BitTorrentError::Parse(err.to_string())
-            })?;
+            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
         let mut body = alloc::vec::Vec::new();
         use std::io::Read;
         response
             .into_reader()
             .read_to_end(&mut body)
-            .map_err(|err| {
-                BitTorrentError::Parse(err.to_string())
-            })?;
+            .map_err(|err| BitTorrentError::Parse(err.to_string()))?;
         Ok(body)
     }
 }

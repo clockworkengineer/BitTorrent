@@ -4,8 +4,8 @@ use bittorrent_rs::{
     session::config::SessionConfig,
     storage::disk_cache::CachedBlockStorage,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Mock underlying storage that counts individual write calls to verify coalescing.
 struct CountingStorage {
@@ -33,7 +33,11 @@ impl CountingStorage {
 }
 
 impl BlockReader for CountingStorage {
-    fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, bittorrent_rs::BitTorrentError> {
+    fn read_block(
+        &self,
+        offset: u64,
+        buffer: &mut [u8],
+    ) -> Result<usize, bittorrent_rs::BitTorrentError> {
         self.inner.read_block(offset, buffer)
     }
 }
@@ -116,7 +120,9 @@ fn test_non_contiguous_blocks_flush_distinct_chunks() {
 
     // Block 0 at offset 0, Block 1 at offset 65536 (gap between 16384..65536)
     cache.write_block(0, &[0xAA; 16384]).expect("write failed");
-    cache.write_block(65536, &[0xBB; 16384]).expect("write failed");
+    cache
+        .write_block(65536, &[0xBB; 16384])
+        .expect("write failed");
 
     cache.flush_all().expect("flush failed");
 
@@ -208,7 +214,6 @@ fn test_session_config_and_builder_disk_cache() {
     let config = SessionConfig::default().with_disk_cache_size_mb(64);
     assert_eq!(config.disk_cache_size_mb, 64);
 
-    let builder = TorrentSessionBuilder::new("sample.torrent", ".")
-        .disk_cache_size_mb(128);
+    let builder = TorrentSessionBuilder::new("sample.torrent", ".").disk_cache_size_mb(128);
     assert_eq!(builder.get_config().disk_cache_size_mb, 128);
 }

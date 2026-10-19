@@ -3,8 +3,8 @@
 //! Maintains active torrent contexts, tracks dead peers to avoid reconnection loops,
 //! and orchestrates peer discovery queues.
 
-use crate::peer::Peer;
 use crate::core::torrent_context::TorrentContext;
+use crate::peer::Peer;
 use crate::tracker::PeerDetails;
 use crate::util::info_hash_to_string;
 use std::collections::HashMap;
@@ -37,8 +37,10 @@ impl Manager {
 
     /// Sets the maximum number of peers that may be queued for discovery (default: 1000).
     pub fn set_max_candidates(&self, max: usize) {
-        self.max_candidates.store(max, std::sync::atomic::Ordering::Relaxed);
-        self.candidate_count.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.max_candidates
+            .store(max, std::sync::atomic::Ordering::Relaxed);
+        self.candidate_count
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Retrieves an active torrent context matching the provided info hash, if present.
@@ -112,20 +114,26 @@ impl Manager {
         if self.is_peer_dead(&peer_details.ip) {
             return;
         }
-        if self.candidate_count.load(std::sync::atomic::Ordering::Relaxed)
-            >= self.max_candidates.load(std::sync::atomic::Ordering::Relaxed)
+        if self
+            .candidate_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+            >= self
+                .max_candidates
+                .load(std::sync::atomic::Ordering::Relaxed)
         {
             return;
         }
         if let Some(sender) = &*self.peer_discovery_queue.read().unwrap() {
             if sender.send(peer_details).is_ok() {
-                self.candidate_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.candidate_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
 
     /// Resets the candidate count (e.g., after the queue consumer drains it).
     pub fn reset_candidate_count(&self) {
-        self.candidate_count.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.candidate_count
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 }

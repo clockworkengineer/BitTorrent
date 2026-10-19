@@ -1,9 +1,9 @@
 use bittorrent_rs::{
-    core::merkle::{MerkleTree, BLOCK_SIZE},
+    TorrentSession,
+    core::merkle::{BLOCK_SIZE, MerkleTree},
     core::metainfo::MetaInfoFile,
     core::torrent_builder::TorrentBuilder,
     core::torrent_upgrader::{TorrentExportFormat, TorrentUpgrader},
-    TorrentSession,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -39,12 +39,9 @@ fn test_upgrade_v1_to_pure_v2_single_file() {
     fs::write(&v1_torrent_path, &v1_bytes).expect("Failed to write v1 torrent file");
 
     // Upgrade to Pure v2
-    let (v2_bytes, report) = TorrentUpgrader::upgrade_from_file(
-        &v1_torrent_path,
-        &temp_dir,
-        TorrentExportFormat::V2,
-    )
-    .expect("Failed to upgrade to pure v2");
+    let (v2_bytes, report) =
+        TorrentUpgrader::upgrade_from_file(&v1_torrent_path, &temp_dir, TorrentExportFormat::V2)
+            .expect("Failed to upgrade to pure v2");
 
     assert_eq!(report.name, "sample.bin");
     assert_eq!(report.format, TorrentExportFormat::V2);
@@ -68,14 +65,22 @@ fn test_upgrade_v1_to_pure_v2_single_file() {
 
     // Verify parsed upgraded metainfo
     let mut parsed_v2 = MetaInfoFile::from_bytes(&v2_bytes);
-    parsed_v2.parse().expect("Failed to parse upgraded v2 torrent");
+    parsed_v2
+        .parse()
+        .expect("Failed to parse upgraded v2 torrent");
     assert!(parsed_v2.is_v2());
     assert!(!parsed_v2.is_hybrid());
     assert_eq!(parsed_v2.get_name().unwrap(), "sample.bin");
     assert_eq!(parsed_v2.get_total_size().unwrap(), 32 * 1024);
     let parsed_v2_hash = parsed_v2.get_v2_info_hash().unwrap();
-    let parsed_v2_hash_hex: String = parsed_v2_hash.iter().map(|b| format!("{:02x}", b)).collect();
-    assert_eq!(report.v2_info_hash.as_deref(), Some(parsed_v2_hash_hex.as_str()));
+    let parsed_v2_hash_hex: String = parsed_v2_hash
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    assert_eq!(
+        report.v2_info_hash.as_deref(),
+        Some(parsed_v2_hash_hex.as_str())
+    );
     let (_, files) = parsed_v2.local_files_to_download_list(".").unwrap();
     assert_eq!(files[0].pieces_root, Some(expected_root));
 
@@ -129,14 +134,20 @@ fn test_upgrade_v1_to_hybrid_multi_file() {
 
     // Verify parsed hybrid metainfo
     let mut parsed_hybrid = MetaInfoFile::from_bytes(&hybrid_bytes);
-    parsed_hybrid.parse().expect("Failed to parse upgraded hybrid torrent");
+    parsed_hybrid
+        .parse()
+        .expect("Failed to parse upgraded hybrid torrent");
     assert!(parsed_hybrid.is_v2());
     assert!(parsed_hybrid.is_hybrid());
     assert_eq!(parsed_hybrid.get_name().unwrap(), "media");
     assert_eq!(parsed_hybrid.get_total_size().unwrap(), 64 * 1024);
 
-    let v1_hash = parsed_hybrid.get_v1_info_hash().expect("Must have v1 info hash");
-    let v2_hash = parsed_hybrid.get_v2_info_hash().expect("Must have v2 info hash");
+    let v1_hash = parsed_hybrid
+        .get_v1_info_hash()
+        .expect("Must have v1 info hash");
+    let v2_hash = parsed_hybrid
+        .get_v2_info_hash()
+        .expect("Must have v2 info hash");
     assert_eq!(v1_hash.len(), 20);
     assert_eq!(v2_hash.len(), 32);
 
@@ -160,12 +171,9 @@ fn test_upgrade_piece_length_adjustment_to_bep52() {
 
     // Upgrade metainfo with in-memory files data
     let files_data = vec![("data.raw".to_string(), file_data)];
-    let (_bytes, report) = TorrentUpgrader::upgrade_metainfo(
-        &metainfo,
-        &files_data,
-        TorrentExportFormat::V2,
-    )
-    .expect("Failed to upgrade");
+    let (_bytes, report) =
+        TorrentUpgrader::upgrade_metainfo(&metainfo, &files_data, TorrentExportFormat::V2)
+            .expect("Failed to upgrade");
 
     assert!(report.piece_length >= BLOCK_SIZE);
     assert_eq!(report.piece_length & (report.piece_length - 1), 0);

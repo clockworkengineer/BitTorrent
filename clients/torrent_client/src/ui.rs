@@ -3,16 +3,18 @@
 //! Handles layout structures for sidebar elements, status labels, progress bars,
 //! options settings panels, and detail tab views.
 
-use eframe::egui;
 use crate::app::TorrentClientApp;
 use crate::state::DetailTab;
-use torrent_client_shared::fmt_bytes;
 use bittorrent_rs::internals::TorrentContext;
+use eframe::egui;
+use torrent_client_shared::fmt_bytes;
 
 impl TorrentClientApp {
     /// Renders the bottom details container panel showing overview, file list, peer swarm, trackers, and logs.
     pub fn draw_details_panel(&mut self, ui: &mut egui::Ui) {
-        let Some(selected_idx) = self.selected_session_index else { return; };
+        let Some(selected_idx) = self.selected_session_index else {
+            return;
+        };
         if selected_idx >= self.sessions.len() {
             self.selected_session_index = None;
             return;
@@ -31,11 +33,19 @@ impl TorrentClientApp {
         };
 
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.active_detail_tab, DetailTab::Overview, "🔍 Overview");
+            ui.selectable_value(
+                &mut self.active_detail_tab,
+                DetailTab::Overview,
+                "🔍 Overview",
+            );
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Files, "📁 Files");
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Peers, "👥 Peers");
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Pieces, "🧩 Pieces");
-            ui.selectable_value(&mut self.active_detail_tab, DetailTab::Trackers, "📡 Trackers");
+            ui.selectable_value(
+                &mut self.active_detail_tab,
+                DetailTab::Trackers,
+                "📡 Trackers",
+            );
             ui.selectable_value(&mut self.active_detail_tab, DetailTab::Logs, "📝 Logs");
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -49,15 +59,20 @@ impl TorrentClientApp {
 
         egui::ScrollArea::vertical()
             .id_source("details_scroll")
-            .show(ui, |ui| {
-                match self.active_detail_tab {
-                    DetailTab::Overview => self.draw_overview_tab(ui, &context, &last_file_name, last_downloaded, last_uploaded, last_total),
-                    DetailTab::Files => self.draw_files_tab(ui, &context, selected_idx),
-                    DetailTab::Peers => self.draw_peers_tab(ui, &context),
-                    DetailTab::Pieces => self.draw_pieces_tab(ui, &context),
-                    DetailTab::Trackers => self.draw_trackers_tab(ui, &context),
-                    DetailTab::Logs => self.draw_logs_tab(ui),
-                }
+            .show(ui, |ui| match self.active_detail_tab {
+                DetailTab::Overview => self.draw_overview_tab(
+                    ui,
+                    &context,
+                    &last_file_name,
+                    last_downloaded,
+                    last_uploaded,
+                    last_total,
+                ),
+                DetailTab::Files => self.draw_files_tab(ui, &context, selected_idx),
+                DetailTab::Peers => self.draw_peers_tab(ui, &context),
+                DetailTab::Pieces => self.draw_pieces_tab(ui, &context),
+                DetailTab::Trackers => self.draw_trackers_tab(ui, &context),
+                DetailTab::Logs => self.draw_logs_tab(ui),
             });
     }
 
@@ -120,7 +135,11 @@ impl TorrentClientApp {
 
                     ui.label("Super-Seeding (BEP 16):");
                     let mut is_ss = ctx.is_super_seeding();
-                    let label = if is_ss { "Enabled (Initial Seeding)" } else { "Disabled" };
+                    let label = if is_ss {
+                        "Enabled (Initial Seeding)"
+                    } else {
+                        "Disabled"
+                    };
                     if ui.checkbox(&mut is_ss, label).clicked() {
                         drop(ctx);
                         if let Ok(mut ctx_mut) = context.lock() {
@@ -135,7 +154,12 @@ impl TorrentClientApp {
     }
 
     /// Renders a list of the relative paths, lengths, and file offsets of all files packaged inside the torrent.
-    pub fn draw_files_tab(&mut self, ui: &mut egui::Ui, context: &std::sync::Mutex<TorrentContext>, session_idx: usize) {
+    pub fn draw_files_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        context: &std::sync::Mutex<TorrentContext>,
+        session_idx: usize,
+    ) {
         if let Ok(mut ctx) = context.lock() {
             if ctx.files_to_download.is_empty() {
                 ui.label("No files list found (Magnet bootstrapping...)");
@@ -166,10 +190,26 @@ impl TorrentClientApp {
                         egui::ComboBox::from_id_source(format!("prio_{}_{}", session_idx, idx))
                             .selected_text(current_priority.as_str())
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::Skip, "skip");
-                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::Low, "low");
-                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::Normal, "normal");
-                                ui.selectable_value(&mut current_priority, bittorrent_rs::FilePriority::High, "high");
+                                ui.selectable_value(
+                                    &mut current_priority,
+                                    bittorrent_rs::FilePriority::Skip,
+                                    "skip",
+                                );
+                                ui.selectable_value(
+                                    &mut current_priority,
+                                    bittorrent_rs::FilePriority::Low,
+                                    "low",
+                                );
+                                ui.selectable_value(
+                                    &mut current_priority,
+                                    bittorrent_rs::FilePriority::Normal,
+                                    "normal",
+                                );
+                                ui.selectable_value(
+                                    &mut current_priority,
+                                    bittorrent_rs::FilePriority::High,
+                                    "high",
+                                );
                             });
 
                         if current_priority != file.priority {
@@ -213,9 +253,15 @@ impl TorrentClientApp {
                 ui.separator();
                 let total_down: u64 = peers.iter().map(|p| p.down_rate).sum();
                 let total_up: u64 = peers.iter().map(|p| p.up_rate).sum();
-                ui.colored_label(egui::Color32::from_rgb(46, 204, 113), format!("↓ {}/s", fmt_bytes(total_down)));
+                ui.colored_label(
+                    egui::Color32::from_rgb(46, 204, 113),
+                    format!("↓ {}/s", fmt_bytes(total_down)),
+                );
                 ui.separator();
-                ui.colored_label(egui::Color32::from_rgb(52, 152, 219), format!("↑ {}/s", fmt_bytes(total_up)));
+                ui.colored_label(
+                    egui::Color32::from_rgb(52, 152, 219),
+                    format!("↑ {}/s", fmt_bytes(total_up)),
+                );
             });
 
             ui.add_space(4.0);
@@ -242,13 +288,19 @@ impl TorrentClientApp {
                         ui.add_sized([100.0, 14.0], bar);
 
                         if p.down_rate > 0 {
-                            ui.colored_label(egui::Color32::from_rgb(46, 204, 113), format!("{}/s", fmt_bytes(p.down_rate)));
+                            ui.colored_label(
+                                egui::Color32::from_rgb(46, 204, 113),
+                                format!("{}/s", fmt_bytes(p.down_rate)),
+                            );
                         } else {
                             ui.label("-");
                         }
 
                         if p.up_rate > 0 {
-                            ui.colored_label(egui::Color32::from_rgb(52, 152, 219), format!("{}/s", fmt_bytes(p.up_rate)));
+                            ui.colored_label(
+                                egui::Color32::from_rgb(52, 152, 219),
+                                format!("{}/s", fmt_bytes(p.up_rate)),
+                            );
                         } else {
                             ui.label("-");
                         }
@@ -261,7 +313,7 @@ impl TorrentClientApp {
                              H/h: Peer Interested / Not Interested\n\
                              U/u: Peer Unchoked / Choked\n\
                              E: BEP 10 Extension Protocol\n\
-                             F: BEP 6 Fast Extension"
+                             F: BEP 6 Fast Extension",
                         );
 
                         ui.end_row();
@@ -287,7 +339,10 @@ impl TorrentClientApp {
             let piece_size = ctx.piece_length;
 
             ui.horizontal(|ui| {
-                ui.strong(format!("Completed: {} / {} pieces ({:.1}%)", completed, total, pct));
+                ui.strong(format!(
+                    "Completed: {} / {} pieces ({:.1}%)",
+                    completed, total, pct
+                ));
                 ui.separator();
                 ui.label(format!("Piece Size: {}", fmt_bytes(piece_size as u64)));
             });
@@ -297,16 +352,22 @@ impl TorrentClientApp {
             // Legend
             ui.horizontal(|ui| {
                 ui.label("Legend:");
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(46, 204, 113));
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, 2.0, egui::Color32::from_rgb(46, 204, 113));
                 ui.label("Downloaded");
 
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(52, 152, 219));
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, 2.0, egui::Color32::from_rgb(52, 152, 219));
                 ui.label("In Swarm");
 
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(44, 62, 80));
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, 2.0, egui::Color32::from_rgb(44, 62, 80));
                 ui.label("Missing");
             });
 
@@ -316,8 +377,10 @@ impl TorrentClientApp {
             let available_width = ui.available_width().max(200.0);
             let block_size = 14.0;
             let gap = 2.0;
-            let cols = ((available_width + gap) / (block_size + gap)).floor().max(1.0) as usize;
-            let rows = (total + cols - 1) / cols;
+            let cols = ((available_width + gap) / (block_size + gap))
+                .floor()
+                .max(1.0) as usize;
+            let rows = total.div_ceil(cols);
             let total_height = rows as f32 * (block_size + gap);
 
             let (response, painter) = ui.allocate_painter(
@@ -334,7 +397,8 @@ impl TorrentClientApp {
                 let row = i / cols;
                 let x = origin.x + col as f32 * (block_size + gap);
                 let y = origin.y + row as f32 * (block_size + gap);
-                let rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(block_size, block_size));
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(block_size, block_size));
 
                 let color = if local_have.get(i).copied().unwrap_or(false) {
                     egui::Color32::from_rgb(46, 204, 113) // Emerald green
@@ -353,29 +417,46 @@ impl TorrentClientApp {
 
                 painter.rect_filled(rect, 2.0, color);
 
-                if let Some(pos) = hover_pos {
-                    if rect.contains(pos) {
-                        hovered_piece = Some(i);
-                        painter.rect_stroke(rect, 2.0, egui::Stroke::new(2.0f32, egui::Color32::WHITE));
-                    }
+                if let Some(pos) = hover_pos
+                    && rect.contains(pos)
+                {
+                    hovered_piece = Some(i);
+                    painter.rect_stroke(rect, 2.0, egui::Stroke::new(2.0f32, egui::Color32::WHITE));
                 }
             }
 
             if let Some(p_idx) = hovered_piece {
-                egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), response.id.with(p_idx), |ui: &mut egui::Ui| {
-                    ui.strong(format!("Piece #{}", p_idx));
-                    ui.label(format!("Byte Offset: {}", fmt_bytes(p_idx as u64 * piece_size as u64)));
-                    if local_have.get(p_idx).copied().unwrap_or(false) {
-                        ui.colored_label(egui::Color32::from_rgb(46, 204, 113), "✔ Downloaded & Verified");
-                    } else {
-                        let rarity = swarm_rarity.get(p_idx).copied().unwrap_or(0);
-                        if rarity > 0 {
-                            ui.colored_label(egui::Color32::from_rgb(52, 152, 219), format!("Available from {} peer(s)", rarity));
+                egui::show_tooltip_at_pointer(
+                    ui.ctx(),
+                    ui.layer_id(),
+                    response.id.with(p_idx),
+                    |ui: &mut egui::Ui| {
+                        ui.strong(format!("Piece #{}", p_idx));
+                        ui.label(format!(
+                            "Byte Offset: {}",
+                            fmt_bytes(p_idx as u64 * piece_size as u64)
+                        ));
+                        if local_have.get(p_idx).copied().unwrap_or(false) {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(46, 204, 113),
+                                "✔ Downloaded & Verified",
+                            );
                         } else {
-                            ui.colored_label(egui::Color32::from_rgb(231, 76, 60), "✖ Missing in swarm");
+                            let rarity = swarm_rarity.get(p_idx).copied().unwrap_or(0);
+                            if rarity > 0 {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(52, 152, 219),
+                                    format!("Available from {} peer(s)", rarity),
+                                );
+                            } else {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(231, 76, 60),
+                                    "✖ Missing in swarm",
+                                );
+                            }
                         }
-                    }
-                });
+                    },
+                );
             }
         } else {
             ui.label("Unable to lock session context.");
@@ -421,13 +502,18 @@ impl TorrentClientApp {
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 for message in &self.messages {
-                    if !self.log_search_query.is_empty() {
-                        if !message.to_lowercase().contains(&self.log_search_query.to_lowercase()) {
-                            continue;
-                        }
+                    if !self.log_search_query.is_empty()
+                        && !message
+                            .to_lowercase()
+                            .contains(&self.log_search_query.to_lowercase())
+                    {
+                        continue;
                     }
 
-                    let color = if message.contains("Failed") || message.contains("failed") || message.contains("Error") {
+                    let color = if message.contains("Failed")
+                        || message.contains("failed")
+                        || message.contains("Error")
+                    {
                         egui::Color32::from_rgb(231, 76, 60)
                     } else if message.contains("Warning") || message.contains("warning") {
                         egui::Color32::from_rgb(230, 126, 34)

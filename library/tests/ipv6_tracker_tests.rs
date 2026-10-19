@@ -5,8 +5,8 @@ use bittorrent_rs::{
     session::builder::TorrentSessionBuilder,
     session::config::SessionConfig,
     util::{
-        decode_compact_ipv6_peers, encode_compact_ipv4_peers,
-        encode_compact_ipv6_peers, format_socket_addr,
+        decode_compact_ipv6_peers, encode_compact_ipv4_peers, encode_compact_ipv6_peers,
+        format_socket_addr,
     },
 };
 use std::net::SocketAddr;
@@ -50,10 +50,7 @@ fn test_compact_ipv6_peers_roundtrip() {
 
 #[test]
 fn test_compact_ipv6_peers_offset_and_truncation() {
-    let peers = vec![
-        ("2001:db8::1".to_string(), 6881),
-        ("::1".to_string(), 8080),
-    ];
+    let peers = vec![("2001:db8::1".to_string(), 6881), ("::1".to_string(), 8080)];
     let mut encoded = vec![0xAA; 4]; // 4-byte prefix
     encoded.extend(encode_compact_ipv6_peers(&peers));
     encoded.extend(vec![0xBB; 10]); // incomplete 10 bytes trailing
@@ -129,7 +126,7 @@ fn test_tracker_announce_context_ipv6_filtering() {
     let peers = vec![
         ("2001:db8::50".to_string(), 6881), // Should be filtered out (matches ctx.ipv6)
         ("2001:db8::100".to_string(), 6882), // Kept
-        ("::1".to_string(), 51413),          // Kept
+        ("::1".to_string(), 51413),         // Kept
     ];
     let encoded = encode_compact_ipv6_peers(&peers);
     let list = ctx.get_compact_ipv6_peer_list(&encoded, 0);
@@ -307,4 +304,3 @@ fn test_build_announce_url_dual_stack() {
     let url_with_ipv6 = announcer.build_announce_url(&ctx);
     assert!(url_with_ipv6.contains("&ipv6=2001%3Adb8%3A%3Adead%3Abeef"));
 }
-

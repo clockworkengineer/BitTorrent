@@ -3,14 +3,14 @@
 //! Provides a programmatic builder to generate standards-compliant `.torrent` files
 //! for BitTorrent v1, pure BitTorrent v2 (BEP 52), and dual-stack Hybrid (v1 + v2) torrents.
 
+use crate::bencode::{BNode, Bencode};
+use crate::core::merkle::{BLOCK_SIZE, MerkleTree};
+use crate::error::BitTorrentError;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use sha1::{Digest as Sha1Digest, Sha1};
-use crate::bencode::{BNode, Bencode};
-use crate::core::merkle::{BLOCK_SIZE, MerkleTree};
-use crate::error::BitTorrentError;
 
 #[cfg(feature = "std")]
 use std::path::Path;
@@ -94,9 +94,14 @@ impl TorrentBuilder {
 
     #[cfg(feature = "std")]
     /// Adds a file by reading its contents from the local filesystem.
-    pub fn add_file_from_path(mut self, relative_path: impl Into<String>, disk_path: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+    pub fn add_file_from_path(
+        mut self,
+        relative_path: impl Into<String>,
+        disk_path: impl AsRef<Path>,
+    ) -> Result<Self, std::io::Error> {
         let data = std::fs::read(disk_path.as_ref())?;
-        self.files.push((relative_path.into().replace('\\', "/"), data));
+        self.files
+            .push((relative_path.into().replace('\\', "/"), data));
         Ok(self)
     }
 
@@ -108,13 +113,17 @@ impl TorrentBuilder {
             ));
         }
         if self.files.is_empty() {
-            return Err(BitTorrentError::Parse("Torrent must contain at least one file".into()));
+            return Err(BitTorrentError::Parse(
+                "Torrent must contain at least one file".into(),
+            ));
         }
         Ok(())
     }
 
     /// Builds the v2 `file tree` Bencode dictionary and piece layers mapping.
-    fn build_v2_file_tree_and_layers(&self) -> Result<(FileTreeNode, BTreeMap<[u8; 32], Vec<u8>>), BitTorrentError> {
+    fn build_v2_file_tree_and_layers(
+        &self,
+    ) -> Result<(FileTreeNode, BTreeMap<[u8; 32], Vec<u8>>), BitTorrentError> {
         let mut root_node = FileTreeNode::Directory(BTreeMap::new());
         let mut piece_layers = BTreeMap::new();
 
@@ -165,20 +174,30 @@ impl TorrentBuilder {
         let info_dict = BNode::Dictionary(info_entries);
 
         let mut root_entries: Vec<(&[u8], BNode)> = Vec::new();
-        let primary_announce = self.trackers.first().map(|s| s.as_str()).unwrap_or("http://tracker.example.com/announce");
+        let primary_announce = self
+            .trackers
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("http://tracker.example.com/announce");
         root_entries.push((b"announce", BNode::String(primary_announce.as_bytes())));
 
         let tracker_nodes: Vec<BNode>;
         let tier_nodes: Vec<BNode>;
         if self.trackers.len() > 1 {
-            tracker_nodes = self.trackers.iter()
+            tracker_nodes = self
+                .trackers
+                .iter()
                 .map(|t| BNode::List(vec![BNode::String(t.as_bytes())]))
                 .collect();
             root_entries.push((b"announce-list", BNode::List(tracker_nodes)));
         }
 
         if !self.web_seeds.is_empty() {
-            tier_nodes = self.web_seeds.iter().map(|u| BNode::String(u.as_bytes())).collect();
+            tier_nodes = self
+                .web_seeds
+                .iter()
+                .map(|u| BNode::String(u.as_bytes()))
+                .collect();
             root_entries.push((b"url-list", BNode::List(tier_nodes)));
         }
 
@@ -190,7 +209,8 @@ impl TorrentBuilder {
 
         let piece_layers_entries: Vec<(&[u8], BNode)>;
         if !piece_layers_map.is_empty() {
-            piece_layers_entries = piece_layers_map.iter()
+            piece_layers_entries = piece_layers_map
+                .iter()
                 .map(|(k, v)| (k.as_slice(), BNode::String(v.as_slice())))
                 .collect();
             root_entries.push((b"piece layers", BNode::Dictionary(piece_layers_entries)));
@@ -219,7 +239,8 @@ impl TorrentBuilder {
 
         for (rel_path, data) in &self.files {
             let file_len_bytes = leak_bytes(data.len().to_string());
-            let path_segments: Vec<BNode> = rel_path.split('/')
+            let path_segments: Vec<BNode> = rel_path
+                .split('/')
                 .filter(|s| !s.is_empty())
                 .map(|s| BNode::String(s.as_bytes()))
                 .collect();
@@ -246,10 +267,10 @@ impl TorrentBuilder {
                 let pad_dict = BNode::Dictionary(vec![
                     (b"attr" as &[u8], BNode::String(b"p")),
                     (b"length" as &[u8], BNode::Number(pad_len_bytes)),
-                    (b"path" as &[u8], BNode::List(vec![
-                        BNode::String(b".pad"),
-                        BNode::String(pad_len_bytes),
-                    ])),
+                    (
+                        b"path" as &[u8],
+                        BNode::List(vec![BNode::String(b".pad"), BNode::String(pad_len_bytes)]),
+                    ),
                 ]);
                 v1_files_entries.push(pad_dict);
                 aligned_stream.extend(vec![0u8; pad_len]);
@@ -290,12 +311,18 @@ impl TorrentBuilder {
         let info_dict = BNode::Dictionary(info_entries);
 
         let mut root_entries: Vec<(&[u8], BNode)> = Vec::new();
-        let primary_announce = self.trackers.first().map(|s| s.as_str()).unwrap_or("http://tracker.example.com/announce");
+        let primary_announce = self
+            .trackers
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("http://tracker.example.com/announce");
         root_entries.push((b"announce", BNode::String(primary_announce.as_bytes())));
 
         let tracker_nodes: Vec<BNode>;
         if self.trackers.len() > 1 {
-            tracker_nodes = self.trackers.iter()
+            tracker_nodes = self
+                .trackers
+                .iter()
                 .map(|t| BNode::List(vec![BNode::String(t.as_bytes())]))
                 .collect();
             root_entries.push((b"announce-list", BNode::List(tracker_nodes)));
@@ -309,7 +336,8 @@ impl TorrentBuilder {
 
         let piece_layers_entries: Vec<(&[u8], BNode)>;
         if !piece_layers_map.is_empty() {
-            piece_layers_entries = piece_layers_map.iter()
+            piece_layers_entries = piece_layers_map
+                .iter()
                 .map(|(k, v)| (k.as_slice(), BNode::String(v.as_slice())))
                 .collect();
             root_entries.push((b"piece layers", BNode::Dictionary(piece_layers_entries)));
@@ -323,7 +351,9 @@ impl TorrentBuilder {
     /// Builds a standard BitTorrent v1 `.torrent` file.
     pub fn build_v1(&self) -> Result<Vec<u8>, BitTorrentError> {
         if self.files.is_empty() {
-            return Err(BitTorrentError::Parse("Torrent must contain at least one file".into()));
+            return Err(BitTorrentError::Parse(
+                "Torrent must contain at least one file".into(),
+            ));
         }
 
         let mut total_stream = Vec::new();
@@ -334,7 +364,8 @@ impl TorrentBuilder {
             total_stream.extend_from_slice(data);
             if !is_single_file {
                 let len_bytes = leak_bytes(data.len().to_string());
-                let path_segments: Vec<BNode> = rel_path.split('/')
+                let path_segments: Vec<BNode> = rel_path
+                    .split('/')
                     .filter(|s| !s.is_empty())
                     .map(|s| BNode::String(s.as_bytes()))
                     .collect();
@@ -372,7 +403,11 @@ impl TorrentBuilder {
         let info_dict = BNode::Dictionary(info_entries);
 
         let mut root_entries: Vec<(&[u8], BNode)> = Vec::new();
-        let primary_announce = self.trackers.first().map(|s| s.as_str()).unwrap_or("http://tracker.example.com/announce");
+        let primary_announce = self
+            .trackers
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("http://tracker.example.com/announce");
         root_entries.push((b"announce", BNode::String(primary_announce.as_bytes())));
 
         if let Some(ref comment) = self.comment {
@@ -389,10 +424,7 @@ impl TorrentBuilder {
 /// Helper node representing a file or directory in the BitTorrent v2 `file tree`.
 enum FileTreeNode {
     Directory(BTreeMap<String, FileTreeNode>),
-    File {
-        length: u64,
-        pieces_root: [u8; 32],
-    },
+    File { length: u64, pieces_root: [u8; 32] },
 }
 
 impl FileTreeNode {
@@ -401,10 +433,17 @@ impl FileTreeNode {
             FileTreeNode::Directory(entries) => {
                 if path_segments.len() == 1 {
                     let file_name = path_segments[0].to_string();
-                    entries.insert(file_name, FileTreeNode::File { length, pieces_root });
+                    entries.insert(
+                        file_name,
+                        FileTreeNode::File {
+                            length,
+                            pieces_root,
+                        },
+                    );
                 } else {
                     let dir_name = path_segments[0].to_string();
-                    let child_dir = entries.entry(dir_name)
+                    let child_dir = entries
+                        .entry(dir_name)
                         .or_insert_with(|| FileTreeNode::Directory(BTreeMap::new()));
                     child_dir.insert_file(&path_segments[1..], length, pieces_root);
                 }
@@ -419,22 +458,29 @@ impl FileTreeNode {
                 let mut b_entries = Vec::with_capacity(entries.len());
                 for (name, child) in entries {
                     let child_bnode = child.to_bnode();
-                    b_entries.push((Box::leak(name.clone().into_boxed_str()).as_bytes(), child_bnode));
+                    b_entries.push((
+                        Box::leak(name.clone().into_boxed_str()).as_bytes(),
+                        child_bnode,
+                    ));
                 }
                 b_entries.sort_by(|a, b| a.0.cmp(b.0));
                 BNode::Dictionary(b_entries)
             }
-            FileTreeNode::File { length, pieces_root } => {
+            FileTreeNode::File {
+                length,
+                pieces_root,
+            } => {
                 let len_str = Box::leak(length.to_string().into_boxed_str());
                 let root_slice = Box::leak(Box::new(*pieces_root)).as_slice();
 
                 let file_meta = vec![
-                    (b"length" as &'static [u8], BNode::Number(len_str.as_bytes())),
+                    (
+                        b"length" as &'static [u8],
+                        BNode::Number(len_str.as_bytes()),
+                    ),
                     (b"pieces root" as &'static [u8], BNode::String(root_slice)),
                 ];
-                let empty_key_dict = vec![
-                    (b"" as &'static [u8], BNode::Dictionary(file_meta)),
-                ];
+                let empty_key_dict = vec![(b"" as &'static [u8], BNode::Dictionary(file_meta))];
                 BNode::Dictionary(empty_key_dict)
             }
         }

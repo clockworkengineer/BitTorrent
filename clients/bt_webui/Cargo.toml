@@ -3,6 +3,9 @@ name = "bt_webui"
 version = "0.1.1"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 axum = { version = "0.7", features = ["ws", "multipart"] }
 tokio = { version = "1.35", features = ["full"] }

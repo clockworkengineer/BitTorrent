@@ -3,9 +3,9 @@
 //! Verifies handshake encoding/decoding, keepalive and control message parsing,
 //! protocol boundary size constraints validation, and Message Stream Encryption (MSE) stream cipher obfuscation.
 
-use bittorrent_rs::peer_network::PeerNetwork;
-use bittorrent_rs::peer_message::PeerMessage;
 use bittorrent_rs::MockSocket;
+use bittorrent_rs::peer_message::PeerMessage;
+use bittorrent_rs::peer_network::PeerNetwork;
 use std::sync::Arc;
 
 /// Verifies that peer handshake packets are successfully encoded, transmitted, and decoded.
@@ -45,7 +45,7 @@ fn test_peer_network_control_messages() {
 
     // KeepAlive msg (length prefix 0)
     in_tx.send(vec![0, 0, 0, 0]).unwrap();
-    
+
     // Choke msg (length 1, ID 0)
     in_tx.send(vec![0, 0, 0, 1, 0]).unwrap();
 
@@ -85,7 +85,9 @@ fn test_peer_network_validation_boundaries() {
     // 2. Request message with invalid length 10 instead of 13 (ID 6)
     let (socket2, in_tx2, _out_rx2) = MockSocket::new();
     let network2 = PeerNetwork::new(Arc::new(bittorrent_rs::Socket::Mock(socket2)));
-    in_tx2.send(vec![0, 0, 0, 10, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    in_tx2
+        .send(vec![0, 0, 0, 10, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        .unwrap();
 
     futures::executor::block_on(async {
         let res = network2.read_message(&mut read_buf).await;

@@ -1,7 +1,9 @@
 #[cfg(feature = "std")]
-pub mod config;
-#[cfg(feature = "std")]
 pub mod builder;
+#[cfg(feature = "std")]
+pub mod client;
+#[cfg(feature = "std")]
+pub mod config;
 #[cfg(feature = "std")]
 pub mod manager;
 #[cfg(feature = "std")]
@@ -10,14 +12,12 @@ pub mod session;
 pub mod webseed;
 #[cfg(feature = "std")]
 pub mod worker;
-#[cfg(feature = "std")]
-pub mod client;
 
 #[cfg(feature = "std")]
-pub use self::session::*;
+pub use self::builder::{TorrentSessionBuilder, TorrentSource};
 #[cfg(feature = "std")]
 pub use self::client::*;
 #[cfg(feature = "std")]
 pub use self::config::SessionConfig;
 #[cfg(feature = "std")]
-pub use self::builder::{TorrentSessionBuilder, TorrentSource};
+pub use self::session::*;

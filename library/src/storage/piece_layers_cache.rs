@@ -10,8 +10,8 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Magic header bytes identifying a binary BitTorrent v2 Layers cache file (`b"BT2L"`).
 pub const BT2L_MAGIC: &[u8; 4] = b"BT2L";
@@ -314,7 +314,13 @@ impl PieceLayersDiskCache {
         pieces_root: &[u8; 32],
     ) -> Result<Option<Vec<[u8; 32]>>, BitTorrentError> {
         let layers_opt = self.load_layers(pieces_root)?;
-        Ok(layers_opt.and_then(|mut l| if !l.is_empty() { Some(l.remove(0)) } else { None }))
+        Ok(layers_opt.and_then(|mut l| {
+            if !l.is_empty() {
+                Some(l.remove(0))
+            } else {
+                None
+            }
+        }))
     }
 
     /// Answers a BEP 52 `hash_request` from cached layers.
@@ -334,15 +340,12 @@ impl PieceLayersDiskCache {
             _ => return None,
         };
 
-        if let Some(resp) = generate_hashes_response_from_layers(
-            &layers,
-            base_layer,
-            index,
-            length,
-            proof_layers,
-        ) {
+        if let Some(resp) =
+            generate_hashes_response_from_layers(&layers, base_layer, index, length, proof_layers)
+        {
             self.hash_requests_served.fetch_add(1, Ordering::Relaxed);
-            self.bytes_served.fetch_add(resp.len() as u64, Ordering::Relaxed);
+            self.bytes_served
+                .fetch_add(resp.len() as u64, Ordering::Relaxed);
             Some(resp)
         } else {
             None
@@ -365,7 +368,9 @@ impl PieceLayersDiskCache {
             if path.is_file() && path.extension().map_or(false, |ext| ext == "layers") {
                 let metadata = entry.metadata()?;
                 let size = metadata.len();
-                let modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                let modified = metadata
+                    .modified()
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                 total_size += size;
                 entries.push((path, size, modified));
             }
@@ -511,16 +516,30 @@ pub fn decode_layers(data: &[u8]) -> Result<([u8; 32], Vec<Vec<[u8; 32]>>), BitT
 
     for _ in 0..num_layers {
         if offset + 8 > payload_len {
-            return Err(BitTorrentError::Parse("Unexpected EOF reading layer header".into()));
+            return Err(BitTorrentError::Parse(
+                "Unexpected EOF reading layer header".into(),
+            ));
         }
-        let _layer_idx = u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        let _layer_idx = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
         offset += 4;
-        let hash_count = u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+        let hash_count = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         let bytes_needed = hash_count * 32;
         if offset + bytes_needed > payload_len {
-            return Err(BitTorrentError::Parse("Unexpected EOF reading layer hashes".into()));
+            return Err(BitTorrentError::Parse(
+                "Unexpected EOF reading layer hashes".into(),
+            ));
         }
 
         let mut layer = Vec::with_capacity(hash_count);
@@ -626,7 +645,11 @@ pub fn generate_hashes_response_from_layers(
     let mut j = idx / len;
     let mut uncles_included = 0;
 
-    while cur_layer < layers.len() && layers.len() > 1 && cur_layer < layers.len() - 1 && uncles_included < max_uncles {
+    while cur_layer < layers.len()
+        && layers.len() > 1
+        && cur_layer < layers.len() - 1
+        && uncles_included < max_uncles
+    {
         let uncle_idx = j ^ 1;
         if uncle_idx < layers[cur_layer].len() {
             out.extend_from_slice(&layers[cur_layer][uncle_idx]);

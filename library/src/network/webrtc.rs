@@ -6,14 +6,14 @@
 use crate::error::BitTorrentError;
 use crate::io_traits::AsyncSocket;
 use crate::manual_reset_event::ManualResetEvent;
-use crate::tracker::{AnnounceResponse, PeerDetails, ScrapeResponse, TrackerAnnounceContext};
 use crate::network::announcer::Announcer;
+use crate::tracker::{AnnounceResponse, PeerDetails, ScrapeResponse, TrackerAnnounceContext};
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 
 /// State of a WebRTC Data Channel connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,7 +150,9 @@ impl AsyncSocket for WebRtcSocketAdapter {
         let start = std::time::Instant::now();
         loop {
             if *self.state.lock().unwrap() == DataChannelState::Closed {
-                return Err(BitTorrentError::Protocol("WebRTC Data Channel closed".into()));
+                return Err(BitTorrentError::Protocol(
+                    "WebRTC Data Channel closed".into(),
+                ));
             }
 
             {
@@ -181,7 +183,9 @@ impl AsyncSocket for WebRtcSocketAdapter {
 
     async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
         if *self.state.lock().unwrap() != DataChannelState::Open {
-            return Err(BitTorrentError::Protocol("WebRTC Data Channel is not open".into()));
+            return Err(BitTorrentError::Protocol(
+                "WebRTC Data Channel is not open".into(),
+            ));
         }
 
         if let Some(ref tx) = *self.tx_sender.lock().unwrap() {
@@ -313,7 +317,10 @@ impl MockWebSocketSignalingChannel {
     }
 
     pub fn push_response(&self, response_json: &str) {
-        self.response_queue.lock().unwrap().push_back(response_json.to_string());
+        self.response_queue
+            .lock()
+            .unwrap()
+            .push_back(response_json.to_string());
     }
 
     pub fn get_sent_messages(&self) -> Vec<String> {
@@ -412,7 +419,11 @@ impl WebTorrentAnnouncer {
     }
 
     /// Builds a JSON-encoded announce request message with a single generated offer.
-    pub fn build_announce_payload(&self, tracker: &TrackerAnnounceContext, offer_id: &str) -> Result<String, BitTorrentError> {
+    pub fn build_announce_payload(
+        &self,
+        tracker: &TrackerAnnounceContext,
+        offer_id: &str,
+    ) -> Result<String, BitTorrentError> {
         let offer = create_webtorrent_offer(offer_id);
         self.build_announce_payload_with_offers(tracker, vec![offer], None)
     }
@@ -436,7 +447,11 @@ impl WebTorrentAnnouncer {
             left: tracker.left,
             event: event.map(|s| s.to_string()),
             numwant: Some(50),
-            offers: if offers.is_empty() { None } else { Some(offers) },
+            offers: if offers.is_empty() {
+                None
+            } else {
+                Some(offers)
+            },
             answer: None,
             offer_id: None,
             to_peer_id: None,
@@ -478,18 +493,25 @@ impl WebTorrentAnnouncer {
             .collect();
         let req = WebTorrentScrapeRequest {
             action: "scrape".to_string(),
-            info_hash: if hex_hashes.is_empty() { None } else { Some(hex_hashes) },
+            info_hash: if hex_hashes.is_empty() {
+                None
+            } else {
+                Some(hex_hashes)
+            },
         };
         serde_json::to_string(&req).map_err(|e| BitTorrentError::Parse(e.to_string()))
     }
 
     /// Parses a JSON-encoded scrape response message from a WebSocket tracker.
     pub fn parse_scrape_response(&self, json_str: &str) -> Result<ScrapeResponse, BitTorrentError> {
-        let parsed: WebTorrentScrapeResponse = serde_json::from_str(json_str)
-            .map_err(|e| BitTorrentError::Parse(e.to_string()))?;
+        let parsed: WebTorrentScrapeResponse =
+            serde_json::from_str(json_str).map_err(|e| BitTorrentError::Parse(e.to_string()))?;
 
         if let Some(err) = parsed.failure_reason {
-            return Err(BitTorrentError::Parse(format!("WebTorrent scrape failed: {}", err)));
+            return Err(BitTorrentError::Parse(format!(
+                "WebTorrent scrape failed: {}",
+                err
+            )));
         }
 
         let mut total_complete = 0;
@@ -510,9 +532,12 @@ impl WebTorrentAnnouncer {
     }
 
     /// Parses a JSON-encoded response message received from a WebTorrent tracker into an `AnnounceResponse`.
-    pub fn parse_announce_response(&self, json_str: &str) -> Result<AnnounceResponse, BitTorrentError> {
-        let parsed: WebTorrentAnnounceResponse = serde_json::from_str(json_str)
-            .map_err(|e| BitTorrentError::Parse(e.to_string()))?;
+    pub fn parse_announce_response(
+        &self,
+        json_str: &str,
+    ) -> Result<AnnounceResponse, BitTorrentError> {
+        let parsed: WebTorrentAnnounceResponse =
+            serde_json::from_str(json_str).map_err(|e| BitTorrentError::Parse(e.to_string()))?;
 
         if let Some(err) = parsed.failure_reason {
             return Ok(AnnounceResponse {
@@ -543,15 +568,22 @@ impl WebTorrentAnnouncer {
     }
 
     /// Parses an incoming WebSocket frame into a structured `WebTorrentIncomingMessage`.
-    pub fn parse_incoming_message(&self, json_str: &str) -> Result<WebTorrentIncomingMessage, BitTorrentError> {
-        let parsed: WebTorrentAnnounceResponse = serde_json::from_str(json_str)
-            .map_err(|e| BitTorrentError::Parse(e.to_string()))?;
+    pub fn parse_incoming_message(
+        &self,
+        json_str: &str,
+    ) -> Result<WebTorrentIncomingMessage, BitTorrentError> {
+        let parsed: WebTorrentAnnounceResponse =
+            serde_json::from_str(json_str).map_err(|e| BitTorrentError::Parse(e.to_string()))?;
 
         if let Some(err) = parsed.failure_reason {
             return Ok(WebTorrentIncomingMessage::Error(err));
         }
 
-        if let (Some(offer), Some(offer_id), Some(peer_id)) = (parsed.offer, parsed.offer_id.as_ref(), parsed.peer_id.as_ref()) {
+        if let (Some(offer), Some(offer_id), Some(peer_id)) = (
+            parsed.offer,
+            parsed.offer_id.as_ref(),
+            parsed.peer_id.as_ref(),
+        ) {
             return Ok(WebTorrentIncomingMessage::InboundOffer {
                 offer_id: offer_id.clone(),
                 peer_id: peer_id.clone(),
@@ -560,7 +592,11 @@ impl WebTorrentAnnouncer {
             });
         }
 
-        if let (Some(answer), Some(offer_id), Some(peer_id)) = (parsed.answer, parsed.offer_id.as_ref(), parsed.peer_id.as_ref()) {
+        if let (Some(answer), Some(offer_id), Some(peer_id)) = (
+            parsed.answer,
+            parsed.offer_id.as_ref(),
+            parsed.peer_id.as_ref(),
+        ) {
             return Ok(WebTorrentIncomingMessage::InboundAnswer {
                 offer_id: offer_id.clone(),
                 peer_id: peer_id.clone(),
@@ -576,10 +612,17 @@ impl WebTorrentAnnouncer {
 }
 
 impl Announcer for WebTorrentAnnouncer {
-    fn announce(&mut self, tracker: &TrackerAnnounceContext) -> Result<AnnounceResponse, BitTorrentError> {
+    fn announce(
+        &mut self,
+        tracker: &TrackerAnnounceContext,
+    ) -> Result<AnnounceResponse, BitTorrentError> {
         let payload = self.build_announce_payload(tracker, "offer-init-01")?;
-        crate::log_debug!("[webtorrent] Prepared announce payload for {}: {} bytes", self.tracker_url, payload.len());
-        
+        crate::log_debug!(
+            "[webtorrent] Prepared announce payload for {}: {} bytes",
+            self.tracker_url,
+            payload.len()
+        );
+
         if let Some(ref client) = self.signaling_client {
             let resp_str = client.send_message(&self.tracker_url, &payload)?;
             self.parse_announce_response(&resp_str)
@@ -596,13 +639,18 @@ impl Announcer for WebTorrentAnnouncer {
         }
     }
 
-    fn scrape(&mut self, tracker: &TrackerAnnounceContext) -> Result<ScrapeResponse, BitTorrentError> {
+    fn scrape(
+        &mut self,
+        tracker: &TrackerAnnounceContext,
+    ) -> Result<ScrapeResponse, BitTorrentError> {
         if let Some(ref client) = self.signaling_client {
             let payload = self.build_scrape_payload(&[&tracker.info_hash])?;
             let resp_str = client.send_message(&self.tracker_url, &payload)?;
             self.parse_scrape_response(&resp_str)
         } else {
-            Err(BitTorrentError::Parse("WebTorrent scrape not supported without signaling client".into()))
+            Err(BitTorrentError::Parse(
+                "WebTorrent scrape not supported without signaling client".into(),
+            ))
         }
     }
 }

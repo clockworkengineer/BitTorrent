@@ -159,11 +159,14 @@ impl TorrentUpgrader {
                 .ok()
                 .map(|h| info_hash_to_string(&h))
         };
-        let v2_truncated_info_hash = v2_info_hash.as_ref().map(|s| s[..40.min(s.len())].to_string());
+        let v2_truncated_info_hash = v2_info_hash
+            .as_ref()
+            .map(|s| s[..40.min(s.len())].to_string());
 
         let mut file_pieces_roots = Vec::new();
         #[cfg(feature = "std")]
-        if let Ok((_size, files)) = generated_metainfo.local_files_to_download_list(Path::new(".")) {
+        if let Ok((_size, files)) = generated_metainfo.local_files_to_download_list(Path::new("."))
+        {
             for f in files {
                 if let Some(root) = f.pieces_root {
                     file_pieces_roots.push((f.torrent_path, info_hash_to_string(&root)));

@@ -1,9 +1,9 @@
 use bittorrent_rs::{
+    SequentialSelector, SessionConfig,
     core::merkle::{BLOCK_SIZE, MerkleTree},
     core::torrent_builder::TorrentBuilder,
-    metainfo::{FileDetails, MetaInfoFile},
     internals::TorrentContext,
-    SessionConfig, SequentialSelector,
+    metainfo::{FileDetails, MetaInfoFile},
 };
 use std::io::Cursor;
 use std::sync::Arc;
@@ -44,9 +44,13 @@ fn test_torrent_builder_v2_generation_and_parsing() {
     assert!(trackers[1].contains("tracker2"));
 
     // Files list and pieces roots
-    let (total_bytes, files) = meta.local_files_to_download_list(std::path::Path::new("."))
+    let (total_bytes, files) = meta
+        .local_files_to_download_list(std::path::Path::new("."))
         .expect("Failed to list files");
-    assert_eq!(total_bytes, (32 * 1024 + 128 * 1024 + file3_data.len()) as u64);
+    assert_eq!(
+        total_bytes,
+        (32 * 1024 + 128 * 1024 + file3_data.len()) as u64
+    );
     assert_eq!(files.len(), 3);
 
     // Each file must have its computed pieces root
@@ -55,7 +59,10 @@ fn test_torrent_builder_v2_generation_and_parsing() {
     let tree3 = MerkleTree::from_bytes(&file3_data);
 
     let find_file = |name: &str| -> &FileDetails {
-        files.iter().find(|f| f.torrent_path.ends_with(name)).unwrap()
+        files
+            .iter()
+            .find(|f| f.torrent_path.ends_with(name))
+            .unwrap()
     };
 
     assert_eq!(find_file("intro.mp4").pieces_root, Some(tree1.root()));
@@ -67,7 +74,10 @@ fn test_torrent_builder_v2_generation_and_parsing() {
     assert!(piece_layers.contains_key(&tree2.root()));
     let layer = &piece_layers[&tree2.root()];
     assert_eq!(layer.len(), 2); // 128 KiB / 64 KiB = 2 pieces
-    assert_eq!(MerkleTree::compute_root_from_piece_hashes(layer), tree2.root());
+    assert_eq!(
+        MerkleTree::compute_root_from_piece_hashes(layer),
+        tree2.root()
+    );
 }
 
 #[test]
@@ -100,12 +110,16 @@ fn test_torrent_builder_hybrid_generation_and_dual_info_hashes() {
     assert_eq!(meta.get_info_hash().unwrap(), v1_hash.to_vec());
 
     // Inspect files list for pad files
-    let (_total_bytes, files) = meta.local_files_to_download_list(std::path::Path::new("."))
+    let (_total_bytes, files) = meta
+        .local_files_to_download_list(std::path::Path::new("."))
         .expect("Failed to list files");
 
     // File 1 has 48 KiB, needs 16 KiB pad to reach 64 KiB piece boundary
     let pad_files: Vec<&FileDetails> = files.iter().filter(|f| f.is_pad_file()).collect();
-    assert!(!pad_files.is_empty(), "Hybrid torrent must insert pad files for piece alignment");
+    assert!(
+        !pad_files.is_empty(),
+        "Hybrid torrent must insert pad files for piece alignment"
+    );
     for pad in &pad_files {
         assert!(pad.is_pad_file());
     }
@@ -194,7 +208,8 @@ fn test_torrent_context_merkle_proof_audit_path_verification() {
         selector,
         std::path::Path::new("."),
         config,
-    ).expect("Bootstrap failed");
+    )
+    .expect("Bootstrap failed");
 
     ctx.piece_length = (2 * BLOCK_SIZE) as u32; // 32 KiB pieces (2 blocks per piece)
     ctx.files_to_download = vec![file];
@@ -237,12 +252,16 @@ fn test_piece_layer_registration_and_hash_consistency() {
         selector,
         std::path::Path::new("."),
         config,
-    ).expect("Bootstrap failed");
+    )
+    .expect("Bootstrap failed");
 
     ctx.register_piece_layer(tree.root(), layer.clone());
 
     // Verify stored piece layer matches
     let layers_guard = ctx.piece_layers.lock().unwrap();
     assert_eq!(layers_guard.get(&tree.root()), Some(&layer));
-    assert_eq!(MerkleTree::compute_root_from_piece_hashes(&layer), tree.root());
+    assert_eq!(
+        MerkleTree::compute_root_from_piece_hashes(&layer),
+        tree.root()
+    );
 }

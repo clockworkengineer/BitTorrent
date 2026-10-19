@@ -1,8 +1,7 @@
 use bittorrent_rs::io_traits::AsyncSocket;
 use bittorrent_rs::network::utp::{
-    build_sack_bitmask, is_seq_sacked, parse_sacked_seqs, seq_acked, DelayTracker,
-    LedbatCongestionController, UtpExtension, UtpHeader, UtpPacketType, UtpSocketAdapter,
-    UTP_EXT_SACK,
+    DelayTracker, LedbatCongestionController, UTP_EXT_SACK, UtpExtension, UtpHeader, UtpPacketType,
+    UtpSocketAdapter, build_sack_bitmask, is_seq_sacked, parse_sacked_seqs, seq_acked,
 };
 use std::net::UdpSocket;
 use std::sync::Arc;
@@ -199,7 +198,10 @@ fn test_ledbat_loss_backoff_and_fast_retransmit() {
     assert_eq!(ctrl.cwnd(), 16_000);
     // Duplicate ACK 3 -> Fast Retransmit triggers loss backoff!
     let fast_retransmit = ctrl.handle_ack(50, 0, 20_000, 103);
-    assert!(fast_retransmit, "Expected 3rd duplicate ACK to trigger fast retransmit");
+    assert!(
+        fast_retransmit,
+        "Expected 3rd duplicate ACK to trigger fast retransmit"
+    );
     assert_eq!(ctrl.cwnd(), 8_000);
 }
 
@@ -341,8 +343,8 @@ fn test_utp_header_with_sack_extension_roundtrip() {
     // 20 bytes base + 2 bytes extension header + 4 bytes mask = 26 bytes
     assert_eq!(encoded.len(), 26);
     assert_eq!(encoded[1], UTP_EXT_SACK); // Header extension field
-    assert_eq!(encoded[20], 0);           // Next extension = 0 (none)
-    assert_eq!(encoded[21], 4);           // Extension length = 4
+    assert_eq!(encoded[20], 0); // Next extension = 0 (none)
+    assert_eq!(encoded[21], 4); // Extension length = 4
     assert_eq!(&encoded[22..26], &sack_mask[..]);
 
     let decoded = UtpHeader::decode(&encoded).expect("Decode with SACK failed");
@@ -507,7 +509,8 @@ fn test_utp_socket_adapter_out_of_order_reassembly_and_sack_reply() {
 
     // Wait for receiver to process Packet 3 into the out-of-order buffer
     let start = std::time::Instant::now();
-    while adapter_r.out_of_order_count() == 0 && start.elapsed() < std::time::Duration::from_secs(2) {
+    while adapter_r.out_of_order_count() == 0 && start.elapsed() < std::time::Duration::from_secs(2)
+    {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
@@ -524,10 +527,16 @@ fn test_utp_socket_adapter_out_of_order_reassembly_and_sack_reply() {
     });
 
     let start = std::time::Instant::now();
-    while adapter_s.sacked_packets_count() == 0 && start.elapsed() < std::time::Duration::from_secs(2) {
+    while adapter_s.sacked_packets_count() == 0
+        && start.elapsed() < std::time::Duration::from_secs(2)
+    {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_eq!(adapter_s.sacked_packets_count(), 1, "Packet 3 should be marked as SACKed on sender");
+    assert_eq!(
+        adapter_s.sacked_packets_count(),
+        1,
+        "Packet 3 should be marked as SACKed on sender"
+    );
 
     // Now sender delivers the missing Packet 2 (seq 2)
     adapter_s.set_seq_nr(2);
@@ -542,4 +551,3 @@ fn test_utp_socket_adapter_out_of_order_reassembly_and_sack_reply() {
     adapter_s.close();
     adapter_r.close();
 }
-

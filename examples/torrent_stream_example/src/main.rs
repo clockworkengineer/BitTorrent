@@ -6,13 +6,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn print_usage() {
-    eprintln!("Usage: torrent_stream_example <torrent-file-or-magnet> [download-dir] [port] [file-index]");
+    eprintln!(
+        "Usage: torrent_stream_example <torrent-file-or-magnet> [download-dir] [port] [file-index]"
+    );
     eprintln!();
     eprintln!("Arguments:");
     eprintln!("  <torrent-file-or-magnet> Path to a .torrent file or a magnet URI string");
-    eprintln!("  [download-dir]           Directory to store incoming pieces (default: ./downloads)");
+    eprintln!(
+        "  [download-dir]           Directory to store incoming pieces (default: ./downloads)"
+    );
     eprintln!("  [port]                   Local HTTP streaming port (default: 8080)");
-    eprintln!("  [file-index]             0-based index of the file to stream (default: largest file)");
+    eprintln!(
+        "  [file-index]             0-based index of the file to stream (default: largest file)"
+    );
     eprintln!();
     eprintln!("Example:");
     eprintln!("  torrent_stream_example BigBuckBunny.torrent ./downloads 8080");
@@ -165,13 +171,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (target_file_index, file_name, file_len) = {
         let ctx = session_arc.context();
         let guard = ctx.lock().unwrap();
-        println!("\nAvailable Files in Torrent (Total: {}):", guard.files_to_download.len());
+        println!(
+            "\nAvailable Files in Torrent (Total: {}):",
+            guard.files_to_download.len()
+        );
         for (i, f) in guard.files_to_download.iter().enumerate() {
             println!("  [{}] {} ({} bytes)", i, f.name, f.length);
         }
 
         if let Some(idx) = requested_file_index {
-            let f = guard.files_to_download.get(idx).expect("Specified file-index is out of range");
+            let f = guard
+                .files_to_download
+                .get(idx)
+                .expect("Specified file-index is out of range");
             (idx, f.name.clone(), f.length)
         } else {
             let (max_idx, max_f) = guard
@@ -184,11 +196,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    println!("\nSelected file for streaming: [{}] {} ({} bytes)", target_file_index, file_name, file_len);
+    println!(
+        "\nSelected file for streaming: [{}] {} ({} bytes)",
+        target_file_index, file_name, file_len
+    );
 
     let bind_addr = format!("127.0.0.1:{}", port);
     let listener = TcpListener::bind(&bind_addr)?;
-    println!("\nStreaming HTTP server listening at http://{}/stream", bind_addr);
+    println!(
+        "\nStreaming HTTP server listening at http://{}/stream",
+        bind_addr
+    );
     println!("Paste this URL into VLC, mpv, or any web browser to stream!");
     println!("Press Ctrl+C to stop.\n");
 

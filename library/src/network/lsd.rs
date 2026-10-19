@@ -1,8 +1,8 @@
-use std::net::{UdpSocket, Ipv4Addr, SocketAddrV4};
+use crate::tracker::PeerDetails;
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use crate::tracker::PeerDetails;
 
 pub struct LsdListener {
     info_hash: Vec<u8>,
@@ -11,17 +11,14 @@ pub struct LsdListener {
 
 impl LsdListener {
     pub fn new(info_hash: Vec<u8>, peer_tx: Sender<PeerDetails>) -> Self {
-        LsdListener {
-            info_hash,
-            peer_tx,
-        }
+        LsdListener { info_hash, peer_tx }
     }
 
     pub fn start(self) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let multicast_ip = Ipv4Addr::new(239, 192, 152, 143);
             let port = 6771;
-            
+
             // Allow multiple listeners on the same port for testing/running multiple clients
             let socket = match UdpSocket::bind(("0.0.0.0", port)) {
                 Ok(s) => s,
@@ -56,7 +53,9 @@ impl LsdListener {
                                 }
                                 if line_trimmed.to_uppercase().starts_with("INFOHASH:") {
                                     if let Some(h_str) = line_trimmed.split(':').nth(1) {
-                                        if h_str.trim().to_lowercase() == expected_infohash_hex.to_lowercase() {
+                                        if h_str.trim().to_lowercase()
+                                            == expected_infohash_hex.to_lowercase()
+                                        {
                                             infohash_found = true;
                                         }
                                     }
@@ -96,7 +95,10 @@ impl LsdAnnouncer {
         }
     }
 
-    pub fn start(self, context: Arc<Mutex<crate::core::torrent_context::TorrentContext>>) -> std::thread::JoinHandle<()> {
+    pub fn start(
+        self,
+        context: Arc<Mutex<crate::core::torrent_context::TorrentContext>>,
+    ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let socket = match UdpSocket::bind("0.0.0.0:0") {
                 Ok(s) => s,

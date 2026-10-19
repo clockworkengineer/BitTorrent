@@ -4,17 +4,17 @@
 //! reading and writing of low-level BitTorrent wire messages and handshakes.
 
 use crate::error::BitTorrentError;
-use crate::peer_message::PeerMessage;
 use crate::io_traits::{AsyncSocket, Socket};
-use std::sync::Arc;
+use crate::peer_message::PeerMessage;
 use alloc::vec::Vec;
+use std::sync::Arc;
 
+#[cfg(feature = "std")]
+use std::io::{Read, Write};
 #[cfg(feature = "std")]
 use std::net::TcpStream;
 #[cfg(feature = "std")]
 use std::sync::Mutex;
-#[cfg(feature = "std")]
-use std::io::{Read, Write};
 
 /// An `AsyncSocket` decorator that transparently encrypts outgoing bytes and decrypts incoming bytes using RC4 (MSE/PE).
 #[cfg(all(feature = "std", feature = "mse"))]
@@ -128,7 +128,9 @@ impl PeerNetwork {
             let limit = buffer.len() - offset;
             match self.read(&mut buffer[offset..], limit).await {
                 Ok(0) => {
-                    return Err(BitTorrentError::Parse("Unexpected EOF reading socket".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Unexpected EOF reading socket".into(),
+                    ));
                 }
                 Ok(n) => {
                     offset += n;
@@ -174,7 +176,9 @@ impl PeerNetwork {
             let limit = buffer.len() - offset;
             match self.read(&mut buffer[offset..], limit).await {
                 Ok(0) => {
-                    return Err(BitTorrentError::Parse("Unexpected EOF reading handshake".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Unexpected EOF reading handshake".into(),
+                    ));
                 }
                 Ok(n) => {
                     offset += n;
@@ -208,12 +212,15 @@ impl PeerNetwork {
     }
 
     /// Reads the next message length prefix and body from the stream, returning the decoded `PeerMessage`.
-    pub async fn read_message<'a>(&self, read_buffer: &'a mut [u8]) -> Result<PeerMessage<'a>, BitTorrentError> {
+    pub async fn read_message<'a>(
+        &self,
+        read_buffer: &'a mut [u8],
+    ) -> Result<PeerMessage<'a>, BitTorrentError> {
         let mut length_buf = [0u8; 4];
         self.read_exact(&mut length_buf).await?;
-        let length: usize = u32::from_be_bytes(length_buf)
-            .try_into()
-            .map_err(|_| BitTorrentError::Parse("Message length exceeds memory pointer representation".into()))?;
+        let length: usize = u32::from_be_bytes(length_buf).try_into().map_err(|_| {
+            BitTorrentError::Parse("Message length exceeds memory pointer representation".into())
+        })?;
         if length == 0 {
             return Ok(PeerMessage::KeepAlive);
         }
@@ -235,7 +242,9 @@ impl PeerNetwork {
             let limit = length - offset;
             match self.read(&mut read_buffer[offset..length], limit).await {
                 Ok(0) => {
-                    return Err(BitTorrentError::Parse("Unexpected EOF reading message payload".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Unexpected EOF reading message payload".into(),
+                    ));
                 }
                 Ok(n) => {
                     offset += n;

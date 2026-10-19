@@ -1,7 +1,7 @@
+use bittorrent_rs::bencode::{BNode, Bencode};
+use sha1::{Digest, Sha1};
 use std::fs;
 use std::path::{Path, PathBuf};
-use sha1::{Digest, Sha1};
-use bittorrent_rs::bencode::{BNode, Bencode};
 
 pub fn generate_torrent_bytes(
     sync_dir: &Path,
@@ -36,7 +36,7 @@ pub fn generate_torrent_bytes(
     for file_path in &files {
         let metadata = fs::metadata(file_path)?;
         let length = metadata.len();
-        
+
         // Relative path segments
         let rel_path = file_path.strip_prefix(sync_dir).unwrap();
         let path_segments: Vec<String> = rel_path
@@ -76,9 +76,12 @@ pub fn generate_torrent_bytes(
     // Info dictionary entries
     let mut info_entries = Vec::new();
     info_entries.push((b"name".as_slice(), BNode::String(name.as_bytes())));
-    
+
     let piece_len_str = piece_length.to_string();
-    info_entries.push((b"piece length".as_slice(), BNode::Number(piece_len_str.as_bytes())));
+    info_entries.push((
+        b"piece length".as_slice(),
+        BNode::Number(piece_len_str.as_bytes()),
+    ));
     info_entries.push((b"pieces".as_slice(), BNode::String(&piece_hashes)));
     info_entries.push((b"private".as_slice(), BNode::Number(b"1")));
 
@@ -92,10 +95,7 @@ pub fn generate_torrent_bytes(
         lengths_str.push(len_str);
     }
 
-    for (i, (_, path_segs)) in file_infos.iter().enumerate() {
-        let mut file_dict = Vec::new();
-        file_dict.push((b"length".as_slice(), BNode::Number(lengths_str[i].as_bytes())));
-        
+    for (_, path_segs) in file_infos.iter() {
         let segs_node: Vec<BNode> = path_segs
             .iter()
             .map(|s| BNode::String(s.as_bytes()))
@@ -104,9 +104,13 @@ pub fn generate_torrent_bytes(
     }
 
     for i in 0..file_infos.len() {
-        let mut file_dict = Vec::new();
-        file_dict.push((b"length".as_slice(), BNode::Number(lengths_str[i].as_bytes())));
-        file_dict.push((b"path".as_slice(), BNode::List(path_lists[i].clone())));
+        let file_dict = vec![
+            (
+                b"length".as_slice(),
+                BNode::Number(lengths_str[i].as_bytes()),
+            ),
+            (b"path".as_slice(), BNode::List(path_lists[i].clone())),
+        ];
         bencode_files.push(BNode::Dictionary(file_dict));
     }
 
@@ -115,9 +119,13 @@ pub fn generate_torrent_bytes(
     let info_node = BNode::Dictionary(info_entries);
 
     // Root dictionary
-    let mut root_entries = Vec::new();
-    root_entries.push((b"announce".as_slice(), BNode::String(b"http://127.0.0.1:6881/announce")));
-    root_entries.push((b"info".as_slice(), info_node));
+    let root_entries = vec![
+        (
+            b"announce".as_slice(),
+            BNode::String(b"http://127.0.0.1:6881/announce"),
+        ),
+        (b"info".as_slice(), info_node),
+    ];
 
     let root_node = BNode::Dictionary(root_entries);
     Ok(Bencode::encode(&root_node))

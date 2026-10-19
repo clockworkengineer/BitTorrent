@@ -1,6 +1,6 @@
 use bittorrent_rs::core::merkle::{BLOCK_SIZE, MerkleTree};
 use bittorrent_rs::metainfo::{FileDetails, MetaInfoFile};
-use bittorrent_rs::{Bencode, BNode};
+use bittorrent_rs::{BNode, Bencode};
 use sha2::{Digest, Sha256};
 
 #[test]
@@ -66,7 +66,10 @@ fn test_merkle_tree_power_of_two_four_blocks() {
     assert!(tree.verify_block(3, &block_3));
 
     // Test Merkle Proofs (audit paths) for each leaf
-    for (i, block) in [&block_0, &block_1, &block_2, &block_3].into_iter().enumerate() {
+    for (i, block) in [&block_0, &block_1, &block_2, &block_3]
+        .into_iter()
+        .enumerate()
+    {
         let proof = tree.proof(i).expect("Proof should be generated");
         assert_eq!(proof.path.len(), 2); // log2(4) = 2 sibling hashes
         assert!(proof.verify(block, &root));
@@ -139,12 +142,8 @@ fn test_metainfo_v2_file_tree_pieces_root_parsing() {
         (b"length" as &[u8], BNode::Number(b"32768")),
         (b"pieces root" as &[u8], BNode::String(&dummy_root)),
     ]);
-    let file_leaf = BNode::Dictionary(vec![
-        (b"" as &[u8], file_props),
-    ]);
-    let file_tree = BNode::Dictionary(vec![
-        (b"test_video.mp4" as &[u8], file_leaf),
-    ]);
+    let file_leaf = BNode::Dictionary(vec![(b"" as &[u8], file_props)]);
+    let file_tree = BNode::Dictionary(vec![(b"test_video.mp4" as &[u8], file_leaf)]);
 
     let info_dict = BNode::Dictionary(vec![
         (b"name" as &[u8], BNode::String(b"v2_torrent")),
@@ -154,7 +153,10 @@ fn test_metainfo_v2_file_tree_pieces_root_parsing() {
     ]);
 
     let root_dict = BNode::Dictionary(vec![
-        (b"announce" as &[u8], BNode::String(b"http://tracker.example.com/announce")),
+        (
+            b"announce" as &[u8],
+            BNode::String(b"http://tracker.example.com/announce"),
+        ),
         (b"info" as &[u8], info_dict),
     ]);
 
@@ -164,7 +166,8 @@ fn test_metainfo_v2_file_tree_pieces_root_parsing() {
 
     assert!(meta.is_v2());
 
-    let (total_bytes, files) = meta.local_files_to_download_list(std::path::Path::new("."))
+    let (total_bytes, files) = meta
+        .local_files_to_download_list(std::path::Path::new("."))
         .expect("Failed to list files");
     assert_eq!(total_bytes, 32768);
     assert_eq!(files.len(), 1);
@@ -199,7 +202,8 @@ fn test_torrent_context_v2_block_verification() {
         selector,
         std::path::Path::new("."),
         config,
-    ).expect("Bootstrap failed");
+    )
+    .expect("Bootstrap failed");
 
     ctx.piece_length = BLOCK_SIZE as u32;
     ctx.files_to_download = vec![file];

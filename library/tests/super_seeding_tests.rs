@@ -1,11 +1,15 @@
-use bittorrent_rs::{
-    peer::PeerAction, MockSocket, Peer, PeerMessage, SequentialSelector, SessionConfig, Socket,
-    TorrentSessionBuilder, TorrentStatus,
-};
 use bittorrent_rs::internals::TorrentContext;
+use bittorrent_rs::{
+    MockSocket, Peer, PeerMessage, SequentialSelector, SessionConfig, Socket,
+    TorrentSessionBuilder, TorrentStatus, peer::PeerAction,
+};
 use std::sync::{Arc, Mutex};
 
-fn create_seeding_context(num_pieces: usize, piece_length: u32, super_seeding: bool) -> TorrentContext {
+fn create_seeding_context(
+    num_pieces: usize,
+    piece_length: u32,
+    super_seeding: bool,
+) -> TorrentContext {
     let mut config = SessionConfig::default();
     config.super_seeding = super_seeding;
     let selector = Arc::new(SequentialSelector);
@@ -95,9 +99,15 @@ fn test_super_seeding_swarm_have_validation() {
     let empty_bitfield = vec![0x00];
 
     // Offer piece 0 to Peer A
-    assert_eq!(ctx.offer_super_seed_piece(peer_a_ip, &empty_bitfield), Some(0));
+    assert_eq!(
+        ctx.offer_super_seed_piece(peer_a_ip, &empty_bitfield),
+        Some(0)
+    );
     // Offer piece 1 to Peer B
-    assert_eq!(ctx.offer_super_seed_piece(peer_b_ip, &empty_bitfield), Some(1));
+    assert_eq!(
+        ctx.offer_super_seed_piece(peer_b_ip, &empty_bitfield),
+        Some(1)
+    );
 
     // Peer A reports Have(0) - this is just Peer A acknowledging what was offered, NOT swarm validation
     let res_self = ctx.on_peer_have(peer_a_ip, 0);
@@ -131,8 +141,14 @@ fn test_super_seeding_peer_disconnect_frees_piece() {
     let empty_bitfield = vec![0x00];
 
     // Offer piece 0 to Peer A
-    assert_eq!(ctx.offer_super_seed_piece(peer_a_ip, &empty_bitfield), Some(0));
-    assert_eq!(ctx.offer_super_seed_piece(peer_b_ip, &empty_bitfield), Some(1));
+    assert_eq!(
+        ctx.offer_super_seed_piece(peer_a_ip, &empty_bitfield),
+        Some(0)
+    );
+    assert_eq!(
+        ctx.offer_super_seed_piece(peer_b_ip, &empty_bitfield),
+        Some(1)
+    );
 
     // Peer A disconnects before swarm validates piece 0
     ctx.on_peer_disconnect(peer_a_ip);

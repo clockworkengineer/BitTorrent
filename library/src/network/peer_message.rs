@@ -5,8 +5,8 @@
 
 use crate::constants::{HASH_LENGTH, PEER_ID_LENGTH, SIZE_OF_U32};
 use crate::error::BitTorrentError;
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 
 /// Enumeration of messages defined in the BitTorrent Peer Wire Protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,7 +226,11 @@ impl<'a> PeerMessage<'a> {
                 if payload.len() != SIZE_OF_U32 {
                     return Err(BitTorrentError::Parse("Invalid HAVE payload length".into()));
                 }
-                let index = u32::from_be_bytes(payload.try_into().map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?);
+                let index = u32::from_be_bytes(
+                    payload
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
+                );
                 Ok(PeerMessage::Have(index))
             }
             5 => Ok(PeerMessage::Bitfield(payload)),
@@ -244,8 +248,16 @@ impl<'a> PeerMessage<'a> {
                         "Invalid PIECE payload length".into(),
                     ));
                 }
-                let index = u32::from_be_bytes(payload[0..4].try_into().map_err(|_| BitTorrentError::Parse("Invalid index bytes".into()))?);
-                let begin = u32::from_be_bytes(payload[4..8].try_into().map_err(|_| BitTorrentError::Parse("Invalid begin bytes".into()))?);
+                let index = u32::from_be_bytes(
+                    payload[0..4]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid index bytes".into()))?,
+                );
+                let begin = u32::from_be_bytes(
+                    payload[4..8]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid begin bytes".into()))?,
+                );
                 let block = &payload[8..];
                 Ok(PeerMessage::Piece {
                     index,
@@ -265,12 +277,18 @@ impl<'a> PeerMessage<'a> {
                 if payload.len() != 2 {
                     return Err(BitTorrentError::Parse("Invalid PORT payload length".into()));
                 }
-                let port = u16::from_be_bytes(payload.try_into().map_err(|_| BitTorrentError::Parse("Invalid port bytes".into()))?);
+                let port = u16::from_be_bytes(
+                    payload
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid port bytes".into()))?,
+                );
                 Ok(PeerMessage::Port(port))
             }
             20 => {
                 if payload.is_empty() {
-                    return Err(BitTorrentError::Parse("Invalid EXTENDED payload length".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Invalid EXTENDED payload length".into(),
+                    ));
                 }
                 let ext_id = payload[0];
                 let ext_payload = &payload[1..];
@@ -281,9 +299,15 @@ impl<'a> PeerMessage<'a> {
             }
             13 => {
                 if payload.len() != SIZE_OF_U32 {
-                    return Err(BitTorrentError::Parse("Invalid SUGGEST payload length".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Invalid SUGGEST payload length".into(),
+                    ));
                 }
-                let index = u32::from_be_bytes(payload.try_into().map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?);
+                let index = u32::from_be_bytes(
+                    payload
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
+                );
                 Ok(PeerMessage::Suggest(index))
             }
             14 => Ok(PeerMessage::HaveAll),
@@ -298,21 +322,45 @@ impl<'a> PeerMessage<'a> {
             }
             17 => {
                 if payload.len() != SIZE_OF_U32 {
-                    return Err(BitTorrentError::Parse("Invalid ALLOWED FAST payload length".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Invalid ALLOWED FAST payload length".into(),
+                    ));
                 }
-                let index = u32::from_be_bytes(payload.try_into().map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?);
+                let index = u32::from_be_bytes(
+                    payload
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
+                );
                 Ok(PeerMessage::AllowedFast(index))
             }
             21 => {
                 if payload.len() != 48 {
-                    return Err(BitTorrentError::Parse("Invalid HASH_REQUEST payload length".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Invalid HASH_REQUEST payload length".into(),
+                    ));
                 }
                 let mut pieces_root = [0u8; 32];
                 pieces_root.copy_from_slice(&payload[0..32]);
-                let base_layer = u32::from_be_bytes(payload[32..36].try_into().map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?);
-                let index = u32::from_be_bytes(payload[36..40].try_into().map_err(|_| BitTorrentError::Parse("Invalid index".into()))?);
-                let length = u32::from_be_bytes(payload[40..44].try_into().map_err(|_| BitTorrentError::Parse("Invalid length".into()))?);
-                let proof_layers = u32::from_be_bytes(payload[44..48].try_into().map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?);
+                let base_layer = u32::from_be_bytes(
+                    payload[32..36]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?,
+                );
+                let index = u32::from_be_bytes(
+                    payload[36..40]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid index".into()))?,
+                );
+                let length = u32::from_be_bytes(
+                    payload[40..44]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid length".into()))?,
+                );
+                let proof_layers = u32::from_be_bytes(
+                    payload[44..48]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?,
+                );
                 Ok(PeerMessage::HashRequest {
                     pieces_root,
                     base_layer,
@@ -323,14 +371,32 @@ impl<'a> PeerMessage<'a> {
             }
             22 => {
                 if payload.len() < 48 || (payload.len() - 48) % 32 != 0 {
-                    return Err(BitTorrentError::Parse("Invalid HASHES payload length".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Invalid HASHES payload length".into(),
+                    ));
                 }
                 let mut pieces_root = [0u8; 32];
                 pieces_root.copy_from_slice(&payload[0..32]);
-                let base_layer = u32::from_be_bytes(payload[32..36].try_into().map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?);
-                let index = u32::from_be_bytes(payload[36..40].try_into().map_err(|_| BitTorrentError::Parse("Invalid index".into()))?);
-                let length = u32::from_be_bytes(payload[40..44].try_into().map_err(|_| BitTorrentError::Parse("Invalid length".into()))?);
-                let proof_layers = u32::from_be_bytes(payload[44..48].try_into().map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?);
+                let base_layer = u32::from_be_bytes(
+                    payload[32..36]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?,
+                );
+                let index = u32::from_be_bytes(
+                    payload[36..40]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid index".into()))?,
+                );
+                let length = u32::from_be_bytes(
+                    payload[40..44]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid length".into()))?,
+                );
+                let proof_layers = u32::from_be_bytes(
+                    payload[44..48]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?,
+                );
                 let hashes = &payload[48..];
                 Ok(PeerMessage::Hashes {
                     pieces_root,
@@ -343,14 +409,32 @@ impl<'a> PeerMessage<'a> {
             }
             23 => {
                 if payload.len() != 48 {
-                    return Err(BitTorrentError::Parse("Invalid HASH_REJECT payload length".into()));
+                    return Err(BitTorrentError::Parse(
+                        "Invalid HASH_REJECT payload length".into(),
+                    ));
                 }
                 let mut pieces_root = [0u8; 32];
                 pieces_root.copy_from_slice(&payload[0..32]);
-                let base_layer = u32::from_be_bytes(payload[32..36].try_into().map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?);
-                let index = u32::from_be_bytes(payload[36..40].try_into().map_err(|_| BitTorrentError::Parse("Invalid index".into()))?);
-                let length = u32::from_be_bytes(payload[40..44].try_into().map_err(|_| BitTorrentError::Parse("Invalid length".into()))?);
-                let proof_layers = u32::from_be_bytes(payload[44..48].try_into().map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?);
+                let base_layer = u32::from_be_bytes(
+                    payload[32..36]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?,
+                );
+                let index = u32::from_be_bytes(
+                    payload[36..40]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid index".into()))?,
+                );
+                let length = u32::from_be_bytes(
+                    payload[40..44]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid length".into()))?,
+                );
+                let proof_layers = u32::from_be_bytes(
+                    payload[44..48]
+                        .try_into()
+                        .map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?,
+                );
                 Ok(PeerMessage::HashReject {
                     pieces_root,
                     base_layer,
@@ -419,11 +503,25 @@ impl<'a> PeerMessage<'a> {
 
     fn decode_triple_u32(payload: &[u8]) -> Result<(u32, u32, u32), BitTorrentError> {
         if payload.len() != 12 {
-            return Err(BitTorrentError::Parse("Invalid message payload length".into()));
+            return Err(BitTorrentError::Parse(
+                "Invalid message payload length".into(),
+            ));
         }
-        let v1 = u32::from_be_bytes(payload[0..4].try_into().map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?);
-        let v2 = u32::from_be_bytes(payload[4..8].try_into().map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?);
-        let v3 = u32::from_be_bytes(payload[8..12].try_into().map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?);
+        let v1 = u32::from_be_bytes(
+            payload[0..4]
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
+        );
+        let v2 = u32::from_be_bytes(
+            payload[4..8]
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
+        );
+        let v3 = u32::from_be_bytes(
+            payload[8..12]
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
+        );
         Ok((v1, v2, v3))
     }
 }

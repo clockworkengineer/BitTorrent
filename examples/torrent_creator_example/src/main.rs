@@ -4,13 +4,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn print_usage() {
-    eprintln!("Usage: torrent_creator_example <input-path> <output.torrent> [format] [piece-length-kb]");
+    eprintln!(
+        "Usage: torrent_creator_example <input-path> <output.torrent> [format] [piece-length-kb]"
+    );
     eprintln!();
     eprintln!("Arguments:");
-    eprintln!("  <input-path>        Path to a single file or a directory to package into the torrent");
+    eprintln!(
+        "  <input-path>        Path to a single file or a directory to package into the torrent"
+    );
     eprintln!("  <output.torrent>    Destination path for the created .torrent file");
     eprintln!("  [format]            Torrent format: 'v1', 'v2', or 'hybrid' (default: 'hybrid')");
-    eprintln!("  [piece-length-kb]   Piece size in KiB: e.g. 16, 32, 64, 128, 256, 512, 1024 (default: 64)");
+    eprintln!(
+        "  [piece-length-kb]   Piece size in KiB: e.g. 16, 32, 64, 128, 256, 512, 1024 (default: 64)"
+    );
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  torrent_creator_example ./my_movie.mp4 ./my_movie.torrent hybrid 128");
@@ -50,14 +56,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let input_path = PathBuf::from(&args[0]);
     let output_torrent_path = PathBuf::from(&args[1]);
-    let format = args.get(2).map(|s| s.to_lowercase()).unwrap_or_else(|| "hybrid".to_string());
-    let piece_kb: usize = args
-        .get(3)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(64);
+    let format = args
+        .get(2)
+        .map(|s| s.to_lowercase())
+        .unwrap_or_else(|| "hybrid".to_string());
+    let piece_kb: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(64);
 
     if !input_path.exists() {
-        eprintln!("Error: input path '{}' does not exist.", input_path.display());
+        eprintln!(
+            "Error: input path '{}' does not exist.",
+            input_path.display()
+        );
         std::process::exit(1);
     }
 
@@ -102,13 +111,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "v2" => builder.build_v2()?,
         "hybrid" => builder.build_hybrid()?,
         other => {
-            eprintln!("Unknown format '{}'. Supported formats are 'v1', 'v2', 'hybrid'.", other);
+            eprintln!(
+                "Unknown format '{}'. Supported formats are 'v1', 'v2', 'hybrid'.",
+                other
+            );
             std::process::exit(1);
         }
     };
 
     fs::write(&output_torrent_path, &torrent_bytes)?;
-    println!("Saved successfully: {} ({} bytes)", output_torrent_path.display(), torrent_bytes.len());
+    println!(
+        "Saved successfully: {} ({} bytes)",
+        output_torrent_path.display(),
+        torrent_bytes.len()
+    );
 
     // Verify and inspect the created .torrent file
     println!("\n=== Validating Generated Torrent ===");
@@ -124,19 +140,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Ok(v1_hash) = metainfo.get_v1_info_hash() {
-        println!("v1 InfoHash (Hex):   {}", bittorrent_rs::util::info_hash_to_string(&v1_hash));
+        println!(
+            "v1 InfoHash (Hex):   {}",
+            bittorrent_rs::util::info_hash_to_string(&v1_hash)
+        );
     }
     if let Ok(v2_hash) = metainfo.get_v2_info_hash() {
-        println!("v2 InfoHash (Hex):   {}", bittorrent_rs::util::info_hash_to_string(&v2_hash));
+        println!(
+            "v2 InfoHash (Hex):   {}",
+            bittorrent_rs::util::info_hash_to_string(&v2_hash)
+        );
     }
 
     // Build sample Magnet URI
     let mut magnet_uri = format!("magnet:?dn={}", urlencoding::encode(torrent_name));
     if let Ok(v1_hash) = metainfo.get_v1_info_hash() {
-        magnet_uri.push_str(&format!("&xt=urn:btih:{}", bittorrent_rs::util::info_hash_to_string(&v1_hash)));
+        magnet_uri.push_str(&format!(
+            "&xt=urn:btih:{}",
+            bittorrent_rs::util::info_hash_to_string(&v1_hash)
+        ));
     }
     if let Ok(v2_hash) = metainfo.get_v2_info_hash() {
-        magnet_uri.push_str(&format!("&xt=urn:btmh:1220{}", bittorrent_rs::util::info_hash_to_string(&v2_hash)));
+        magnet_uri.push_str(&format!(
+            "&xt=urn:btmh:1220{}",
+            bittorrent_rs::util::info_hash_to_string(&v2_hash)
+        ));
     }
     if let Ok(trackers) = metainfo.get_tracker_urls() {
         for tracker in trackers {

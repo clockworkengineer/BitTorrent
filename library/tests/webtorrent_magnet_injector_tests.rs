@@ -1,10 +1,7 @@
 use bittorrent_rs::{
+    MagnetLink, MagnetUriBuilder, SequentialSelector, SessionConfig, TorrentSessionBuilder,
     internals::TorrentContext,
-    network::webtorrent_injector::{
-        DEFAULT_WEBTORRENT_TRACKERS, WebTorrentMagnetInjector,
-    },
-    MagnetLink, MagnetUriBuilder, SequentialSelector, SessionConfig,
-    TorrentSessionBuilder,
+    network::webtorrent_injector::{DEFAULT_WEBTORRENT_TRACKERS, WebTorrentMagnetInjector},
 };
 use std::sync::Arc;
 
@@ -47,20 +44,31 @@ fn test_magnet_link_parse_webseeds_and_v2_multihash() {
     let ws_trackers = magnet.websocket_trackers();
     assert_eq!(ws_trackers, vec!["wss://tracker.openwebtorrent.com"]);
     let udp_trackers = magnet.udp_trackers();
-    assert_eq!(udp_trackers, vec!["udp://tracker.opentrackr.org:1337/announce"]);
+    assert_eq!(
+        udp_trackers,
+        vec!["udp://tracker.opentrackr.org:1337/announce"]
+    );
 
     // Check web seeds & exact sources
     assert_eq!(magnet.web_seeds.len(), 2);
     assert_eq!(magnet.web_seeds[0], "https://webtorrent.io/torrents/");
-    assert_eq!(magnet.web_seeds[1], "https://mirror.archive.org/download/bbb/");
+    assert_eq!(
+        magnet.web_seeds[1],
+        "https://mirror.archive.org/download/bbb/"
+    );
     assert_eq!(magnet.exact_sources.len(), 1);
-    assert_eq!(magnet.exact_sources[0], "https://webtorrent.io/torrents/big-buck-bunny.torrent");
+    assert_eq!(
+        magnet.exact_sources[0],
+        "https://webtorrent.io/torrents/big-buck-bunny.torrent"
+    );
 
     // Check round-trip serialization
     let serialized_uri = magnet.to_uri();
     assert!(serialized_uri.starts_with("magnet:?"));
     assert!(serialized_uri.contains("xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c"));
-    assert!(serialized_uri.contains("xt=urn:btmh:1220a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"));
+    assert!(serialized_uri.contains(
+        "xt=urn:btmh:1220a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
+    ));
     assert!(serialized_uri.contains("dn=Big%20Buck%20Bunny"));
     assert!(serialized_uri.contains("ws=https%3A%2F%2Fwebtorrent.io%2Ftorrents%2F"));
 
@@ -81,7 +89,10 @@ fn test_pure_v2_magnet_link_parsing() {
     assert!(magnet.is_v2_only());
     assert!(!magnet.is_hybrid());
     assert_eq!(magnet.info_hash.len(), 20); // 20-byte truncated v2 prefix
-    assert_eq!(&magnet.info_hash[..], &magnet.v2_info_hash.as_ref().unwrap()[..20]);
+    assert_eq!(
+        &magnet.info_hash[..],
+        &magnet.v2_info_hash.as_ref().unwrap()[..20]
+    );
 
     let serialized = magnet.to_uri();
     assert!(serialized.contains("xt=urn:btmh:1220"));
@@ -104,8 +115,16 @@ fn test_webtorrent_magnet_injector_extraction_and_categorization() {
     assert_eq!(report.total_trackers, 4);
     assert!(report.has_webtorrent);
     assert_eq!(report.websocket_trackers.len(), 2);
-    assert!(report.websocket_trackers.contains(&"wss://tracker.btorrent.xyz".to_string()));
-    assert!(report.websocket_trackers.contains(&"ws://localhost:8000".to_string()));
+    assert!(
+        report
+            .websocket_trackers
+            .contains(&"wss://tracker.btorrent.xyz".to_string())
+    );
+    assert!(
+        report
+            .websocket_trackers
+            .contains(&"ws://localhost:8000".to_string())
+    );
     assert_eq!(report.udp_trackers.len(), 1);
     assert_eq!(report.http_trackers.len(), 1);
     assert_eq!(report.web_seeds.len(), 1);
@@ -270,7 +289,11 @@ fn test_session_builder_and_runtime_webseed_websocket_injection() {
         "https://builder-seed-1.org/".to_string(), // duplicate
     ]);
     assert_eq!(added_runtime, 1);
-    assert!(session.web_seeds().contains(&"https://dynamic-seed.org/".to_string()));
+    assert!(
+        session
+            .web_seeds()
+            .contains(&"https://dynamic-seed.org/".to_string())
+    );
 
     // Dynamic runtime websocket tracker injection
     let added_ws = session.inject_websocket_trackers(vec![
@@ -278,7 +301,11 @@ fn test_session_builder_and_runtime_webseed_websocket_injection() {
         "udp://not-a-websocket-tracker.com:6969".to_string(), // non-websocket ignored
     ]);
     assert_eq!(added_ws, 1);
-    assert!(session.websocket_trackers().contains(&"wss://custom-community-tracker.net".to_string()));
+    assert!(
+        session
+            .websocket_trackers()
+            .contains(&"wss://custom-community-tracker.net".to_string())
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

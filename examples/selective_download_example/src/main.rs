@@ -3,16 +3,22 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 fn print_usage() {
-    eprintln!("Usage: selective_download_example <torrent-file-or-magnet> <download-dir> [selected-indices]");
+    eprintln!(
+        "Usage: selective_download_example <torrent-file-or-magnet> <download-dir> [selected-indices]"
+    );
     eprintln!();
     eprintln!("Arguments:");
     eprintln!("  <torrent-file-or-magnet> Path to a .torrent file or a magnet URI");
     eprintln!("  <download-dir>           Destination download folder");
-    eprintln!("  [selected-indices]       Comma-separated list or ranges of 0-based file indices to download (e.g. '0,2,4-6')");
+    eprintln!(
+        "  [selected-indices]       Comma-separated list or ranges of 0-based file indices to download (e.g. '0,2,4-6')"
+    );
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  selective_download_example multi_episode.torrent ./downloads 0,3");
-    eprintln!("  selective_download_example \"magnet:?xt=urn:btih:...&dn=Archive\" ./downloads 1-3,5");
+    eprintln!(
+        "  selective_download_example \"magnet:?xt=urn:btih:...&dn=Archive\" ./downloads 1-3,5"
+    );
 }
 
 fn parse_file_selection(spec: &str) -> Vec<usize> {
@@ -20,17 +26,20 @@ fn parse_file_selection(spec: &str) -> Vec<usize> {
     for token in spec.split(',') {
         let token = token.trim();
         if let Some((start_str, end_str)) = token.split_once('-') {
-            if let (Ok(start), Ok(end)) = (start_str.trim().parse::<usize>(), end_str.trim().parse::<usize>()) {
+            if let (Ok(start), Ok(end)) = (
+                start_str.trim().parse::<usize>(),
+                end_str.trim().parse::<usize>(),
+            ) {
                 for i in start..=end {
                     if !indices.contains(&i) {
                         indices.push(i);
                     }
                 }
             }
-        } else if let Ok(idx) = token.parse::<usize>() {
-            if !indices.contains(&idx) {
-                indices.push(idx);
-            }
+        } else if let Ok(idx) = token.parse::<usize>()
+            && !indices.contains(&idx)
+        {
+            indices.push(idx);
         }
     }
     indices.sort_unstable();
@@ -68,15 +77,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Inspecting .torrent metainfo...");
         let mut meta = MetaInfoFile::new(Path::new(source))?;
         meta.parse()?;
-        println!("Torrent Name:   {}", meta.get_name().unwrap_or_else(|_| "unnamed".to_string()));
+        println!(
+            "Torrent Name:   {}",
+            meta.get_name().unwrap_or_else(|_| "unnamed".to_string())
+        );
         let total_size = meta.get_total_size().unwrap_or(0);
         println!("Total Size:     {} bytes", total_size);
         let (_, files) = meta.local_files_to_download_list(Path::new("."))?;
         println!("\nFile Manifest (Total: {} files):", files.len());
         for (i, f) in files.iter().enumerate() {
             let is_selected = selected_indices.contains(&i);
-            let mark = if is_selected { " [*] DOWNLOAD" } else { " [ ] SKIP" };
-            println!("  [{:>2}] {:<14} {:>10} bytes {}", i, f.name, f.length, mark);
+            let mark = if is_selected {
+                " [*] DOWNLOAD"
+            } else {
+                " [ ] SKIP"
+            };
+            println!(
+                "  [{:>2}] {:<14} {:>10} bytes {}",
+                i, f.name, f.length, mark
+            );
         }
 
         println!("\nInitializing session with BEP 53 file filtering...");
@@ -118,7 +137,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for m in &mirror_summaries {
         println!(
             "  - {} | Score: {:.1}/100 | Latency: {}ms | Requests: ({} ok / {} fail) | Penalized: {}",
-            m.endpoint_url, m.health_score, m.smoothed_latency_ms, m.successful_requests, m.failed_requests, m.is_penalized
+            m.endpoint_url,
+            m.health_score,
+            m.smoothed_latency_ms,
+            m.successful_requests,
+            m.failed_requests,
+            m.is_penalized
         );
     }
 

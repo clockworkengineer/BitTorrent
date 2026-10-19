@@ -3,6 +3,9 @@ name = "torrent_client_shared"
 version = "0.1.1"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 bittorrent_rs = { path = "../../library", package = "bittorrent-rs" }
 serde = { version = "1.0", features = ["derive"] }

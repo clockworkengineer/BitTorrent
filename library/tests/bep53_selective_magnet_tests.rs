@@ -1,7 +1,7 @@
 use bittorrent_rs::{
-    format_bep53_select_only, parse_bep53_select_only, FilePriority, MagnetLink,
-    MagnetUriBuilder, MetadataRangeFetcher, PartialMetadataManifest,
-    RarestFirstSelector, SessionConfig, TorrentSession,
+    FilePriority, MagnetLink, MagnetUriBuilder, MetadataRangeFetcher, PartialMetadataManifest,
+    RarestFirstSelector, SessionConfig, TorrentSession, format_bep53_select_only,
+    parse_bep53_select_only,
 };
 use std::time::Duration;
 
@@ -69,7 +69,11 @@ fn test_bep53_magnet_uri_canonical_serialization() {
     assert_eq!(magnet.selected_indices(), &[0, 2, 4, 6, 7, 8]);
 
     let uri = magnet.to_uri();
-    assert!(uri.contains("so=0,2,4,6-8"), "URI should contain compressed so parameter: {}", uri);
+    assert!(
+        uri.contains("so=0,2,4,6-8"),
+        "URI should contain compressed so parameter: {}",
+        uri
+    );
 
     // Roundtrip parse
     let parsed = MagnetLink::parse(&uri).expect("Reparse URI");
@@ -92,7 +96,10 @@ fn test_bep53_magnet_uri_builder_methods() {
     let mut cloned = magnet.clone();
     cloned.add_selected_file(7);
     cloned.add_selected_range(20, 22);
-    assert_eq!(cloned.selected_indices(), &[1, 3, 7, 10, 11, 12, 20, 21, 22]);
+    assert_eq!(
+        cloned.selected_indices(),
+        &[1, 3, 7, 10, 11, 12, 20, 21, 22]
+    );
 
     cloned.clear_selection();
     assert!(!cloned.has_file_selection());
@@ -132,15 +139,25 @@ fn test_metadata_range_fetcher_pipelining_and_timeout() {
 
     // Peer 1 supplies piece 0
     let piece0_data = vec![0x11u8; 16384];
-    let complete = fetcher.handle_data_piece(0, Some(49152), &piece0_data, "peer_1").unwrap();
+    let complete = fetcher
+        .handle_data_piece(0, Some(49152), &piece0_data, "peer_1")
+        .unwrap();
     assert!(!complete);
     assert_eq!(fetcher.pieces_count(), 1);
 
     // Peer 2 supplies piece 1 and piece 2
     let piece1_data = vec![0x22u8; 16384];
     let piece2_data = vec![0x33u8; 16384];
-    assert!(!fetcher.handle_data_piece(1, None, &piece1_data, "peer_2").unwrap());
-    assert!(fetcher.handle_data_piece(2, None, &piece2_data, "peer_2").unwrap());
+    assert!(
+        !fetcher
+            .handle_data_piece(1, None, &piece1_data, "peer_2")
+            .unwrap()
+    );
+    assert!(
+        fetcher
+            .handle_data_piece(2, None, &piece2_data, "peer_2")
+            .unwrap()
+    );
 
     assert!(fetcher.is_complete());
     let assembled = fetcher.assemble().expect("Assemble complete metadata");
@@ -155,7 +172,9 @@ fn test_metadata_range_fetcher_pipelining_and_timeout() {
     hasher.update(&assembled);
     let expected_hash = hasher.finalize().to_vec();
 
-    let verified = fetcher.verify_and_assemble(&expected_hash).expect("Verification succeeds");
+    let verified = fetcher
+        .verify_and_assemble(&expected_hash)
+        .expect("Verification succeeds");
     assert_eq!(verified.len(), 49152);
 
     let metrics = fetcher.metrics();
@@ -262,7 +281,8 @@ fn test_context_bep53_file_selection_priority_and_selector_filtering() {
         selector,
         &temp_dir,
         config,
-    ).expect("Bootstrap context");
+    )
+    .expect("Bootstrap context");
 
     // Manually simulate a 3-file torrent structure
     context.piece_length = 32768; // 32 KiB
@@ -314,10 +334,22 @@ fn test_context_bep53_file_selection_priority_and_selector_filtering() {
     assert_eq!(context.files_to_download[2].priority, FilePriority::Normal);
 
     // Check piece wantedness
-    assert!(context.is_piece_wanted(0), "Piece 0 belongs to file 0, must be wanted");
-    assert!(!context.is_piece_wanted(1), "Piece 1 belongs to skipped file 1, must NOT be wanted");
-    assert!(!context.is_piece_wanted(2), "Piece 2 belongs to skipped file 1, must NOT be wanted");
-    assert!(context.is_piece_wanted(3), "Piece 3 belongs to file 2, must be wanted");
+    assert!(
+        context.is_piece_wanted(0),
+        "Piece 0 belongs to file 0, must be wanted"
+    );
+    assert!(
+        !context.is_piece_wanted(1),
+        "Piece 1 belongs to skipped file 1, must NOT be wanted"
+    );
+    assert!(
+        !context.is_piece_wanted(2),
+        "Piece 2 belongs to skipped file 1, must NOT be wanted"
+    );
+    assert!(
+        context.is_piece_wanted(3),
+        "Piece 3 belongs to file 2, must be wanted"
+    );
 
     // Check Piece Priority Queue contains only pieces 0 and 3
     let pq_pieces: Vec<u32> = {
@@ -330,7 +362,9 @@ fn test_context_bep53_file_selection_priority_and_selector_filtering() {
     assert!(!pq_pieces.contains(&2));
 
     // Evaluate BEP 53 savings report
-    let eval = context.bep53_evaluation().expect("Evaluation report available");
+    let eval = context
+        .bep53_evaluation()
+        .expect("Evaluation report available");
     assert_eq!(eval.selected_indices, vec![0, 2]);
     assert_eq!(eval.selected_bytes, 65536);
     assert_eq!(eval.total_bytes, 131072);
@@ -347,7 +381,8 @@ fn test_session_builder_and_runtime_bep53_selection() {
     let _ = std::fs::create_dir_all(&temp_dir);
 
     // Build session from magnet URI containing so=0,2
-    let magnet_uri = "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=SelectedTorrent&so=0,2";
+    let magnet_uri =
+        "magnet:?xt=urn:btih:3f069123cd2052c93540c4908ef48df8f480393c&dn=SelectedTorrent&so=0,2";
     let mut session = TorrentSession::from_magnet(magnet_uri, &temp_dir)
         .metadata_pipeline_depth(8)
         .metadata_request_timeout(3)
@@ -357,7 +392,9 @@ fn test_session_builder_and_runtime_bep53_selection() {
     assert_eq!(session.selected_files(), Some(vec![0, 2]));
 
     // Dynamically update selection during runtime to files 1 and 3
-    session.select_files(&[1, 3]).expect("Update file selection at runtime");
+    session
+        .select_files(&[1, 3])
+        .expect("Update file selection at runtime");
     assert_eq!(session.selected_files(), Some(vec![1, 3]));
 
     let _ = std::fs::remove_dir_all(&temp_dir);

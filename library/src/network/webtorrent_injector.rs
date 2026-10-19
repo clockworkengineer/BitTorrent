@@ -4,13 +4,13 @@
 //! (`wss://` and `ws://`) from BitTorrent Magnet URIs, along with automated injection of public WebTorrent
 //! signaling trackers for instant browser-to-desktop bridging.
 
+use crate::core::torrent_context::TorrentContext;
 use crate::error::BitTorrentError;
 use crate::magnet::MagnetLink;
-use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::string::ToString;
+use alloc::vec::Vec;
 use std::sync::{Arc, Mutex};
-use crate::core::torrent_context::TorrentContext;
 
 /// Canonical public WebTorrent WebSocket trackers used for browser-to-desktop cross-swarm bridging.
 pub const DEFAULT_WEBTORRENT_TRACKERS: &[&str] = &[
@@ -164,7 +164,10 @@ impl WebTorrentMagnetInjector {
         }
 
         // 3. Fallback WebTorrent Injection if enabled and no WebSocket tracker present
-        let has_ws = context.tracker_urls.iter().any(|u| Self::is_websocket_tracker(u));
+        let has_ws = context
+            .tracker_urls
+            .iter()
+            .any(|u| Self::is_websocket_tracker(u));
         if auto_inject_defaults && !has_ws {
             for &def_tr in DEFAULT_WEBTORRENT_TRACKERS {
                 let s = def_tr.to_string();

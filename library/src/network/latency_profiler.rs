@@ -215,11 +215,20 @@ impl SwarmLatencyProfiler {
         let mut peers: Vec<(&String, Duration)> = self
             .profiles
             .iter()
-            .map(|(ip, p)| (ip, p.estimated_completion_time(crate::constants::BLOCK_SIZE)))
+            .map(|(ip, p)| {
+                (
+                    ip,
+                    p.estimated_completion_time(crate::constants::BLOCK_SIZE),
+                )
+            })
             .collect();
 
         peers.sort_by_key(|&(_, ect)| ect);
-        peers.into_iter().take(top_n).map(|(ip, _)| ip.clone()).collect()
+        peers
+            .into_iter()
+            .take(top_n)
+            .map(|(ip, _)| ip.clone())
+            .collect()
     }
 
     /// Generates summary snapshots of all peer latency profiles.

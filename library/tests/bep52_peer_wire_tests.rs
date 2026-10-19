@@ -1,8 +1,6 @@
 use bittorrent_rs::{
-    internals::TorrentContext,
-    network::peer::PeerAction,
-    FileDetails, FilePriority, MerkleTree, MockSocket, Peer, PeerMessage,
-    SequentialSelector, SessionConfig, Socket,
+    FileDetails, FilePriority, MerkleTree, MockSocket, Peer, PeerMessage, SequentialSelector,
+    SessionConfig, Socket, internals::TorrentContext, network::peer::PeerAction,
 };
 use std::sync::{Arc, Mutex};
 
@@ -141,7 +139,10 @@ fn test_peer_message_bep52_hashes_roundtrip() {
     let encoded = hashes_msg.encode();
     // 4 bytes len + 1 byte ID (22) + 48 byte header + 4 * 32 hashes = 53 + 128 = 181
     assert_eq!(encoded.len(), 181);
-    assert_eq!(u32::from_be_bytes(encoded[0..4].try_into().unwrap()), 49 + 128);
+    assert_eq!(
+        u32::from_be_bytes(encoded[0..4].try_into().unwrap()),
+        49 + 128
+    );
     assert_eq!(encoded[4], 22); // ID 22: Hashes
 
     let decoded = PeerMessage::decode(&encoded[4..]).expect("Decode Hashes");

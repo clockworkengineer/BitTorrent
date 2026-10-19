@@ -106,7 +106,9 @@ pub trait ChokingStrategy: Send + Sync {
     fn spawn_choking_loop(
         &self,
         context: Arc<std::sync::Mutex<crate::core::torrent_context::TorrentContext>>,
-        task_tx: std::sync::mpsc::Sender<core::pin::Pin<Box<dyn core::future::Future<Output = ()> + Send + 'static>>>,
+        task_tx: std::sync::mpsc::Sender<
+            core::pin::Pin<Box<dyn core::future::Future<Output = ()> + Send + 'static>>,
+        >,
         manager: Option<Arc<crate::manager::Manager>>,
     );
 }
@@ -118,20 +120,20 @@ impl std::fmt::Debug for SessionConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut ds = f.debug_struct("SessionConfig");
         ds.field("connect_timeout", &self.connect_timeout)
-          .field("read_timeout", &self.read_timeout)
-          .field("write_timeout", &self.write_timeout)
-          .field("min_reannounce_interval", &self.min_reannounce_interval)
-          .field("dht_enabled", &self.dht_enabled)
-          .field("dht_port", &self.dht_port)
-          .field("listen_port", &self.listen_port)
-          .field("skip_hash_check", &self.skip_hash_check)
-          .field("allow_private_lsd", &self.allow_private_lsd)
-          .field("handshake_timeout", &self.handshake_timeout)
-          .field("connection_backoff", &self.connection_backoff)
-          .field("block_size", &self.block_size)
-          .field("super_seeding", &self.super_seeding)
-          .field("disk_cache_size_mb", &self.disk_cache_size_mb)
-          .field("choking_strategy", &"Arc<dyn ChokingStrategy>");
+            .field("read_timeout", &self.read_timeout)
+            .field("write_timeout", &self.write_timeout)
+            .field("min_reannounce_interval", &self.min_reannounce_interval)
+            .field("dht_enabled", &self.dht_enabled)
+            .field("dht_port", &self.dht_port)
+            .field("listen_port", &self.listen_port)
+            .field("skip_hash_check", &self.skip_hash_check)
+            .field("allow_private_lsd", &self.allow_private_lsd)
+            .field("handshake_timeout", &self.handshake_timeout)
+            .field("connection_backoff", &self.connection_backoff)
+            .field("block_size", &self.block_size)
+            .field("super_seeding", &self.super_seeding)
+            .field("disk_cache_size_mb", &self.disk_cache_size_mb)
+            .field("choking_strategy", &"Arc<dyn ChokingStrategy>");
         #[cfg(feature = "http-tracker")]
         ds.field("http_client", &self.http_client);
         ds.finish()
@@ -141,8 +143,8 @@ impl std::fmt::Debug for SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         let connect_timeout = Duration::from_secs(10);
-        let read_timeout    = Duration::from_secs(5);
-        let write_timeout   = Duration::from_secs(5);
+        let read_timeout = Duration::from_secs(5);
+        let write_timeout = Duration::from_secs(5);
         SessionConfig {
             connect_timeout,
             read_timeout,

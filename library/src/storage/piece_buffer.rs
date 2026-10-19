@@ -36,7 +36,8 @@ impl PieceBuffer {
             let word_idx = (block_number as usize) / 64;
             let bit_idx = (block_number as usize) % 64;
             self.present_blocks[word_idx] |= 1 << bit_idx;
-            self.block_sources[block_number as usize] = Some(alloc::string::String::from(source_ip));
+            self.block_sources[block_number as usize] =
+                Some(alloc::string::String::from(source_ip));
             self.block_count.fetch_sub(1, Ordering::SeqCst);
         }
     }

@@ -1,8 +1,8 @@
 use bittorrent_rs::{
+    MockSocket, Peer, PeerMessage, RarestFirstSelector, SessionConfig, Socket, TorrentStatus,
     internals::TorrentContext,
     network::pex::{PexFlags, PexMessage},
     network::tracker::PeerDetails,
-    Peer, PeerMessage, RarestFirstSelector, SessionConfig, Socket, MockSocket, TorrentStatus,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -84,7 +84,10 @@ fn test_pex_dual_stack_encode_decode_roundtrip() {
     let pos_dropped6 = raw_str.find("8:dropped6").expect("missing dropped6");
 
     assert!(pos_added < pos_added_f, "added must precede added.f");
-    assert!(pos_added_f < pos_added6, "added.f must precede added6 ('.' < '6')");
+    assert!(
+        pos_added_f < pos_added6,
+        "added.f must precede added6 ('.' < '6')"
+    );
     assert!(pos_added6 < pos_added6_f, "added6 must precede added6.f");
     assert!(pos_added6_f < pos_dropped, "added6.f must precede dropped");
     assert!(pos_dropped < pos_dropped6, "dropped must precede dropped6");
@@ -117,7 +120,10 @@ fn test_pex_dual_stack_encode_decode_roundtrip() {
     assert!(decoded.added_v6[0].flags.is_pref_encrypt());
     assert!(decoded.added_v6[0].flags.is_holepunch());
 
-    assert_eq!(decoded.added_v6[1].details.ip, "2001:db8:85a3::8a2e:370:7334");
+    assert_eq!(
+        decoded.added_v6[1].details.ip,
+        "2001:db8:85a3::8a2e:370:7334"
+    );
     assert_eq!(decoded.added_v6[1].details.port, 49152);
     assert!(decoded.added_v6[1].flags.is_seed());
 
@@ -149,7 +155,11 @@ fn test_pex_flags_bit_operations() {
 fn test_pex_handling_seed_filters_seeds() {
     let info_hash = vec![0x11u8; 20];
     let (socket, _in_tx, _out_rx) = MockSocket::new();
-    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, Arc::new(Socket::Mock(socket)));
+    let mut peer = Peer::new_with_socket(
+        "127.0.0.1".to_string(),
+        6881,
+        Arc::new(Socket::Mock(socket)),
+    );
 
     let mut config = SessionConfig::default();
     config.enable_pex = true;
@@ -160,30 +170,45 @@ fn test_pex_handling_seed_filters_seeds() {
         selector,
         &std::path::PathBuf::from("."),
         config,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Mark our local client as a seed (status = Seeding)
     tc.status = TorrentStatus::Seeding;
 
     let mut pex = PexMessage::new();
     // Leech peer
-    pex.add_v4(PeerDetails {
-        info_hash: info_hash.clone(),
-        peer_id: None,
-        ip: "10.0.0.1".to_string(),
-        port: 6881,
-    }, PexFlags::new(0));
+    pex.add_v4(
+        PeerDetails {
+            info_hash: info_hash.clone(),
+            peer_id: None,
+            ip: "10.0.0.1".to_string(),
+            port: 6881,
+        },
+        PexFlags::new(0),
+    );
 
     // Seed peer
-    pex.add_v4(PeerDetails {
-        info_hash: info_hash.clone(),
-        peer_id: None,
-        ip: "10.0.0.2".to_string(),
-        port: 6882,
-    }, PexFlags::new(PexFlags::SEED));
+    pex.add_v4(
+        PeerDetails {
+            info_hash: info_hash.clone(),
+            peer_id: None,
+            ip: "10.0.0.2".to_string(),
+            port: 6882,
+        },
+        PexFlags::new(PexFlags::SEED),
+    );
 
     let payload = pex.encode();
-    let actions = peer.handle_peer_message(PeerMessage::Extended { ext_id: 2, payload: &payload }, &mut tc).unwrap();
+    let actions = peer
+        .handle_peer_message(
+            PeerMessage::Extended {
+                ext_id: 2,
+                payload: &payload,
+            },
+            &mut tc,
+        )
+        .unwrap();
 
     assert_eq!(actions.len(), 1);
     match &actions[0] {
@@ -200,7 +225,11 @@ fn test_pex_handling_seed_filters_seeds() {
 fn test_pex_ipv6_disabled_filters_added6_and_dropped6() {
     let info_hash = vec![0x22u8; 20];
     let (socket, _in_tx, _out_rx) = MockSocket::new();
-    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, Arc::new(Socket::Mock(socket)));
+    let mut peer = Peer::new_with_socket(
+        "127.0.0.1".to_string(),
+        6881,
+        Arc::new(Socket::Mock(socket)),
+    );
 
     let mut config = SessionConfig::default();
     config.enable_ipv6 = false; // IPv6 disabled!
@@ -212,21 +241,28 @@ fn test_pex_ipv6_disabled_filters_added6_and_dropped6() {
         selector,
         &std::path::PathBuf::from("."),
         config,
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut pex = PexMessage::new();
-    pex.add_v4(PeerDetails {
-        info_hash: info_hash.clone(),
-        peer_id: None,
-        ip: "192.168.1.100".to_string(),
-        port: 6881,
-    }, PexFlags::new(0));
-    pex.add_v6(PeerDetails {
-        info_hash: info_hash.clone(),
-        peer_id: None,
-        ip: "2001:db8::beef".to_string(),
-        port: 6881,
-    }, PexFlags::new(0));
+    pex.add_v4(
+        PeerDetails {
+            info_hash: info_hash.clone(),
+            peer_id: None,
+            ip: "192.168.1.100".to_string(),
+            port: 6881,
+        },
+        PexFlags::new(0),
+    );
+    pex.add_v6(
+        PeerDetails {
+            info_hash: info_hash.clone(),
+            peer_id: None,
+            ip: "2001:db8::beef".to_string(),
+            port: 6881,
+        },
+        PexFlags::new(0),
+    );
     pex.drop_v6(PeerDetails {
         info_hash: info_hash.clone(),
         peer_id: None,
@@ -235,7 +271,15 @@ fn test_pex_ipv6_disabled_filters_added6_and_dropped6() {
     });
 
     let payload = pex.encode();
-    let actions = peer.handle_peer_message(PeerMessage::Extended { ext_id: 2, payload: &payload }, &mut tc).unwrap();
+    let actions = peer
+        .handle_peer_message(
+            PeerMessage::Extended {
+                ext_id: 2,
+                payload: &payload,
+            },
+            &mut tc,
+        )
+        .unwrap();
 
     assert_eq!(actions.len(), 1);
     match &actions[0] {
@@ -256,7 +300,11 @@ fn test_pex_ipv6_disabled_filters_added6_and_dropped6() {
 fn test_pex_private_torrent_enforcement() {
     let info_hash = vec![0x44u8; 20];
     let (socket, _in_tx, _out_rx) = MockSocket::new();
-    let mut peer = Peer::new_with_socket("127.0.0.1".to_string(), 6881, Arc::new(Socket::Mock(socket)));
+    let mut peer = Peer::new_with_socket(
+        "127.0.0.1".to_string(),
+        6881,
+        Arc::new(Socket::Mock(socket)),
+    );
 
     let mut config = SessionConfig::default();
     config.enable_pex = true;
@@ -267,32 +315,53 @@ fn test_pex_private_torrent_enforcement() {
         selector,
         &std::path::PathBuf::from("."),
         config,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Mark as private torrent
     tc.is_private = true;
     assert!(!tc.is_pex_enabled(), "Private torrent must disable PEX");
 
     let mut pex = PexMessage::new();
-    pex.add_v4(PeerDetails {
-        info_hash: info_hash.clone(),
-        peer_id: None,
-        ip: "10.10.10.10".to_string(),
-        port: 6881,
-    }, PexFlags::new(0));
+    pex.add_v4(
+        PeerDetails {
+            info_hash: info_hash.clone(),
+            peer_id: None,
+            ip: "10.10.10.10".to_string(),
+            port: 6881,
+        },
+        PexFlags::new(0),
+    );
 
     let payload = pex.encode();
-    let actions = peer.handle_peer_message(PeerMessage::Extended { ext_id: 2, payload: &payload }, &mut tc).unwrap();
+    let actions = peer
+        .handle_peer_message(
+            PeerMessage::Extended {
+                ext_id: 2,
+                payload: &payload,
+            },
+            &mut tc,
+        )
+        .unwrap();
 
     // Must not discover any peers from PEX on a private torrent!
-    assert!(actions.is_empty(), "Private torrent must ignore incoming PEX messages");
-    assert_eq!(tc.pex_added_peers_count.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(
+        actions.is_empty(),
+        "Private torrent must ignore incoming PEX messages"
+    );
+    assert_eq!(
+        tc.pex_added_peers_count
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
 }
 
 #[test]
 fn test_pex_differential_generation_and_capping() {
     let info_hash = vec![0x55u8; 20];
-    let config = SessionConfig::default().with_enable_pex(true).with_enable_ipv6(true);
+    let config = SessionConfig::default()
+        .with_enable_pex(true)
+        .with_enable_ipv6(true);
     let selector = Arc::new(RarestFirstSelector);
     let tc = TorrentContext::new_magnet_bootstrap(
         info_hash.clone(),
@@ -300,15 +369,28 @@ fn test_pex_differential_generation_and_capping() {
         selector,
         &std::path::PathBuf::from("."),
         config,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Add 3 peers to the swarm: 2 IPv4 and 1 IPv6
     let (s1, _, _) = MockSocket::new();
-    let p1 = Arc::new(std::sync::Mutex::new(Peer::new_with_socket("192.168.1.1".to_string(), 6881, Arc::new(Socket::Mock(s1)))));
+    let p1 = Arc::new(std::sync::Mutex::new(Peer::new_with_socket(
+        "192.168.1.1".to_string(),
+        6881,
+        Arc::new(Socket::Mock(s1)),
+    )));
     let (s2, _, _) = MockSocket::new();
-    let p2 = Arc::new(std::sync::Mutex::new(Peer::new_with_socket("192.168.1.2".to_string(), 6882, Arc::new(Socket::Mock(s2)))));
+    let p2 = Arc::new(std::sync::Mutex::new(Peer::new_with_socket(
+        "192.168.1.2".to_string(),
+        6882,
+        Arc::new(Socket::Mock(s2)),
+    )));
     let (s3, _, _) = MockSocket::new();
-    let p3 = Arc::new(std::sync::Mutex::new(Peer::new_with_socket("2001:db8::3".to_string(), 6883, Arc::new(Socket::Mock(s3)))));
+    let p3 = Arc::new(std::sync::Mutex::new(Peer::new_with_socket(
+        "2001:db8::3".to_string(),
+        6883,
+        Arc::new(Socket::Mock(s3)),
+    )));
 
     {
         let mut swarm = tc.peer_swarm.write().unwrap();
@@ -331,7 +413,10 @@ fn test_pex_differential_generation_and_capping() {
 
     // Broadcast 2: Swarm unchanged -> no new added or dropped
     let (pex2, new_sent2) = tc.generate_pex_message(&new_sent, Some("192.168.1.1"));
-    assert!(pex2.is_empty(), "Unchanged swarm must yield empty PEX message");
+    assert!(
+        pex2.is_empty(),
+        "Unchanged swarm must yield empty PEX message"
+    );
 
     // Broadcast 3: Disconnect 192.168.1.2 from swarm -> must generate dropped_v4
     {

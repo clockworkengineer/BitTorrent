@@ -1,8 +1,8 @@
+use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::{
     FileDetails, FilePriority, MockSocket, Peer, PieceSelector, RarestFirstSelector,
     SequentialSelector, SessionConfig, Socket, StreamingPieceSelector, TorrentStatus,
 };
-use bittorrent_rs::internals::TorrentContext;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 
@@ -247,7 +247,10 @@ fn test_next_block_request_for_peer_high_priority_first() {
     let request = ctx_mut.next_block_request_for_peer(&peer);
     assert!(request.is_some());
     let (piece, begin, length) = request.unwrap();
-    assert_eq!(piece, 1, "Expected block request from High priority piece 1");
+    assert_eq!(
+        piece, 1,
+        "Expected block request from High priority piece 1"
+    );
     assert_eq!(begin, 0);
     assert_eq!(length, 16384);
 }

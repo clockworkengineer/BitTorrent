@@ -3,6 +3,9 @@ name = "bt_daemon"
 version = "0.1.1"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 bittorrent_rs = { path = "../../library", package = "bittorrent-rs" }
 torrent_client_shared = { path = "../torrent_client_shared" }

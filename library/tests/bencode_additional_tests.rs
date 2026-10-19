@@ -72,7 +72,10 @@ fn test_decode_large_integer_limit() {
 fn test_get_dictionary_entry_non_dict() {
     let list_node = BNode::List(vec![BNode::Number(b"42")]);
     assert_eq!(Bencode::get_dictionary_entry(&list_node, b"key"), None);
-    assert_eq!(Bencode::get_dictionary_entry_string(&list_node, "key"), None);
+    assert_eq!(
+        Bencode::get_dictionary_entry_string(&list_node, "key"),
+        None
+    );
 
     let num_node = BNode::Number(b"123");
     assert_eq!(Bencode::get_dictionary_entry(&num_node, b"key"), None);
@@ -82,4 +85,3 @@ fn test_get_dictionary_entry_non_dict() {
     assert_eq!(Bencode::get_dictionary_entry(&str_node, b"key"), None);
     assert_eq!(Bencode::get_dictionary_entry_string(&str_node, "key"), None);
 }
-

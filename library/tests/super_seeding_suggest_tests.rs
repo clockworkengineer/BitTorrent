@@ -1,11 +1,14 @@
 use bittorrent_rs::{
-    internals::TorrentContext,
-    network::peer::PeerAction,
     MockSocket, Peer, PeerMessage, SequentialSelector, SessionConfig, Socket, TorrentStatus,
+    internals::TorrentContext, network::peer::PeerAction,
 };
 use std::sync::{Arc, Mutex};
 
-fn create_seeding_context(num_pieces: usize, piece_length: u32, super_seeding: bool) -> TorrentContext {
+fn create_seeding_context(
+    num_pieces: usize,
+    piece_length: u32,
+    super_seeding: bool,
+) -> TorrentContext {
     let mut config = SessionConfig::default();
     config.super_seeding = super_seeding;
     let selector = Arc::new(SequentialSelector);
@@ -53,24 +56,52 @@ fn test_super_seeding_with_fast_extension_sends_suggest_and_allowed_fast() {
     // Peer A expresses interest
     let actions_a = {
         let mut ctx_guard = ctx_arc.lock().unwrap();
-        peer_a.handle_peer_message(PeerMessage::Interested, &mut *ctx_guard).unwrap()
+        peer_a
+            .handle_peer_message(PeerMessage::Interested, &mut *ctx_guard)
+            .unwrap()
     };
 
     // Peer A should receive Have(0), Suggest(0), and AllowedFast(0)
-    assert!(actions_a.iter().any(|a| matches!(a, PeerAction::SendHave(0))));
-    assert!(actions_a.iter().any(|a| matches!(a, PeerAction::SendSuggest(0))));
-    assert!(actions_a.iter().any(|a| matches!(a, PeerAction::SendAllowedFast(0))));
+    assert!(
+        actions_a
+            .iter()
+            .any(|a| matches!(a, PeerAction::SendHave(0)))
+    );
+    assert!(
+        actions_a
+            .iter()
+            .any(|a| matches!(a, PeerAction::SendSuggest(0)))
+    );
+    assert!(
+        actions_a
+            .iter()
+            .any(|a| matches!(a, PeerAction::SendAllowedFast(0)))
+    );
 
     // Peer B expresses interest
     let actions_b = {
         let mut ctx_guard = ctx_arc.lock().unwrap();
-        peer_b.handle_peer_message(PeerMessage::Interested, &mut *ctx_guard).unwrap()
+        peer_b
+            .handle_peer_message(PeerMessage::Interested, &mut *ctx_guard)
+            .unwrap()
     };
 
     // Peer B should ONLY receive Have(1) without Suggest or AllowedFast
-    assert!(actions_b.iter().any(|a| matches!(a, PeerAction::SendHave(1))));
-    assert!(!actions_b.iter().any(|a| matches!(a, PeerAction::SendSuggest(_))));
-    assert!(!actions_b.iter().any(|a| matches!(a, PeerAction::SendAllowedFast(_))));
+    assert!(
+        actions_b
+            .iter()
+            .any(|a| matches!(a, PeerAction::SendHave(1)))
+    );
+    assert!(
+        !actions_b
+            .iter()
+            .any(|a| matches!(a, PeerAction::SendSuggest(_)))
+    );
+    assert!(
+        !actions_b
+            .iter()
+            .any(|a| matches!(a, PeerAction::SendAllowedFast(_)))
+    );
 }
 
 #[test]
@@ -81,7 +112,11 @@ fn test_super_seeding_propagation_sends_suggest_to_peer() {
     let peer_a_ip = "10.0.0.1";
     let peer_b_ip = "10.0.0.2";
 
-    let peer_a = Arc::new(Mutex::new(create_mock_peer(peer_a_ip, ctx_arc.clone(), true)));
+    let peer_a = Arc::new(Mutex::new(create_mock_peer(
+        peer_a_ip,
+        ctx_arc.clone(),
+        true,
+    )));
     let mut peer_b = create_mock_peer(peer_b_ip, ctx_arc.clone(), true);
 
     {
@@ -92,14 +127,22 @@ fn test_super_seeding_propagation_sends_suggest_to_peer() {
     // Offer piece 0 to Peer A, piece 1 to Peer B
     {
         let mut ctx_guard = ctx_arc.lock().unwrap();
-        assert_eq!(ctx_guard.offer_super_seed_piece(peer_a_ip, &[0x00]), Some(0));
-        assert_eq!(ctx_guard.offer_super_seed_piece(peer_b_ip, &[0x00]), Some(1));
+        assert_eq!(
+            ctx_guard.offer_super_seed_piece(peer_a_ip, &[0x00]),
+            Some(0)
+        );
+        assert_eq!(
+            ctx_guard.offer_super_seed_piece(peer_b_ip, &[0x00]),
+            Some(1)
+        );
     }
 
     // Peer B announces Have(0) -> Swarm validation!
     let actions = {
         let mut ctx_guard = ctx_arc.lock().unwrap();
-        peer_b.handle_peer_message(PeerMessage::Have(0), &mut *ctx_guard).unwrap()
+        peer_b
+            .handle_peer_message(PeerMessage::Have(0), &mut *ctx_guard)
+            .unwrap()
     };
 
     // Peer A should receive Have(2), Suggest(2), and AllowedFast(2) routed to them

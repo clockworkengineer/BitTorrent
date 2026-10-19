@@ -16,16 +16,28 @@ fn main() {
     let lifetime_secs = 3600; // 1 hour lease time
 
     // 3. Request TCP Port Mapping
-    println!("\nRequesting TCP port mapping: {} -> {}", external_port, internal_port);
+    println!(
+        "\nRequesting TCP port mapping: {} -> {}",
+        external_port, internal_port
+    );
     match mapper.request_mapping(true, internal_port, external_port, lifetime_secs) {
         Ok(mapped_port) => {
-            println!("Successfully mapped TCP port! External accessible port: {}", mapped_port);
-            
+            println!(
+                "Successfully mapped TCP port! External accessible port: {}",
+                mapped_port
+            );
+
             // 4. Request UDP Port Mapping
-            println!("Requesting UDP port mapping: {} -> {}", external_port, internal_port);
+            println!(
+                "Requesting UDP port mapping: {} -> {}",
+                external_port, internal_port
+            );
             match mapper.request_mapping(false, internal_port, external_port, lifetime_secs) {
                 Ok(udp_mapped_port) => {
-                    println!("Successfully mapped UDP port! External accessible port: {}", udp_mapped_port);
+                    println!(
+                        "Successfully mapped UDP port! External accessible port: {}",
+                        udp_mapped_port
+                    );
                 }
                 Err(e) => {
                     println!("UDP port mapping failed: {:?}", e);
@@ -51,7 +63,10 @@ fn main() {
             }
         }
         Err(e) => {
-            println!("TCP Port mapping request failed (no NAT-PMP or UPnP router found/active): {:?}", e);
+            println!(
+                "TCP Port mapping request failed (no NAT-PMP or UPnP router found/active): {:?}",
+                e
+            );
         }
     }
 }

@@ -175,7 +175,11 @@ impl FastResumeData {
     }
 
     /// Validates on-disk files with configurable mtime verification.
-    pub fn verify_on_disk_opts(&self, base_path: &Path, check_mtimes: bool) -> Result<bool, BitTorrentError> {
+    pub fn verify_on_disk_opts(
+        &self,
+        base_path: &Path,
+        check_mtimes: bool,
+    ) -> Result<bool, BitTorrentError> {
         if self.files.is_empty() && self.num_pieces > 0 {
             return Ok(false);
         }
@@ -272,9 +276,11 @@ impl FastResumeData {
         }
 
         ctx.missing_pieces_count = missing_count;
-        ctx.total_bytes_downloaded.store(total_downloaded, Ordering::Relaxed);
+        ctx.total_bytes_downloaded
+            .store(total_downloaded, Ordering::Relaxed);
         ctx.initial_bytes_downloaded = total_downloaded;
-        ctx.total_bytes_uploaded.store(self.total_uploaded, Ordering::Relaxed);
+        ctx.total_bytes_uploaded
+            .store(self.total_uploaded, Ordering::Relaxed);
 
         // Apply file priorities
         for (i, file_entry) in self.files.iter().enumerate() {
@@ -303,9 +309,15 @@ impl FastResumeData {
         entries.push((b"file-format", encode_bencode_str("libtorrent resume file")));
         entries.push((b"file-version", encode_bencode_int(1)));
         entries.push((b"info-hash", encode_bencode_bytes(&self.info_hash)));
-        entries.push((b"save_path", encode_bencode_str(&self.save_path.to_string_lossy())));
+        entries.push((
+            b"save_path",
+            encode_bencode_str(&self.save_path.to_string_lossy()),
+        ));
         entries.push((b"num_pieces", encode_bencode_int(self.num_pieces as i64)));
-        entries.push((b"piece_length", encode_bencode_int(self.piece_length as i64)));
+        entries.push((
+            b"piece_length",
+            encode_bencode_int(self.piece_length as i64),
+        ));
         entries.push((b"bitfield", encode_bencode_bytes(&self.bitfield)));
 
         // Libtorrent pieces byte-string: 1 byte per piece (0x01 if possessed, 0x00 otherwise)
@@ -315,11 +327,23 @@ impl FastResumeData {
         }
         entries.push((b"pieces", encode_bencode_bytes(&pieces_bytes)));
 
-        entries.push((b"total_uploaded", encode_bencode_int(self.total_uploaded as i64)));
-        entries.push((b"total_downloaded", encode_bencode_int(self.total_downloaded as i64)));
+        entries.push((
+            b"total_uploaded",
+            encode_bencode_int(self.total_uploaded as i64),
+        ));
+        entries.push((
+            b"total_downloaded",
+            encode_bencode_int(self.total_downloaded as i64),
+        ));
         entries.push((b"active_time", encode_bencode_int(self.active_time as i64)));
-        entries.push((b"seeding_time", encode_bencode_int(self.seeding_time as i64)));
-        entries.push((b"is_seeding", encode_bencode_int(if self.is_seeding { 1 } else { 0 })));
+        entries.push((
+            b"seeding_time",
+            encode_bencode_int(self.seeding_time as i64),
+        ));
+        entries.push((
+            b"is_seeding",
+            encode_bencode_int(if self.is_seeding { 1 } else { 0 }),
+        ));
 
         // "file sizes": list of [size, mtime] pairs
         let mut file_sizes_items = Vec::new();
@@ -336,7 +360,10 @@ impl FastResumeData {
         }
         entries.push((b"file sizes", encode_bencode_list(&file_sizes_items)));
         entries.push((b"file_paths", encode_bencode_list(&file_paths_items)));
-        entries.push((b"file_priorities", encode_bencode_list(&file_priorities_items)));
+        entries.push((
+            b"file_priorities",
+            encode_bencode_list(&file_priorities_items),
+        ));
 
         // Peers
         let peer_items: Vec<Vec<u8>> = self.peers.iter().map(|p| encode_bencode_str(p)).collect();
@@ -349,8 +376,9 @@ impl FastResumeData {
     pub fn from_bencode(bytes: &[u8]) -> Result<Self, BitTorrentError> {
         let root = Bencode::decode(bytes)?;
 
-        let info_hash_raw = get_bytes(&root, b"info-hash")
-            .ok_or_else(|| BitTorrentError::Parse("Missing 'info-hash' in fast-resume data".into()))?;
+        let info_hash_raw = get_bytes(&root, b"info-hash").ok_or_else(|| {
+            BitTorrentError::Parse("Missing 'info-hash' in fast-resume data".into())
+        })?;
         if info_hash_raw.len() != 20 {
             return Err(BitTorrentError::Parse(
                 "Invalid info-hash length in fast-resume data (expected 20 bytes)".into(),
@@ -369,7 +397,11 @@ impl FastResumeData {
         let bitfield = if let Some(bf) = get_bytes(&root, b"bitfield") {
             bf.to_vec()
         } else if let Some(pieces) = get_bytes(&root, b"pieces") {
-            let actual_len = if num_pieces > 0 { num_pieces } else { pieces.len() };
+            let actual_len = if num_pieces > 0 {
+                num_pieces
+            } else {
+                pieces.len()
+            };
             let mut bf = vec![0u8; (actual_len + 7) / 8];
             for (i, &p) in pieces.iter().enumerate().take(actual_len) {
                 if p != 0 {
@@ -391,7 +423,10 @@ impl FastResumeData {
 
         // Parse file priorities
         let mut priorities: Vec<u8> = Vec::new();
-        if let Some(BNode::List(pri_list)) = root.dict_get(b"file_priorities").or_else(|| root.dict_get(b"file priorities")) {
+        if let Some(BNode::List(pri_list)) = root
+            .dict_get(b"file_priorities")
+            .or_else(|| root.dict_get(b"file priorities"))
+        {
             for item in pri_list {
                 if let Some(bytes) = item.as_number_bytes() {
                     if let Ok(s) = core::str::from_utf8(bytes) {
@@ -405,7 +440,10 @@ impl FastResumeData {
 
         // Parse file paths if present
         let mut paths: Vec<PathBuf> = Vec::new();
-        if let Some(BNode::List(path_list)) = root.dict_get(b"file_paths").or_else(|| root.dict_get(b"file paths")) {
+        if let Some(BNode::List(path_list)) = root
+            .dict_get(b"file_paths")
+            .or_else(|| root.dict_get(b"file paths"))
+        {
             for item in path_list {
                 if let Some(bytes) = item.as_string() {
                     paths.push(PathBuf::from(String::from_utf8_lossy(bytes).into_owned()));
@@ -415,14 +453,18 @@ impl FastResumeData {
 
         // Parse file sizes / mtimes
         let mut files = Vec::new();
-        if let Some(BNode::List(sizes_list)) = root.dict_get(b"file sizes").or_else(|| root.dict_get(b"file_sizes")) {
+        if let Some(BNode::List(sizes_list)) = root
+            .dict_get(b"file sizes")
+            .or_else(|| root.dict_get(b"file_sizes"))
+        {
             for (idx, item) in sizes_list.iter().enumerate() {
                 let priority = priorities.get(idx).copied().unwrap_or(4);
                 let path = paths.get(idx).cloned().unwrap_or_default();
                 match item {
                     BNode::List(pair) => {
                         let len = pair.get(0).and_then(parse_bnode_int).unwrap_or(0).max(0) as u64;
-                        let mtime = pair.get(1).and_then(parse_bnode_int).unwrap_or(0).max(0) as u64;
+                        let mtime =
+                            pair.get(1).and_then(parse_bnode_int).unwrap_or(0).max(0) as u64;
                         files.push(FastResumeFileEntry {
                             path,
                             length: len,
@@ -453,7 +495,14 @@ impl FastResumeData {
                         peers.push(s.to_string());
                     } else if bytes.len() == 6 {
                         // Compact IPv4 format
-                        let ip_str = format!("{}.{}.{}.{}:{}", bytes[0], bytes[1], bytes[2], bytes[3], u16::from_be_bytes([bytes[4], bytes[5]]));
+                        let ip_str = format!(
+                            "{}.{}.{}.{}:{}",
+                            bytes[0],
+                            bytes[1],
+                            bytes[2],
+                            bytes[3],
+                            u16::from_be_bytes([bytes[4], bytes[5]])
+                        );
                         peers.push(ip_str);
                     }
                 }

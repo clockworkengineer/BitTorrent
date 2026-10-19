@@ -225,7 +225,6 @@ impl TorrentSessionBuilder {
         self
     }
 
-
     /// Adds an HTTP/HTTPS WebSeed mirror URL (BEP 19) to be used alongside peer downloads.
     pub fn with_web_seed(mut self, url: impl Into<String>) -> Self {
         let u = url.into();
@@ -319,7 +318,8 @@ impl TorrentSessionBuilder {
     /// Configures the base and maximum cooldown in seconds for WebSeed circuit-breaker backoff.
     pub fn webseed_cooldowns(mut self, base_secs: u64, max_secs: u64) -> Self {
         self.config.webseed_base_cooldown_secs = base_secs.max(1);
-        self.config.webseed_max_cooldown_secs = max_secs.max(self.config.webseed_base_cooldown_secs);
+        self.config.webseed_max_cooldown_secs =
+            max_secs.max(self.config.webseed_base_cooldown_secs);
         self
     }
 
@@ -361,17 +361,15 @@ impl TorrentSessionBuilder {
                 }
                 sess
             }
-            TorrentSource::Magnet(link) => {
-                TorrentSession::new_magnet_with_options_internal(
-                    link,
-                    &self.download_path,
-                    self.config,
-                    self.selector,
-                    self.web_seeds,
-                    self.auto_inject_webtorrent,
-                    self.selected_files,
-                )?
-            }
+            TorrentSource::Magnet(link) => TorrentSession::new_magnet_with_options_internal(
+                link,
+                &self.download_path,
+                self.config,
+                self.selector,
+                self.web_seeds,
+                self.auto_inject_webtorrent,
+                self.selected_files,
+            )?,
         };
         session.manager = self.manager;
         Ok(session)

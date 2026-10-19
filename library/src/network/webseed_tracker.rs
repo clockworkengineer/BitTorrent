@@ -75,7 +75,8 @@ impl MirrorHealthProfile {
             let srtt_secs = self.smoothed_latency.as_secs_f64();
             let diff = (srtt_secs - sample_secs).abs();
 
-            let new_var = (1.0 - LATENCY_BETA) * self.latency_variance.as_secs_f64() + LATENCY_BETA * diff;
+            let new_var =
+                (1.0 - LATENCY_BETA) * self.latency_variance.as_secs_f64() + LATENCY_BETA * diff;
             let new_srtt = (1.0 - LATENCY_ALPHA) * srtt_secs + LATENCY_ALPHA * sample_secs;
 
             self.latency_variance = Duration::from_secs_f64(new_var).clamp(MIN_RTT, MAX_RTT);
@@ -115,7 +116,8 @@ impl MirrorHealthProfile {
         if self.consecutive_failures >= failure_threshold.max(1) {
             let exponent = (self.consecutive_failures - failure_threshold).min(6) as u32;
             let multiplier = 1u64.checked_shl(exponent).unwrap_or(64);
-            let cooldown_secs = (base_cooldown_secs.saturating_mul(multiplier)).min(max_cooldown_secs);
+            let cooldown_secs =
+                (base_cooldown_secs.saturating_mul(multiplier)).min(max_cooldown_secs);
 
             self.penalty_until = Some(now + Duration::from_secs(cooldown_secs));
             self.penalty_count += 1;
@@ -156,8 +158,7 @@ impl MirrorHealthProfile {
             _ => 0.2,
         };
 
-        (success_rate * 60.0 + latency_factor * 30.0 + consecutive_penalty * 10.0)
-            .clamp(0.0, 100.0)
+        (success_rate * 60.0 + latency_factor * 30.0 + consecutive_penalty * 10.0).clamp(0.0, 100.0)
     }
 
     /// Generates a telemetry summary of this mirror profile.
@@ -285,7 +286,10 @@ impl WebSeedMirrorTracker {
                 .then_with(|| a.smoothed_latency.cmp(&b.smoothed_latency))
         });
 
-        let mut result: Vec<String> = available.into_iter().map(|(p, _)| p.endpoint_url.clone()).collect();
+        let mut result: Vec<String> = available
+            .into_iter()
+            .map(|(p, _)| p.endpoint_url.clone())
+            .collect();
 
         // If no healthy mirrors remain, allow probing penalized mirrors by earliest cooldown expiration
         if result.is_empty() && !penalized.is_empty() {
@@ -298,8 +302,13 @@ impl WebSeedMirrorTracker {
 
     /// Returns a telemetry summary list for all registered mirrors.
     pub fn summaries(&self) -> Vec<MirrorHealthSummary> {
-        let mut list: Vec<MirrorHealthSummary> = self.profiles.values().map(|p| p.summary()).collect();
-        list.sort_by(|a, b| b.health_score.partial_cmp(&a.health_score).unwrap_or(std::cmp::Ordering::Equal));
+        let mut list: Vec<MirrorHealthSummary> =
+            self.profiles.values().map(|p| p.summary()).collect();
+        list.sort_by(|a, b| {
+            b.health_score
+                .partial_cmp(&a.health_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         list
     }
 
