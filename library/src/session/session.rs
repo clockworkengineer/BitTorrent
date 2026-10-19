@@ -550,6 +550,129 @@ impl TorrentSession {
         self.context.lock().unwrap().get_piece_availability()
     }
 
+    /// Exports the session's torrent into BitTorrent v2 or Hybrid `.torrent` format.
+    #[cfg(feature = "v2")]
+    pub fn export_torrent(
+        &self,
+        format: crate::core::torrent_upgrader::TorrentExportFormat,
+    ) -> Result<(Vec<u8>, crate::core::torrent_upgrader::TorrentUpgradeReport), BitTorrentError> {
+        let (files, download_path, name, mut piece_length, trackers, web_seeds, is_private) = {
+            let ctx = self.context.lock().unwrap();
+            (
+                ctx.files_to_download.clone(),
+                ctx.download_path.clone(),
+                ctx.file_name.clone(),
+                ctx.piece_length as usize,
+                ctx.tracker_urls.clone(),
+                ctx.web_seeds.clone(),
+                ctx.is_private,
+            )
+        };
+
+        // Ensure piece length is power of two >= 16 KiB for v2/hybrid
+        if format != crate::core::torrent_upgrader::TorrentExportFormat::V1 {
+            if piece_length < crate::core::merkle::BLOCK_SIZE || (piece_length & (piece_length - 1)) != 0 {
+                let mut valid_len = crate::core::merkle::BLOCK_SIZE;
+                while valid_len < piece_length {
+                    valid_len <<= 1;
+                }
+                piece_length = valid_len;
+            }
+        }
+
+        let mut files_data = Vec::with_capacity(files.len());
+        for file in &files {
+            let full_path = download_path.join(&file.torrent_path);
+            let alt_path = download_path.join(&file.name);
+            let path_to_read = if full_path.exists() {
+                full_path
+            } else if alt_path.exists() {
+                alt_path
+            } else {
+                full_path
+            };
+
+            let data = if path_to_read.exists() {
+                std::fs::read(&path_to_read)?
+            } else {
+                let mut buf = vec![0u8; file.length as usize];
+                let ctx = self.context.lock().unwrap();
+                ctx.storage.read_block(file.offset, &mut buf)?;
+                buf
+            };
+            files_data.push((file.torrent_path.clone(), data));
+        }
+
+        let mut builder = crate::core::torrent_builder::TorrentBuilder::new(&name)
+            .piece_length(piece_length)
+            .private(is_private)
+            .trackers(trackers);
+
+        for ws in web_seeds {
+            builder = builder.web_seed(ws);
+        }
+
+        let mut total_size = 0u64;
+        for (p, d) in &files_data {
+            total_size += d.len() as u64;
+            builder = builder.add_file(p, d.clone());
+        }
+
+        let torrent_bytes = match format {
+            crate::core::torrent_upgrader::TorrentExportFormat::V1 => builder.build_v1()?,
+            crate::core::torrent_upgrader::TorrentExportFormat::V2 => builder.build_v2()?,
+            crate::core::torrent_upgrader::TorrentExportFormat::Hybrid => builder.build_hybrid()?,
+        };
+
+        let mut metainfo = crate::core::metainfo::MetaInfoFile::from_bytes(&torrent_bytes);
+        metainfo.parse()?;
+
+        let v1_info_hash = if format == crate::core::torrent_upgrader::TorrentExportFormat::V2 {
+            None
+        } else {
+            metainfo.get_v1_info_hash().ok().map(|h| crate::util::info_hash_to_string(&h))
+        };
+        let v2_info_hash = if format == crate::core::torrent_upgrader::TorrentExportFormat::V1 {
+            None
+        } else {
+            metainfo.get_v2_info_hash().ok().map(|h| crate::util::info_hash_to_string(&h))
+        };
+        let v2_truncated_info_hash = v2_info_hash.as_ref().map(|s| s[..40.min(s.len())].to_string());
+
+        let mut file_pieces_roots = Vec::new();
+        if let Ok((_size, flist)) = metainfo.local_files_to_download_list(std::path::Path::new(".")) {
+            for f in flist {
+                if let Some(root) = f.pieces_root {
+                    file_pieces_roots.push((f.torrent_path, crate::util::info_hash_to_string(&root)));
+                }
+            }
+        }
+
+        let piece_layers_count = metainfo.get_piece_layers().len();
+
+        let magnet_uri = crate::core::torrent_upgrader::TorrentUpgrader::generate_magnet_uri(
+            &name,
+            v1_info_hash.as_deref(),
+            v2_info_hash.as_deref(),
+            &metainfo.get_tracker_urls().unwrap_or_default(),
+        );
+
+        let report = crate::core::torrent_upgrader::TorrentUpgradeReport {
+            name,
+            format,
+            total_size,
+            piece_length,
+            v1_info_hash,
+            v2_info_hash,
+            v2_truncated_info_hash,
+            file_pieces_roots,
+            piece_layers_count,
+            magnet_uri,
+        };
+
+        Ok((torrent_bytes, report))
+    }
+
     /// Validates the presence and integrity (exact sizes) of downloaded files on disk.
     pub fn validate(&self) -> Result<(), BitTorrentError> {
         let context = self.context.lock().unwrap();

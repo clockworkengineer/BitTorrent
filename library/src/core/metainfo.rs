@@ -532,10 +532,15 @@ impl MetaInfoFile {
                     let has_pieces = self.meta_info_dict.contains_key("pieces");
                     let is_hybrid = is_v2 && has_pieces;
 
-                    let mut v1_hasher = Sha1::new();
-                    v1_hasher.update(raw_info_bytes);
-                    let v1_hash: [u8; 20] = v1_hasher.finalize().into();
-                    self.meta_info_dict.insert("v1 info hash".to_string(), v1_hash.to_vec());
+                    let v1_hash: Option<[u8; 20]> = if !is_v2 || is_hybrid {
+                        let mut v1_hasher = Sha1::new();
+                        v1_hasher.update(raw_info_bytes);
+                        let hash: [u8; 20] = v1_hasher.finalize().into();
+                        self.meta_info_dict.insert("v1 info hash".to_string(), hash.to_vec());
+                        Some(hash)
+                    } else {
+                        None
+                    };
 
                     if is_v2 {
                         #[cfg(feature = "v2")]
@@ -548,7 +553,9 @@ impl MetaInfoFile {
 
                             if is_hybrid {
                                 // Hybrid mode: v1 info-hash is 20-byte SHA-1 for backwards compatibility with v1 swarms
-                                self.meta_info_dict.insert("info hash".to_string(), v1_hash.to_vec());
+                                if let Some(h) = v1_hash {
+                                    self.meta_info_dict.insert("info hash".to_string(), h.to_vec());
+                                }
                             } else {
                                 // Pure v2 mode: 32-byte SHA-256 info-hash
                                 self.meta_info_dict.insert("info hash".to_string(), v2_hash.to_vec());
@@ -558,8 +565,8 @@ impl MetaInfoFile {
                         {
                             return Err(BitTorrentError::Parse("BitTorrent v2 is not compiled in this build".into()));
                         }
-                    } else {
-                        self.meta_info_dict.insert("info hash".to_string(), v1_hash.to_vec());
+                    } else if let Some(h) = v1_hash {
+                        self.meta_info_dict.insert("info hash".to_string(), h.to_vec());
                     }
                 }
                 _ => {
@@ -626,6 +633,61 @@ impl MetaInfoFile {
             .get("announce")
             .ok_or_else(|| BitTorrentError::MissingField("announce".into()))?;
         Ok(String::from_utf8_lossy(announce).to_string())
+    }
+
+    /// Returns the torrent name from the metadata.
+    pub fn get_name(&self) -> Result<String, BitTorrentError> {
+        if !self.parsed {
+            return Err(BitTorrentError::NotParsed(
+                "File has not been parsed.".into(),
+            ));
+        }
+        let name = self
+            .meta_info_dict
+            .get("name")
+            .ok_or_else(|| BitTorrentError::MissingField("name".into()))?;
+        Ok(String::from_utf8_lossy(name).to_string())
+    }
+
+    /// Returns the total size in bytes of all files in the torrent.
+    pub fn get_total_size(&self) -> Result<u64, BitTorrentError> {
+        if !self.parsed {
+            return Err(BitTorrentError::NotParsed(
+                "File has not been parsed.".into(),
+            ));
+        }
+        if !self.meta_info_dict.contains_key("0") {
+            let length_bytes = self
+                .meta_info_dict
+                .get("length")
+                .ok_or_else(|| BitTorrentError::MissingField("length".into()))?;
+            let length = String::from_utf8_lossy(length_bytes).parse::<u64>()?;
+            Ok(length)
+        } else {
+            let mut total = 0u64;
+            let mut file_no = 0;
+            loop {
+                let key = file_no.to_string();
+                if let Some(entry) = self.meta_info_dict.get(&key) {
+                    let text = String::from_utf8_lossy(entry);
+                    let parts: Vec<&str> = text.split('\0').collect();
+                    if let Some(len_str) = parts.get(1) {
+                        total += len_str.parse::<u64>().unwrap_or(0);
+                    }
+                    file_no += 1;
+                } else {
+                    break;
+                }
+            }
+            Ok(total)
+        }
+    }
+
+    /// Returns the optional comment associated with the torrent.
+    pub fn get_comment(&self) -> Option<String> {
+        self.meta_info_dict
+            .get("comment")
+            .map(|b| String::from_utf8_lossy(b).to_string())
     }
 
     /// Retrieves all tracker URLs from `announce` and `announce-list`.

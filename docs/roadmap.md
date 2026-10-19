@@ -490,15 +490,36 @@ Implemented full browser-to-desktop bridging via WebTorrent signaling channels (
 
 ---
 
+### Phase 37: BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool (BEP 52)
+
+Implemented offline and session-level conversion and export tooling for upgrading legacy BitTorrent v1 `.torrent` files into BitTorrent v2 (pure v2) or dual-compatible Hybrid (v1 + v2) metadata:
+- **Merkle Tree & File Tree Exporter (`TorrentUpgrader`)**:
+  - `TorrentUpgrader::upgrade_metainfo`: Accepts parsed `MetaInfoFile` and in-memory files data, calculating SHA-256 Merkle trees (`MerkleTree`), piece layers, and canonical `file tree` structures per BEP 52.
+  - Automatically aligns piece lengths to power-of-two values $\ge 16\text{ KiB}$ (`BLOCK_SIZE = 16384`) conforming to BEP 52 constraints.
+  - Supports target formats (`TorrentExportFormat`): `V1`, `V2` (pure v2), and `Hybrid` (v1 + v2).
+  - `TorrentUpgrader::upgrade_from_file`: Reads legacy `.torrent` metainfo and verifies content files directly on disk, upgrading them to hybrid or pure v2 format without manual hashing steps.
+- **Detailed Upgrade & Export Report (`TorrentUpgradeReport`)**:
+  - Returns structured telemetry: torrent name, export format, total combined file size, piece length, v1 SHA-1 info-hash (if hybrid/v1), 32-byte SHA-256 v2 info-hash (if hybrid/v2), 20-byte truncated v2 info-hash prefix for compact swarms, per-file `pieces root` Merkle hashes, and piece layers count.
+  - `TorrentUpgrader::generate_magnet_uri`: Builds canonical Magnet URIs featuring dual-hash parameters when applicable (`xt=urn:btih:<v1_hex>` and `xt=urn:btmh:1220<v2_hex>`), display name (`dn`), and tracker endpoints (`tr`).
+- **Session-Level Direct Torrent Exporter**:
+  - `TorrentSession::export_torrent(&self, format: TorrentExportFormat)`: Exports an active, downloading, or seeding session directly from disk/block storage into pure v2, hybrid, or v1 bencoded `.torrent` bytes along with an upgrade report.
+- **CLI Companion Tooling (`bt-cli`)**:
+  - `bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]`: Upgrades a legacy torrent file using downloaded data on disk and writes the output file with a complete summary table and canonical Magnet URI.
+  - `bt-cli v2-info <torrent-path>`: Inspects any torrent file and displays format (v1, hybrid, pure v2), piece length, v1 info-hash, v2 info-hash, truncated v2 info-hash, piece layers count, and per-file Merkle `pieces root` hashes.
+- **Test Suite**: Dedicated integration test suite in `library/tests/torrent_upgrader_tests.rs` (5/5 tests passing) covering single-file v1 to pure v2 upgrade, multi-file v1 to hybrid conversion with padding alignment, piece length clamping to BEP 52 powers of 2, missing file error handling, and `TorrentSession::export_torrent` direct export.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool**: CLI tooling for converting v1 torrents to hybrid/v2 format with Merkle tree generation.
+1. **uTP SACK Dynamic Out-of-Order Packet Pipeline**: Enhanced SACK bitmap reassembly optimization and burst loss recovery in high-latency network conditions.
 
-2. **uTP SACK Dynamic Out-of-Order Packet Pipeline**: Enhanced SACK bitmap reassembly optimization and burst loss recovery in high-latency network conditions.
+2. **WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector**: Automated extraction of `ws=` and `wss=` trackers from Magnet links for instant browser bridge bootstrapping.
 
-3. **WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector**: Automated extraction of `ws=` and `wss=` trackers from Magnet links for instant browser bridge bootstrapping.
+3. **BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving**: Persistent on-disk caching of intermediate Merkle tree layers to serve incoming BEP 52 `hash_request` messages with minimal I/O overhead.
+
 
 
 

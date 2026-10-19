@@ -63,6 +63,8 @@ fn print_usage() {
     println!("  bt-cli peers <info-hash>");
     println!("  bt-cli pieces <info-hash>");
     println!("  bt-cli resume-info <path-to-fastresume-file>");
+    println!("  bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]");
+    println!("  bt-cli v2-info <torrent-path>");
     println!("  bt-cli shutdown");
 }
 
@@ -165,6 +167,170 @@ fn main() {
                 eprintln!("Failed to parse fast-resume file: {}", e);
             }
         }
+        return;
+    }
+
+    if command == "upgrade" {
+        if args.len() < 4 {
+            eprintln!("Error: 'upgrade' command requires an input torrent file and data directory.");
+            eprintln!("Usage: bt-cli upgrade <input.torrent> <data-dir> [--format <hybrid|v2>] [--output <output.torrent>]");
+            return;
+        }
+        let input_path = std::path::Path::new(&args[2]);
+        let data_dir = std::path::Path::new(&args[3]);
+        let mut format = bittorrent_rs::TorrentExportFormat::Hybrid;
+        let mut output_path = None;
+
+        let mut idx = 4;
+        while idx < args.len() {
+            if args[idx] == "--format" && idx + 1 < args.len() {
+                match args[idx + 1].to_ascii_lowercase().as_str() {
+                    "v2" | "pure-v2" | "pure_v2" => format = bittorrent_rs::TorrentExportFormat::V2,
+                    "hybrid" => format = bittorrent_rs::TorrentExportFormat::Hybrid,
+                    other => {
+                        eprintln!("Unknown format '{}'. Supported: hybrid, v2", other);
+                        return;
+                    }
+                }
+                idx += 2;
+            } else if args[idx] == "--output" && idx + 1 < args.len() {
+                output_path = Some(std::path::PathBuf::from(&args[idx + 1]));
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+        }
+
+        let out_file = output_path.unwrap_or_else(|| {
+            let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("upgraded");
+            let ext = match format {
+                bittorrent_rs::TorrentExportFormat::V1 => "v1.torrent",
+                bittorrent_rs::TorrentExportFormat::V2 => "v2.torrent",
+                bittorrent_rs::TorrentExportFormat::Hybrid => "hybrid.torrent",
+            };
+            input_path.with_file_name(format!("{}.{}", stem, ext))
+        });
+
+        println!("Upgrading torrent metainfo...");
+        println!("  Input:            {}", input_path.display());
+        println!("  Data Dir:         {}", data_dir.display());
+        println!("  Target Format:    {:?}", format);
+        println!("  Output File:      {}", out_file.display());
+
+        match bittorrent_rs::TorrentUpgrader::upgrade_from_file(input_path, data_dir, format) {
+            Ok((torrent_bytes, report)) => {
+                if let Err(e) = std::fs::write(&out_file, &torrent_bytes) {
+                    eprintln!("Failed to write upgraded torrent file: {}", e);
+                    return;
+                }
+                println!("\nUpgrade Complete!");
+                println!("  Name:             {}", report.name);
+                println!("  Format:           {:?}", report.format);
+                println!("  Total Size:       {} ({} bytes)", fmt_bytes(report.total_size), report.total_size);
+                println!("  Piece Length:     {}", fmt_bytes(report.piece_length as u64));
+                println!("  v1 Infohash:      {}", report.v1_info_hash.as_deref().unwrap_or("N/A (Pure v2)"));
+                println!("  v2 Infohash:      {}", report.v2_info_hash.as_deref().unwrap_or("N/A"));
+                println!("  v2 Truncated:     {}", report.v2_truncated_info_hash.as_deref().unwrap_or("N/A"));
+                println!("  Piece Layers:     {}", report.piece_layers_count);
+                println!("  Files ({}):", report.file_pieces_roots.len());
+                for (i, (path, pieces_root)) in report.file_pieces_roots.iter().enumerate() {
+                    println!("    {:>3}. {} (pieces root: {})",
+                        i + 1,
+                        path,
+                        pieces_root
+                    );
+                }
+                println!("\n  Canonical Magnet URI:");
+                println!("    {}", report.magnet_uri);
+                println!("\nSuccessfully wrote upgraded torrent to: {}", out_file.display());
+            }
+            Err(e) => {
+                eprintln!("Error upgrading torrent: {}", e);
+            }
+        }
+        return;
+    }
+
+    if command == "v2-info" {
+        if args.len() < 3 {
+            eprintln!("Error: 'v2-info' command requires a path to a torrent file.");
+            eprintln!("Usage: bt-cli v2-info <path-to-torrent-file>");
+            return;
+        }
+        let torrent_path = std::path::Path::new(&args[2]);
+        let mut metainfo = match bittorrent_rs::MetaInfoFile::new(torrent_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Failed to open torrent file: {}", e);
+                return;
+            }
+        };
+        if let Err(e) = metainfo.parse() {
+            eprintln!("Failed to parse torrent file: {}", e);
+            return;
+        }
+
+        println!("BitTorrent Metainfo Inspection:");
+        println!("  File:             {}", torrent_path.display());
+        let name = metainfo.get_name().unwrap_or_else(|_| "Unknown".into());
+        println!("  Name:             {}", name);
+
+        let is_v2 = metainfo.is_v2();
+        let is_hybrid = metainfo.is_hybrid();
+        let version_str = if is_hybrid {
+            "BitTorrent v2 Hybrid (v1 + v2 dual compatibility)"
+        } else if is_v2 {
+            "BitTorrent Pure v2 (BEP 52 Merkle trees)"
+        } else {
+            "BitTorrent v1 (Legacy SHA-1)"
+        };
+        println!("  Version:          {}", version_str);
+
+        let total_size = metainfo.get_total_size().unwrap_or(0);
+        println!("  Total Size:       {} ({} bytes)", fmt_bytes(total_size), total_size);
+
+        if let Ok(pl) = metainfo.get_piece_length() {
+            println!("  Piece Length:     {}", fmt_bytes(pl as u64));
+        }
+
+        if let Ok(v1_hash) = metainfo.get_v1_info_hash() {
+            let v1_hex: String = v1_hash.iter().map(|b| format!("{:02x}", b)).collect();
+            println!("  v1 Infohash:      {}", v1_hex);
+        } else if !is_v2 {
+            if let Ok(hash) = metainfo.get_info_hash() {
+                let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+                println!("  v1 Infohash:      {}", hex);
+            }
+        }
+
+        if let Ok(v2_hash) = metainfo.get_v2_info_hash() {
+            let v2_hex: String = v2_hash.iter().map(|b| format!("{:02x}", b)).collect();
+            let v2_trunc: String = v2_hash[..20].iter().map(|b| format!("{:02x}", b)).collect();
+            println!("  v2 Infohash:      {}", v2_hex);
+            println!("  v2 Truncated:     {}", v2_trunc);
+        }
+
+        println!("  Piece Layers:     {}", metainfo.get_piece_layers().len());
+
+        if let Ok((_, files)) = metainfo.local_files_to_download_list(".") {
+            let non_pad_files: Vec<_> = files.iter().filter(|f| !f.is_pad_file()).collect();
+            println!("  Files ({} non-pad):", non_pad_files.len());
+            for (i, f) in non_pad_files.iter().enumerate() {
+                let root_str = f.pieces_root_hex().unwrap_or_else(|| "N/A (v1 only)".into());
+                println!("    {:>3}. {} ({} bytes, pieces root: {})",
+                    i + 1,
+                    f.torrent_path,
+                    f.length,
+                    root_str
+                );
+            }
+        }
+
+        if !is_v2 {
+            println!("\n  Notice: This is a legacy v1 torrent. You can upgrade it to Hybrid or Pure v2 using:");
+            println!("    bt-cli upgrade \"{}\" <data-dir>", torrent_path.display());
+        }
+
         return;
     }
 

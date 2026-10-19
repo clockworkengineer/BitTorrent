@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Implemented BitTorrent v2 Hash-Tree Torrent Exporter & Infohash Upgrade Tool (`TorrentUpgrader`, `TorrentExportFormat`, `TorrentUpgradeReport`) with BEP 52 Merkle tree generation, piece layers calculation, dual Magnet URI generation, and `TorrentSession::export_torrent` direct session export.
+- Added CLI companion commands `bt-cli upgrade <input.torrent> <data-dir>` and `bt-cli v2-info <torrent-path>` for inspecting and upgrading torrent files offline.
 - Implemented full WebTorrent WebSocket tracker signaling (`wss://`/`ws://`) and cross-swarm bridge mode (`WebTorrentBridge`) connecting desktop BitTorrent swarms with browser WebRTC Data Channels.
 - Added Holepunch Extension (BEP 55: `ut_holepunch`) for peer-to-peer NAT traversal via intermediate rendezvous relay peers.
 - Created `docs/api-stability.md` to document the stable public API versus internal API surfaces.
