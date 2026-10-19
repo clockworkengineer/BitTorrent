@@ -68,6 +68,12 @@ pub struct SessionConfig {
     pub webtorrent_bridge_mode: bool,
     /// Maximum concurrent WebRTC browser peers per torrent (default: 25).
     pub webtorrent_max_web_peers: usize,
+    /// Enable persistent on-disk piece layers caching for BEP 52 Merkle trees (default: true).
+    pub v2_piece_layers_cache_enabled: bool,
+    /// Custom directory for `.layers` on-disk cache files (default: None -> `<download_path>/.piece_layers`).
+    pub v2_piece_layers_cache_dir: Option<std::path::PathBuf>,
+    /// Maximum in-memory size in megabytes for cached Merkle tree layers (default: 64 MB).
+    pub v2_piece_layers_cache_max_mb: usize,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -144,6 +150,9 @@ impl Default for SessionConfig {
             enable_webtorrent: true,
             webtorrent_bridge_mode: true,
             webtorrent_max_web_peers: 25,
+            v2_piece_layers_cache_enabled: true,
+            v2_piece_layers_cache_dir: None,
+            v2_piece_layers_cache_max_mb: 64,
         }
     }
 }
@@ -201,6 +210,24 @@ impl SessionConfig {
     /// Sets the maximum concurrent WebRTC browser peers for WebTorrent bridging.
     pub fn with_webtorrent_max_web_peers(mut self, max_peers: usize) -> Self {
         self.webtorrent_max_web_peers = max_peers;
+        self
+    }
+
+    /// Enables or disables persistent on-disk piece layers caching for BEP 52 Merkle trees.
+    pub fn with_v2_piece_layers_cache(mut self, enable: bool) -> Self {
+        self.v2_piece_layers_cache_enabled = enable;
+        self
+    }
+
+    /// Sets a custom directory for persistent on-disk `.layers` cache files.
+    pub fn with_v2_piece_layers_cache_dir(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.v2_piece_layers_cache_dir = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets the maximum in-memory cache size in megabytes for cached Merkle tree layers.
+    pub fn with_v2_piece_layers_cache_max_mb(mut self, size_mb: usize) -> Self {
+        self.v2_piece_layers_cache_max_mb = size_mb;
         self
     }
 }

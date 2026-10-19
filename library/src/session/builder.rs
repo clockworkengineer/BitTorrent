@@ -157,6 +157,24 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Enables or disables persistent on-disk piece layers caching for BEP 52 Merkle trees.
+    pub fn enable_piece_layers_cache(mut self, enabled: bool) -> Self {
+        self.config.v2_piece_layers_cache_enabled = enabled;
+        self
+    }
+
+    /// Sets a custom directory for persistent on-disk `.layers` cache files.
+    pub fn piece_layers_cache_dir(mut self, path: impl AsRef<Path>) -> Self {
+        self.config.v2_piece_layers_cache_dir = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets the maximum in-memory cache size in megabytes for cached Merkle tree layers.
+    pub fn piece_layers_cache_max_mb(mut self, max_mb: usize) -> Self {
+        self.config.v2_piece_layers_cache_max_mb = max_mb;
+        self
+    }
+
     /// Returns a reference to the configured SessionConfig.
     pub fn get_config(&self) -> &SessionConfig {
         &self.config

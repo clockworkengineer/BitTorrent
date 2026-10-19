@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Implemented BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving (`PieceLayersDiskCache`, `PieceLayersCacheMetrics`, `encode_layers`, `decode_layers`, `reconstruct_tree_from_piece_layer`) providing two-tier LRU memory and disk-backed caching with binary `.layers` format and SHA-256 integrity checksums, automatic ancestor layer reconstruction from piece layers, and direct BEP 52 `hash_request` peer wire serving.
+- Extended `SessionConfig` and `TorrentSessionBuilder` with `v2_piece_layers_cache_enabled`, `v2_piece_layers_cache_dir`, and `v2_piece_layers_cache_max_mb`.
+- Integrated `handle_hash_request`, `register_file_merkle_tree`, and `register_piece_layer` into `TorrentContext`.
+- Added layer disk cache inspection and summary telemetry to `bt-cli v2-info`.
 - Implemented WebTorrent Magnet URI Web-Seed & WebSocket Tracker Injector (`WebTorrentMagnetInjector`, `MagnetUriBuilder`, `TrackerExtractionReport`, `InjectionSummary`) supporting automated extraction of BEP 19 WebSeeds (`ws=`), exact sources (`xs=`), and WebSocket trackers (`wss://`/`ws://`), canonical RFC 3986 percent-encoding serialization, BEP 52 v1/v2 dual-hash parsing in hybrid swarms, and automatic public WebTorrent signaling injection with instant bridge pre-offer generation.
 - Added CLI companion command `bt-cli magnet-info <magnet-uri> [--inject-webtorrent] [--web-seed <url>]` for inspecting, analyzing, and rewriting Magnet URIs with injected WebSeeds and WebSocket trackers.
 - Implemented uTP SACK Dynamic Out-of-Order Packet Pipeline & Burst Loss Recovery (`UtpSocketAdapter`, `LedbatCongestionController`, `UtpPipelineMetrics`, `LossRecoveryState`, `detect_receive_gaps`) featuring SACK-driven fast loss detection without RTO delay, RFC 6298 microsecond RTT/RTO tracking with exponential backoff, burst loss scaling (`0.65 * cwnd`), and bounded out-of-order reassembly buffers protecting against memory exhaustion attacks.

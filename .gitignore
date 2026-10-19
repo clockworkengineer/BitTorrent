@@ -1,4 +1,6 @@
 /target/
 /downloads/
 *.log
-torrent_client_state.txt
+torrent_client_state.txt
+.piece_layers/
+*.layers

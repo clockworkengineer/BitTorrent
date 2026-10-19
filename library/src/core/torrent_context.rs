@@ -159,6 +159,8 @@ pub struct TorrentContext {
     pub holepunch_error_received: AtomicUsize,
     #[cfg(feature = "webrtc")]
     pub webrtc_bridge: Arc<crate::network::webrtc::WebTorrentBridge>,
+    #[cfg(all(feature = "std", feature = "v2"))]
+    pub piece_layers_disk_cache: Arc<crate::storage::piece_layers_cache::PieceLayersDiskCache>,
 }
 
 impl TorrentContext {
@@ -237,7 +239,7 @@ impl TorrentContext {
                 enabled: config.super_seeding,
                 ..Default::default()
             },
-            config,
+            config: config.clone(),
             download_path: download_path.to_path_buf(),
             web_seeds,
             is_private,
@@ -286,6 +288,27 @@ impl TorrentContext {
             holepunch_error_received: AtomicUsize::new(0),
             #[cfg(feature = "webrtc")]
             webrtc_bridge: Arc::new(crate::network::webrtc::WebTorrentBridge::new()),
+            #[cfg(all(feature = "std", feature = "v2"))]
+            piece_layers_disk_cache: {
+                let cache_dir = config.v2_piece_layers_cache_dir.clone().unwrap_or_else(|| {
+                    download_path.join(".piece_layers")
+                });
+                let cache = Arc::new(crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
+                    &cache_dir,
+                    config.v2_piece_layers_cache_max_mb,
+                ).unwrap_or_else(|_| {
+                    crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
+                        std::env::temp_dir().join("bt_piece_layers_fallback"),
+                        config.v2_piece_layers_cache_max_mb,
+                    ).unwrap()
+                }));
+                if config.v2_piece_layers_cache_enabled {
+                    for (&root, layer) in torrent_meta_info.get_piece_layers() {
+                        let _ = cache.save_piece_layer(&root, layer);
+                    }
+                }
+                cache
+            },
         };
         Ok(context)
     }
@@ -339,7 +362,7 @@ impl TorrentContext {
                 enabled: config.super_seeding,
                 ..Default::default()
             },
-            config,
+            config: config.clone(),
             download_path: download_path.to_path_buf(),
             metadata_size: None,
             metadata_pieces: alloc::collections::BTreeMap::new(),
@@ -380,6 +403,21 @@ impl TorrentContext {
             holepunch_error_received: AtomicUsize::new(0),
             #[cfg(feature = "webrtc")]
             webrtc_bridge: Arc::new(crate::network::webrtc::WebTorrentBridge::new()),
+            #[cfg(all(feature = "std", feature = "v2"))]
+            piece_layers_disk_cache: {
+                let cache_dir = config.v2_piece_layers_cache_dir.clone().unwrap_or_else(|| {
+                    download_path.join(".piece_layers")
+                });
+                Arc::new(crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
+                    &cache_dir,
+                    config.v2_piece_layers_cache_max_mb,
+                ).unwrap_or_else(|_| {
+                    crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
+                        std::env::temp_dir().join("bt_piece_layers_fallback"),
+                        config.v2_piece_layers_cache_max_mb,
+                    ).unwrap()
+                }))
+            },
         };
         Ok(context)
     }
@@ -1750,6 +1788,10 @@ impl TorrentContext {
     #[cfg(feature = "v2")]
     /// Registers a MerkleTree for a file to enable strict block-by-block validation.
     pub fn register_file_merkle_tree(&self, file_index: usize, tree: crate::core::merkle::MerkleTree) {
+        #[cfg(all(feature = "std", feature = "v2"))]
+        if self.config.v2_piece_layers_cache_enabled {
+            let _ = self.piece_layers_disk_cache.save_layers(&tree.root(), tree.layers());
+        }
         let mut trees = self.file_merkle_trees.lock().unwrap();
         trees.insert(file_index, tree);
     }
@@ -1764,6 +1806,10 @@ impl TorrentContext {
     #[cfg(feature = "v2")]
     /// Registers a piece layer (list of 32-byte piece hashes) for a file identified by its `pieces_root`.
     pub fn register_piece_layer(&self, pieces_root: [u8; 32], layer: Vec<[u8; 32]>) {
+        #[cfg(all(feature = "std", feature = "v2"))]
+        if self.config.v2_piece_layers_cache_enabled {
+            let _ = self.piece_layers_disk_cache.save_piece_layer(&pieces_root, &layer);
+        }
         let mut layers = self.piece_layers.lock().unwrap();
         layers.insert(pieces_root, layer);
     }
@@ -1787,9 +1833,17 @@ impl TorrentContext {
         )
     }
 
+    #[cfg(all(feature = "std", feature = "v2"))]
+    /// Returns a snapshot of current telemetry metrics from the persistent piece layers cache.
+    pub fn piece_layers_cache_metrics(&self) -> crate::storage::piece_layers_cache::PieceLayersCacheMetrics {
+        self.piece_layers_disk_cache.metrics()
+    }
+
     #[cfg(feature = "v2")]
     /// Handles an incoming BEP 52 `hash_request`, attempting to generate the requested hashes response.
     ///
+    /// First checks in-memory registered trees. On miss, queries the persistent on-disk
+    /// piece layers cache (`PieceLayersDiskCache`) or reconstructs from known piece layers.
     /// Returns `Ok(hashes_bytes)` on success, or `Err(())` if the request cannot be fulfilled and must be rejected.
     pub fn handle_hash_request(
         &self,
@@ -1799,21 +1853,70 @@ impl TorrentContext {
         length: u32,
         proof_layers: u32,
     ) -> Result<Vec<u8>, ()> {
-        let trees = self.file_merkle_trees.lock().unwrap();
-        // 1. Check if any registered tree has this root
-        for tree in trees.values() {
-            if tree.root() == pieces_root {
-                if let Some(resp) = tree.generate_hashes_response(base_layer, index, length, proof_layers) {
-                    return Ok(resp);
+        // 1. Check in-memory registered trees
+        {
+            let trees = self.file_merkle_trees.lock().unwrap();
+            for tree in trees.values() {
+                if tree.root() == pieces_root {
+                    if let Some(resp) = tree.generate_hashes_response(base_layer, index, length, proof_layers) {
+                        return Ok(resp);
+                    }
+                }
+            }
+
+            for (file_idx, file_details) in self.files_to_download.iter().enumerate() {
+                if file_details.pieces_root == Some(pieces_root) {
+                    if let Some(tree) = trees.get(&file_idx) {
+                        if let Some(resp) = tree.generate_hashes_response(base_layer, index, length, proof_layers) {
+                            return Ok(resp);
+                        }
+                    }
                 }
             }
         }
 
-        // 2. Check if a file in files_to_download has this root and try file_idx
-        for (file_idx, file_details) in self.files_to_download.iter().enumerate() {
-            if file_details.pieces_root == Some(pieces_root) {
-                if let Some(tree) = trees.get(&file_idx) {
-                    if let Some(resp) = tree.generate_hashes_response(base_layer, index, length, proof_layers) {
+        // 2. Query persistent PieceLayersDiskCache
+        #[cfg(all(feature = "std", feature = "v2"))]
+        if self.config.v2_piece_layers_cache_enabled {
+            if let Some(resp) = self.piece_layers_disk_cache.serve_hash_request(
+                &pieces_root,
+                base_layer,
+                index,
+                length,
+                proof_layers,
+            ) {
+                return Ok(resp);
+            }
+        }
+
+        // 3. Fallback: check piece_layers map and attempt reconstruction
+        let piece_layers_guard = self.piece_layers.lock().unwrap();
+        if let Some(piece_layer) = piece_layers_guard.get(&pieces_root) {
+            #[cfg(all(feature = "std", feature = "v2"))]
+            if self.config.v2_piece_layers_cache_enabled {
+                let _ = self.piece_layers_disk_cache.save_piece_layer(&pieces_root, piece_layer);
+                if let Some(resp) = self.piece_layers_disk_cache.serve_hash_request(
+                    &pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                ) {
+                    return Ok(resp);
+                }
+            }
+
+            #[cfg(all(feature = "std", feature = "v2"))]
+            {
+                let (reconstructed, calc_root) = crate::storage::piece_layers_cache::reconstruct_tree_from_piece_layer(piece_layer);
+                if calc_root == pieces_root {
+                    if let Some(resp) = crate::storage::piece_layers_cache::generate_hashes_response_from_layers(
+                        &reconstructed,
+                        base_layer,
+                        index,
+                        length,
+                        proof_layers,
+                    ) {
                         return Ok(resp);
                     }
                 }

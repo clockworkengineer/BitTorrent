@@ -12,7 +12,11 @@ pub mod piece_buffer;
 pub mod piece_request;
 #[cfg(feature = "std")]
 pub mod stream;
+#[cfg(all(feature = "std", feature = "v2"))]
+pub mod piece_layers_cache;
 
 #[cfg(feature = "std")]
 pub use disk_cache::{CacheBlock, CacheMetrics, CachedBlockStorage};
+#[cfg(all(feature = "std", feature = "v2"))]
+pub use piece_layers_cache::{PieceLayersCacheMetrics, PieceLayersDiskCache};
 

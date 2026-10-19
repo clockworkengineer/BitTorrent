@@ -553,15 +553,39 @@ Implemented automated extraction of BEP 19 WebSeeds (`ws=`), exact sources (`xs=
 
 ---
 
+### Phase 40: BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving (BEP 52)
+
+Implemented high-throughput persistent on-disk caching, two-tier in-memory LRU caching, and BEP 52 peer wire `hash_request` serving for BitTorrent v2 and Hybrid Merkle trees:
+- **Binary `.layers` Disk Format & Checksum Integrity (`PieceLayersDiskCache`)**:
+  - Structured binary framing with magic `BT2L`, version 1, header, layer descriptors, and trailing SHA-256 integrity checksum ensuring immunity against corrupted or tampered cache files on disk.
+  - Constant-time validation and automatic file eviction upon checksum mismatch.
+- **Two-Tier LRU Memory and Storage Cache**:
+  - High-performance in-memory layer cache (`MemoryTierCache`) with LRU eviction and memory bounds tracking (`v2_piece_layers_cache_max_mb`).
+  - Disk-backed storage tier scanning and persisting cached Merkle layers without touching file data blocks.
+  - Automatic cache pruning (`prune`) based on file count and aggregate byte bounds.
+- **On-the-Fly Merkle Tree Layer Reconstruction**:
+  - `reconstruct_tree_from_piece_layer`: Reconstructs complete Merkle trees and upper ancestor layers directly from single piece layer inputs (e.g. from `.torrent` metadata or BEP 9 extension messages) by power-of-two padding and pairwise SHA-256 parent computation.
+- **High-Throughput BEP 52 Peer Wire `hash_request` Serving**:
+  - `serve_hash_request`: Validates requested base layer, index alignment, and power-of-two length; extracts the requested base hashes and traverses uncle proof nodes up to the root, while correctly omitting redundant internal subtree proof layers per BEP 52.
+  - Verified against `MerkleTree::verify_hashes_response`.
+- **Session & Context Integration**:
+  - `SessionConfig` parameters: `v2_piece_layers_cache_enabled`, `v2_piece_layers_cache_dir`, `v2_piece_layers_cache_max_mb`.
+  - `TorrentSessionBuilder` chaining: `.enable_piece_layers_cache(bool)`, `.piece_layers_cache_dir(path)`, `.piece_layers_cache_max_mb(mb)`.
+  - `TorrentContext`: Integrated `piece_layers_disk_cache`, `register_file_merkle_tree`, `register_piece_layer`, `handle_hash_request`, and `piece_layers_cache_metrics()`.
+- **CLI Inspection Tooling (`bt-cli`)**:
+  - Extended `bt-cli v2-info <torrent-path>` to report disk cache residency, cached `.layers` count, and total cache size on disk.
+- **Test Suite**: Dedicated integration test suite in `library/tests/piece_layers_cache_tests.rs` (7/7 tests passing) covering encode/decode checksum roundtrip, memory tier hit/miss telemetry, BEP 52 `hash_request` serving and Merkle verification, single piece layer reconstruction, LRU eviction and file pruning, context peer wire serving, and builder configuration.
+
+---
+
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **BitTorrent v2 Piece Layers Disk Cache & Peer Wire Serving**: Persistent on-disk caching of intermediate Merkle tree layers to serve incoming BEP 52 `hash_request` messages with minimal I/O overhead.
+1. **Asynchronous Piece Hash Verification Worker Pool**: Multi-threaded background piece hashing offloading CPU-intensive SHA-1/SHA-256 verifications from the main async loop.
 
-2. **Asynchronous Piece Hash Verification Worker Pool**: Multi-threaded background piece hashing offloading CPU-intensive SHA-1/SHA-256 verifications from the main async loop.
+2. **BEP 53 Selective Magnet Download & Range-Based Metadata Fetching**: Fine-grained selection indices and expedited partial file metadata resolution over peer connections.
 
-3. **BEP 53 Selective Magnet Download & Range-Based Metadata Fetching**: Fine-grained selection indices and expedited partial file metadata resolution over peer connections.
 
 
 

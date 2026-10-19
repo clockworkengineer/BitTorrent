@@ -179,6 +179,11 @@ impl MerkleTree {
         self.num_blocks
     }
 
+    /// Returns a slice of all layers in the Merkle tree from bottom (0 = leaf blocks) to top (last = root).
+    pub fn layers(&self) -> &[Vec<[u8; 32]>] {
+        &self.layers
+    }
+
     /// Returns the leaf hash for a specific 16 KiB block, if within file bounds.
     pub fn block_hash(&self, block_index: usize) -> Option<[u8; 32]> {
         if block_index < self.num_blocks && !self.layers.is_empty() {

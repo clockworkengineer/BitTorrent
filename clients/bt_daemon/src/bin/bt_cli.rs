@@ -312,6 +312,22 @@ fn main() {
         }
 
         println!("  Piece Layers:     {}", metainfo.get_piece_layers().len());
+        let piece_layers_cache_dir = std::path::Path::new(".piece_layers");
+        if piece_layers_cache_dir.exists() {
+            let mut cached_count = 0;
+            let mut cached_bytes = 0u64;
+            if let Ok(entries) = std::fs::read_dir(piece_layers_cache_dir) {
+                for entry in entries.flatten() {
+                    if entry.path().extension().map_or(false, |ext| ext == "layers") {
+                        cached_count += 1;
+                        if let Ok(meta) = entry.metadata() {
+                            cached_bytes += meta.len();
+                        }
+                    }
+                }
+            }
+            println!("  Layer Disk Cache: {} files cached ({}) in {}", cached_count, fmt_bytes(cached_bytes), piece_layers_cache_dir.display());
+        }
 
         if let Ok((_, files)) = metainfo.local_files_to_download_list(".") {
             let non_pad_files: Vec<_> = files.iter().filter(|f| !f.is_pad_file()).collect();
