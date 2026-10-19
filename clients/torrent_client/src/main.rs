@@ -38,16 +38,14 @@ fn main() {
     bittorrent_rs::util::set_log_sender(log_tx.clone());
 
     let options = eframe::NativeOptions {
-        vsync: false,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([960.0, 620.0])
-            .with_position(egui::pos2(80.0, 80.0))
-            .with_visible(true)
-            .with_active(true),
+            .with_min_inner_size([800.0, 500.0])
+            .with_title("BitTorrent Desktop Client"),
         ..Default::default()
     };
-    if let Err(err) = eframe::run_native(
-        "BitTorrent Client",
+    eframe::run_native(
+        "BitTorrent Desktop Client",
         options,
         Box::new(move |cc| {
             configure_visuals(&cc.egui_ctx);
@@ -62,8 +60,6 @@ fn main() {
             }
             Ok(Box::new(app))
         }),
-    ) {
-        eprintln!("eframe::run_native error: {:?}", err);
-    }
-    std::process::exit(0);
+    )
+    .unwrap();
 }
