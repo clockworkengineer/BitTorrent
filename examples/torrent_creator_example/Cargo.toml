@@ -1,0 +1,8 @@
+[package]
+name = "torrent_creator_example"
+version = "0.1.1"
+edition = "2024"
+
+[dependencies]
+bittorrent-rs = { path = "../../library", features = ["v2"] }
+urlencoding = "2.1"

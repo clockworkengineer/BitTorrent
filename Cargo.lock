@@ -3435,6 +3435,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "selective_download_example"
+version = "0.1.1"
+dependencies = [
+ "bittorrent-rs",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4011,6 +4018,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrent_creator_example"
+version = "0.1.1"
+dependencies = [
+ "bittorrent-rs",
+ "urlencoding",
+]
+
+[[package]]
 name = "torrent_fast_resume_example"
 version = "0.1.1"
 dependencies = [
@@ -4026,6 +4041,13 @@ dependencies = [
 
 [[package]]
 name = "torrent_session_example"
+version = "0.1.1"
+dependencies = [
+ "bittorrent-rs",
+]
+
+[[package]]
+name = "torrent_stream_example"
 version = "0.1.1"
 dependencies = [
  "bittorrent-rs",

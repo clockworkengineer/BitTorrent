@@ -33,3 +33,28 @@ Demonstrates automated port mapping configuration using `FallbackPortMapper` to 
 ```bash
 cargo run -p port_mapping_example --release
 ```
+
+### 6. Torrent Creator Example (`torrent_creator_example`)
+Demonstrates programmatic `.torrent` creation from a file or directory using `TorrentBuilder`. Supports BitTorrent v1, v2 (BEP 52 Merkle trees & piece layers), and Hybrid torrents with custom piece lengths, announce tracker tiers, WebSeed mirrors, and automatic Magnet URI generation.
+```bash
+# Package a file or directory into a hybrid torrent with 64 KiB pieces
+cargo run -p torrent_creator_example --release -- ./input_dir ./output.torrent hybrid 64
+```
+
+### 7. Torrent Stream Example (`torrent_stream_example`)
+Demonstrates sequential seekable media streaming using `TorrentStream` and `StreamingPieceSelector`. Spins up a lightweight local HTTP server supporting HTTP 206 `Range` requests, allowing video players (such as VLC, mpv, or browsers) to stream media files progressively while downloading and seeking within uncompleted torrents.
+```bash
+cargo run -p torrent_stream_example --release -- <torrent-file-or-magnet> [download-dir] [port] [file-index]
+
+# Stream to media player via:
+# VLC -> Media -> Open Network Stream -> http://127.0.0.1:8080/stream
+```
+
+### 8. Selective Download Example (`selective_download_example`)
+Demonstrates BEP 53 (`so=`) selective file/range filtering and dynamic WebSeed HTTP mirror tracking. Shows how to configure `TorrentSession` to only fetch specific file indices, prints detailed bandwidth and piece reduction metrics via `session.bep53_evaluation()`, and manages multi-mirror WebSeed endpoints with dynamic latency scoring and circuit breaking.
+```bash
+cargo run -p selective_download_example --release -- <torrent-file-or-magnet> <download-dir> [selected-indices]
+
+# Example: only download file indices 0 and 2
+cargo run -p selective_download_example --release -- my_archive.torrent ./downloads 0,2
+```
