@@ -52,6 +52,7 @@ async fn check_request_timeouts(
     };
 
     if !timed_out_requests.is_empty() {
+        let peer_ip = peer.lock().unwrap().ip.clone();
         let net_opt = {
             let ctx = context.lock().unwrap();
             let mut pg = peer.lock().unwrap();
@@ -59,6 +60,7 @@ async fn check_request_timeouts(
                 ctx.release_block_request(pn, bi);
                 pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_sub(1);
             }
+            ctx.record_peer_block_timeout(&peer_ip);
             pg.network.clone()
         };
 
@@ -493,6 +495,10 @@ pub async fn send_block_requests(
                     pg.reserved_blocks.push((pn, bi, Instant::now()));
                     pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_add(1);
                     pg.update_last_message_sent();
+                }
+                {
+                    let ctx = context.lock().unwrap();
+                    ctx.record_peer_request_sent(&peer_details.ip);
                 }
             }
             None => { none_count += 1; break; }

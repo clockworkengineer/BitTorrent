@@ -625,15 +625,40 @@ Implemented BEP 53 Magnet URI file selection (`so=`), multi-peer range-based met
   - Extended `bt-cli magnet-info <magnet-uri> [--select <indices>]` with BEP 53 file selection inspection and URI rewrite.
 - **Test Suite**: Dedicated integration test suite in `library/tests/bep53_selective_magnet_tests.rs` (7/7 tests passing) validating BEP 53 parsing, canonical serialization, builder methods, multi-peer range pipelining, expedited partial manifest parsing, context priority filtering, and runtime session selection.
 
+### Phase 43: Endgame Mode Multi-Source Adaptive Erasure Caching
+
+Implemented predictive erasure block staging, RFC 6298 swarm latency profiling, and redundant block absorption to eliminate tail completion stalls on slow peer pipelines:
+- **Swarm Latency Profiler (`SwarmLatencyProfiler`, `PeerLatencyProfile`, `PeerLatencySummary`)**:
+  - RFC 6298 Exponential Moving Average (EMA) smoothed RTT and jitter/variance tracking per peer (`alpha = 0.125`, `beta = 0.25`).
+  - Rolling download transfer rate measurement and Expected Completion Time (`ECT = RTT + transmission_delay + queueing_delay`) calculation for 16 KiB blocks.
+  - Swarm median RTT calculation, peer ECT ranking, timeout penalty adjustments, and straggler classification.
+- **Adaptive Erasure Staging Cache (`AdaptiveErasureStaging`, `StagedBlock`, `BlockArrivalOutcome`, `EndgameStagingMetrics`)**:
+  - Multi-source block request staging tracking in-flight candidate blocks, dispatched peers, request timestamps, and expected completion times.
+  - Straggler stall detection (`detect_stalled_blocks`) identifying blocks exceeding `ECT * straggler_ratio` (clamped to >= 400ms) for proactive preemption.
+  - First-arrival storage commit tracking with targeted `Cancel` broadcast list generation across competing peers.
+  - In-memory redundant duplicate block absorption (`BlockArrivalOutcome::AbsorbDuplicate`), bypassing disk writes and cryptographic hash verifications when late blocks arrive from slower preempted peers.
+- **Torrent Context & Peer Pipeline Integration**:
+  - `TorrentContext`: Integrated `endgame_staging`, `latency_profiler`, straggler preemption in `next_block_request_for_peer`, duplicate absorption and piece clearing in `process_piece_block`, and latency/timeout telemetry recorders.
+  - `Peer`: Records RTT samples directly from `reserved_blocks` dispatch timestamps upon receiving `PeerMessage::Piece`.
+  - Worker timeout loop: Records peer timeout events in `latency_profiler` during `check_request_timeouts`.
+- **Configuration & Telemetry APIs**:
+  - `SessionConfig` parameters: `enable_adaptive_endgame` (default: `true`), `endgame_straggler_ratio` (default: `1.8`), `endgame_max_clones_per_block` (default: `2`).
+  - `TorrentSessionBuilder` chaining: `.enable_adaptive_endgame(bool)`, `.endgame_straggler_ratio(f64)`, `.endgame_max_clones_per_block(usize)`.
+  - `TorrentSession` methods: `.endgame_metrics()` and `.swarm_latency_summary()`.
+- **Test Suite**: Dedicated integration test suite in `library/tests/endgame_erasure_tests.rs` (6/6 tests passing) validating RFC 6298 smoothing, ECT peer ranking, straggler preemption, redundant erasure duplicate absorption, context pipeline integration, and session builder configuration.
+
 ---
 
 ## Future Roadmap
 
 The following enhancements are proposed for future development:
 
-1. **Endgame Mode Multi-Source Adaptive Erasure Caching**: Predictive erasure block staging and swarm latency profiling to eliminate tail completion stalls on slow peer pipelines.
+1. **BEP 38 / WebTorrent Dynamic WebSeed Failover & Mirror Health Tracker**: Multi-source HTTP fallback routing and real-time latency/error rate health scoring across WebSeed endpoints.
 
-2. **BEP 38 / WebTorrent Dynamic WebSeed Failover & Mirror Health Tracker**: Multi-source HTTP fallback routing and real-time latency/error rate health scoring across WebSeed endpoints.
+2. **BEP 21 / Extension Protocol Dynamic Capability Registry**: Fine-grained per-peer extension dictionary indexing, runtime feature gating, and structured telemetry for custom extended messages.
+
+3. **Adaptive Token-Bucket Bandwidth Shaper & Swarm Rate Governor**: Per-torrent and global hierarchical token bucket rate limiting with burst allowance and fair-share peer bandwidth allocation.
+
 
 
 

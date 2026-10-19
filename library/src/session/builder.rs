@@ -286,6 +286,24 @@ impl TorrentSessionBuilder {
         self
     }
 
+    /// Enables or disables adaptive multi-source erasure caching in endgame mode.
+    pub fn enable_adaptive_endgame(mut self, enable: bool) -> Self {
+        self.config.enable_adaptive_endgame = enable;
+        self
+    }
+
+    /// Configures the straggler ECT multiplier threshold for endgame preemption.
+    pub fn endgame_straggler_ratio(mut self, ratio: f64) -> Self {
+        self.config.endgame_straggler_ratio = ratio;
+        self
+    }
+
+    /// Configures the maximum redundant clone requests allowed per block in endgame mode.
+    pub fn endgame_max_clones_per_block(mut self, max_clones: usize) -> Self {
+        self.config.endgame_max_clones_per_block = max_clones;
+        self
+    }
+
     /// Consumes the builder and constructs the `TorrentSession`.
     ///
     /// # Errors

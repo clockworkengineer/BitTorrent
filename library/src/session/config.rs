@@ -84,6 +84,12 @@ pub struct SessionConfig {
     pub metadata_pipeline_depth: usize,
     /// Timeout in seconds before an in-flight metadata request can be re-dispatched (default: 5).
     pub metadata_request_timeout_secs: u64,
+    /// Enable adaptive multi-source erasure caching and straggler preemption in endgame mode (default: true).
+    pub enable_adaptive_endgame: bool,
+    /// Multiplier on peer ECT before an outstanding tail block request is considered stalled (default: 1.8).
+    pub endgame_straggler_ratio: f64,
+    /// Maximum redundant duplicate requests allowed per tail block in endgame mode (default: 2).
+    pub endgame_max_clones_per_block: usize,
 }
 
 pub trait ChokingStrategy: Send + Sync {
@@ -179,6 +185,9 @@ impl Default for SessionConfig {
             verification_queue_capacity: 1024,
             metadata_pipeline_depth: 4,
             metadata_request_timeout_secs: 5,
+            enable_adaptive_endgame: true,
+            endgame_straggler_ratio: 1.8,
+            endgame_max_clones_per_block: 2,
         }
     }
 }
@@ -284,6 +293,24 @@ impl SessionConfig {
     /// Configures the timeout in seconds before an in-flight metadata request can be re-dispatched.
     pub fn with_metadata_request_timeout(mut self, secs: u64) -> Self {
         self.metadata_request_timeout_secs = secs.max(1);
+        self
+    }
+
+    /// Enables or disables adaptive multi-source erasure caching in endgame mode.
+    pub fn with_adaptive_endgame(mut self, enable: bool) -> Self {
+        self.enable_adaptive_endgame = enable;
+        self
+    }
+
+    /// Configures the straggler ECT multiplier threshold for endgame preemption.
+    pub fn with_endgame_straggler_ratio(mut self, ratio: f64) -> Self {
+        self.endgame_straggler_ratio = ratio.max(1.1);
+        self
+    }
+
+    /// Configures the maximum redundant clone requests allowed per block in endgame mode.
+    pub fn with_endgame_max_clones_per_block(mut self, max_clones: usize) -> Self {
+        self.endgame_max_clones_per_block = max_clones.clamp(1, 8);
         self
     }
 }

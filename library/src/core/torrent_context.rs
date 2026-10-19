@@ -168,6 +168,10 @@ pub struct TorrentContext {
     pub selected_file_indices: Option<Vec<usize>>,
     /// Expedited partial metadata manifest parsed early from initial metadata pieces.
     pub expedited_manifest: Option<crate::network::metadata_fetcher::PartialMetadataManifest>,
+    /// Adaptive erasure staging cache managing tail blocks and straggler preemption in endgame mode.
+    pub endgame_staging: Mutex<crate::storage::erasure_staging::AdaptiveErasureStaging>,
+    /// Swarm-wide latency profiler tracking smoothed RTT and ECT for connected peers.
+    pub latency_profiler: Mutex<crate::network::latency_profiler::SwarmLatencyProfiler>,
 }
 
 impl TorrentContext {
@@ -324,6 +328,11 @@ impl TorrentContext {
             pieces_verifying: Mutex::new(std::collections::HashSet::new()),
             selected_file_indices: None,
             expedited_manifest: None,
+            endgame_staging: Mutex::new(crate::storage::erasure_staging::AdaptiveErasureStaging::new(
+                config.endgame_max_clones_per_block,
+                config.endgame_straggler_ratio,
+            )),
+            latency_profiler: Mutex::new(crate::network::latency_profiler::SwarmLatencyProfiler::new()),
         };
         Ok(context)
     }
@@ -441,6 +450,11 @@ impl TorrentContext {
             pieces_verifying: Mutex::new(std::collections::HashSet::new()),
             selected_file_indices: None,
             expedited_manifest: None,
+            endgame_staging: Mutex::new(crate::storage::erasure_staging::AdaptiveErasureStaging::new(
+                config.endgame_max_clones_per_block,
+                config.endgame_straggler_ratio,
+            )),
+            latency_profiler: Mutex::new(crate::network::latency_profiler::SwarmLatencyProfiler::new()),
         };
         Ok(context)
     }
@@ -1306,6 +1320,16 @@ impl TorrentContext {
         let piece_length = self.get_piece_length(piece_number);
         let block_index = begin / BLOCK_SIZE as u32;
 
+        if self.config.enable_adaptive_endgame {
+            let mut staging = self.endgame_staging.lock().unwrap();
+            match staging.on_block_arrived(piece_number, block_index, peer_ip) {
+                crate::storage::erasure_staging::BlockArrivalOutcome::AbsorbDuplicate { .. } => {
+                    return Ok(false);
+                }
+                crate::storage::erasure_staging::BlockArrivalOutcome::CommitAndCancelOthers { .. } => {}
+            }
+        }
+
         let mut piece_buffers = self.assembler.piece_buffers.lock().unwrap();
         let piece_buffer_arc = piece_buffers
             .entry(piece_number)
@@ -1338,6 +1362,9 @@ impl TorrentContext {
         drop(piece_buffers);
 
         if piece_complete {
+            if self.config.enable_adaptive_endgame {
+                self.endgame_staging.lock().unwrap().clear_piece(piece_number);
+            }
             #[cfg(feature = "std")]
             if self.config.enable_async_verification {
                 let piece_offset = (piece_number as u64) * (self.piece_length as u64);
@@ -1655,34 +1682,68 @@ impl TorrentContext {
         let block_size = self.config.block_size;
         let endgame = self.is_endgame();
         if endgame {
-            // Endgame mode: request any block from the rarest available piece.
-            let piece_number = (0..self.number_of_pieces as u32)
+            // Priority 0: Straggler Preemption in Adaptive Endgame
+            if self.config.enable_adaptive_endgame {
+                let stalled_blocks = self.endgame_staging.lock().unwrap().detect_stalled_blocks();
+                for (stalled_piece, stalled_bi, slow_peer) in stalled_blocks {
+                    if slow_peer != peer.ip
+                        && (stalled_piece as usize) < self.number_of_pieces
+                        && self.is_piece_wanted(stalled_piece)
+                        && !self.is_piece_local(stalled_piece)
+                        && peer.is_piece_on_remote_peer(stalled_piece)
+                        && !peer.reserved_blocks.iter().any(|&(p, b, _)| p == stalled_piece && b == stalled_bi)
+                    {
+                        let piece_length = self.get_piece_length(stalled_piece);
+                        let begin = stalled_bi * block_size as u32;
+                        let length = min(block_size as u32, piece_length.saturating_sub(begin));
+                        let ect = self.latency_profiler.lock().unwrap().get_or_create(&peer.ip).estimated_completion_time(block_size);
+                        self.endgame_staging.lock().unwrap().stage_request(stalled_piece, stalled_bi, &peer.ip, ect);
+                        self.reserve_block_request(stalled_piece, stalled_bi);
+                        return Some((stalled_piece, begin, length));
+                    }
+                }
+            }
+
+            // Endgame mode: request blocks across rarest wanted pieces.
+            let mut pieces: Vec<u32> = (0..self.number_of_pieces as u32)
                 .filter(|&piece| self.is_piece_wanted(piece) && !self.is_piece_local(piece) && peer.is_piece_on_remote_peer(piece))
-                .min_by_key(|&piece| (std::cmp::Reverse(self.get_piece_priority(piece)), self.piece_data[piece as usize].peer_count, piece))?;
+                .collect();
+            pieces.sort_by_key(|&piece| (std::cmp::Reverse(self.get_piece_priority(piece)), self.piece_data[piece as usize].peer_count, piece));
 
-            let piece_length = self.get_piece_length(piece_number);
-            let block_count = ((piece_length as usize + block_size - 1) / block_size) as u32;
+            for piece_number in pieces {
+                let piece_length = self.get_piece_length(piece_number);
+                let block_count = ((piece_length as usize + block_size - 1) / block_size) as u32;
 
-            let piece_buffers = self.assembler.piece_buffers.lock().unwrap();
-            let present_blocks = piece_buffers.get(&piece_number)
-                .map(|pb| {
-                    let guard = pb.lock().unwrap();
-                    (0..block_count).map(|bi| guard.is_block_present(bi)).collect::<Vec<bool>>()
-                })
-                .unwrap_or_else(|| vec![false; block_count as usize]);
-            drop(piece_buffers);
+                let piece_buffers = self.assembler.piece_buffers.lock().unwrap();
+                let present_blocks = piece_buffers.get(&piece_number)
+                    .map(|pb| {
+                        let guard = pb.lock().unwrap();
+                        (0..block_count).map(|bi| guard.is_block_present(bi)).collect::<Vec<bool>>()
+                    })
+                    .unwrap_or_else(|| vec![false; block_count as usize]);
+                drop(piece_buffers);
 
-            for block_index in 0..block_count {
-                if present_blocks[block_index as usize] {
-                    continue;
+                for block_index in 0..block_count {
+                    if present_blocks[block_index as usize] {
+                        continue;
+                    }
+                    if peer.reserved_blocks.iter().any(|&(p, b, _)| p == piece_number && b == block_index) {
+                        continue;
+                    }
+                    if self.config.enable_adaptive_endgame {
+                        if !self.endgame_staging.lock().unwrap().can_clone_block(piece_number, block_index) {
+                            continue;
+                        }
+                    }
+                    let begin = block_index * block_size as u32;
+                    let length = min(block_size as u32, piece_length.saturating_sub(begin));
+                    if self.config.enable_adaptive_endgame {
+                        let ect = self.latency_profiler.lock().unwrap().get_or_create(&peer.ip).estimated_completion_time(block_size);
+                        self.endgame_staging.lock().unwrap().stage_request(piece_number, block_index, &peer.ip, ect);
+                    }
+                    self.reserve_block_request(piece_number, block_index);
+                    return Some((piece_number, begin, length));
                 }
-                if peer.reserved_blocks.iter().any(|&(p, b, _)| p == piece_number && b == block_index) {
-                    continue;
-                }
-                let begin = block_index * block_size as u32;
-                let length = min(block_size as u32, piece_length.saturating_sub(begin));
-                self.reserve_block_request(piece_number, block_index);
-                return Some((piece_number, begin, length));
             }
         } else {
             // Priority 1: Check suggested pieces from this peer (BEP 6 & BEP 16 super-seeding optimization)
@@ -2450,6 +2511,31 @@ impl TorrentContext {
         }
 
         (pex_msg, newly_sent)
+    }
+
+    /// Records an RTT block delivery sample for a peer in the latency profiler.
+    pub fn record_peer_block_sample(&self, peer_ip: &str, rtt: std::time::Duration, bytes: usize) {
+        self.latency_profiler.lock().unwrap().record_sample(peer_ip, rtt, bytes);
+    }
+
+    /// Records a block timeout for a peer in the latency profiler.
+    pub fn record_peer_block_timeout(&self, peer_ip: &str) {
+        self.latency_profiler.lock().unwrap().record_timeout(peer_ip);
+    }
+
+    /// Records a block request dispatch for a peer in the latency profiler.
+    pub fn record_peer_request_sent(&self, peer_ip: &str) {
+        self.latency_profiler.lock().unwrap().record_request_sent(peer_ip);
+    }
+
+    /// Returns telemetry metrics for the adaptive endgame erasure staging cache.
+    pub fn endgame_staging_metrics(&self) -> crate::storage::erasure_staging::EndgameStagingMetrics {
+        self.endgame_staging.lock().unwrap().metrics()
+    }
+
+    /// Returns a swarm latency profile summary for all connected peers.
+    pub fn swarm_latency_summary(&self) -> Vec<crate::network::latency_profiler::PeerLatencySummary> {
+        self.latency_profiler.lock().unwrap().summary(self.config.endgame_straggler_ratio)
     }
 }
 

@@ -29,3 +29,5 @@ pub mod webrtc;
 pub mod webtorrent_injector;
 #[cfg(feature = "std")]
 pub mod metadata_fetcher;
+#[cfg(feature = "std")]
+pub mod latency_profiler;

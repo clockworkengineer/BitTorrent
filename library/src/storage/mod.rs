@@ -16,6 +16,8 @@ pub mod stream;
 pub mod piece_layers_cache;
 #[cfg(feature = "std")]
 pub mod verification_pool;
+#[cfg(feature = "std")]
+pub mod erasure_staging;
 
 #[cfg(feature = "std")]
 pub use disk_cache::{CacheBlock, CacheMetrics, CachedBlockStorage};
@@ -25,5 +27,9 @@ pub use piece_layers_cache::{PieceLayersCacheMetrics, PieceLayersDiskCache};
 pub use verification_pool::{
     HashVerificationPool, PieceVerificationJob, PieceVerificationResult, RecheckProgress,
     VerificationPoolMetrics,
+};
+#[cfg(feature = "std")]
+pub use erasure_staging::{
+    AdaptiveErasureStaging, BlockArrivalOutcome, EndgameStagingMetrics, StagedBlock,
 };
 

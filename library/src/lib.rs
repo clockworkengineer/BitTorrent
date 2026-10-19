@@ -213,6 +213,14 @@ pub use storage::verification_pool::{
     HashVerificationPool, PieceVerificationJob, PieceVerificationResult, RecheckProgress,
     VerificationPoolMetrics,
 };
+#[cfg(feature = "std")]
+pub use storage::erasure_staging::{
+    AdaptiveErasureStaging, BlockArrivalOutcome, EndgameStagingMetrics, StagedBlock,
+};
+#[cfg(feature = "std")]
+pub use network::latency_profiler::{
+    PeerLatencyProfile, PeerLatencySummary, SwarmLatencyProfiler,
+};
 #[cfg(all(feature = "std", feature = "mse"))]
 pub use network::peer_network::EncryptedSocket;
 #[cfg(all(feature = "std", feature = "webrtc"))]

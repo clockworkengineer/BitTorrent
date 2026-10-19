@@ -572,8 +572,16 @@ impl Peer {
                 self.bytes_downloaded_in_interval += block.len();
                 self.outstanding_requests_count = self.outstanding_requests_count.saturating_sub(1);
                 let block_index = begin / crate::constants::BLOCK_SIZE as u32;
+                let request_time = self.reserved_blocks
+                    .iter()
+                    .find(|&&(p, b, _)| p == index && b == block_index)
+                    .map(|&(_, _, t)| t);
                 self.reserved_blocks
                     .retain(|&(p, b, _)| !(p == index && b == block_index));
+                if let Some(sent_time) = request_time {
+                    let rtt = sent_time.elapsed();
+                    tc.record_peer_block_sample(&self.ip, rtt, block.len());
+                }
                 if tc.is_endgame() {
                     let cancel_length = std::cmp::min(
                         crate::constants::BLOCK_SIZE as u32,

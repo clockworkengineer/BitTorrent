@@ -847,6 +847,18 @@ impl TorrentSession {
         ctx.bep53_evaluation()
     }
 
+    /// Returns telemetry metrics for the adaptive endgame erasure staging cache.
+    pub fn endgame_metrics(&self) -> crate::storage::erasure_staging::EndgameStagingMetrics {
+        let ctx = self.context.lock().unwrap();
+        ctx.endgame_staging_metrics()
+    }
+
+    /// Returns a swarm latency profile summary for all connected peers.
+    pub fn swarm_latency_summary(&self) -> Vec<crate::network::latency_profiler::PeerLatencySummary> {
+        let ctx = self.context.lock().unwrap();
+        ctx.swarm_latency_summary()
+    }
+
     /// Identifies the next missing block to download and transmits a Request packet to the specified peer.
     pub async fn request_next_block_from_peer(
         &mut self,
