@@ -491,16 +491,16 @@ Create `library/tests/common/mod.rs` and import `common::sample_file` across all
 
 ## 3. Implementation Order & Verification Matrix
 
-| Step | Phase | Scope | Risk | Automated Verification Command |
-|------|-------|-------|------|---------------------------------|
-| **1** | Phase 3 | Hex utilities in `util.rs` | Zero | `cargo test -p bittorrent-rs -- util_tests` |
-| **2** | Phase 1 | `IpcClient` in `torrent_client_shared` | Low | `cargo test -p torrent_client_shared` |
-| **3** | Phase 2 | Media detection & stream engine | Low | `cargo test -p torrent_client_shared && cargo clippy --all-targets` |
-| **4** | Phase 4 | `TorrentBuilder::add_dir` & `sync_hub` | Low | `cargo test -p sync_hub && cargo test -p bittorrent-rs -- bep52` |
-| **5** | Phase 7 | Message encoding & peer action helpers | Zero | `cargo test -p bittorrent-rs -- peer_message_tests` |
-| **6** | Phase 5 & 6 | `TorrentContext` & `TorrentSession` decomposition | Medium | `cargo test --workspace` |
-| **7** | Phase 8 | `bt_webui` REST response deduplication | Low | `cargo check -p bt_webui` |
-| **8** | Phase 9 | Test fixtures in `library/tests/common` | Zero | `cargo test --workspace` |
+| Step | Phase | Scope | Risk | Status |
+|------|-------|-------|------|--------|
+| **1** | Phase 3 | Hex utilities in `util.rs` | Zero | **COMPLETED** |
+| **2** | Phase 1 | `IpcClient` in `torrent_client_shared` | Low | **COMPLETED** |
+| **3** | Phase 2 | Media detection & stream engine | Low | **COMPLETED** |
+| **4** | Phase 4 | `TorrentBuilder::add_dir` & `sync_hub` | Low | **COMPLETED** |
+| **5** | Phase 7 | Message encoding & peer action helpers | Zero | **COMPLETED** |
+| **6** | Phase 5 & 6 | `TorrentContext` & `TorrentSession` decomposition | Medium | **COMPLETED** |
+| **7** | Phase 8 | `bt_webui` REST response deduplication | Low | **COMPLETED** |
+| **8** | Phase 9 | Test fixtures in `library/tests/common` | Zero | **COMPLETED** |
 
 ---
 
