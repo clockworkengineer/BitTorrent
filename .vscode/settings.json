@@ -2,6 +2,9 @@
     "files.exclude": {
         "target": true,
         "downloads": true,
-        ".vscode": true
+        ".vscode": true,
+        "library/.piece_layers": true,
+        "library/debug.log": true,
+        "debug.log": true
     }
 }
