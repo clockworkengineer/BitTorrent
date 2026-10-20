@@ -20,40 +20,14 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-/// Represents a piece rarity entry in the priority queue.
-/// A binary heap containing this type will order entries such that pieces with the fewest peers are popped first.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct PieceRarity {
-    pub peer_count: usize,
-    pub piece_index: u32,
-}
-
-impl Ord for PieceRarity {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // We want a min-heap on peer_count, then piece_index
-        other
-            .peer_count
-            .cmp(&self.peer_count)
-            .then_with(|| other.piece_index.cmp(&self.piece_index))
-    }
-}
-
-impl PartialOrd for PieceRarity {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
+pub use crate::core::piece_store::{PieceInfo, PieceRarity, PieceStore};
+pub use crate::core::swarm_topology::SwarmTopology;
+pub use crate::core::transfer_metrics::TransferMetrics;
+pub use crate::core::metadata_bootstrap::MetadataBootstrap;
 
 /// Placeholder structure representing a tracker client.
 #[derive(Debug, Clone)]
 pub struct Tracker;
-
-/// Piece availability metadata tracked per piece.
-#[derive(Debug, Clone)]
-pub struct PieceInfo {
-    pub peer_count: usize,
-    pub piece_length: u32,
-}
 
 /// Tracks the super-seeding (initial seeding / BEP 16) distribution state.
 #[derive(Debug, Clone, Default)]
@@ -176,6 +150,11 @@ pub struct TorrentContext {
     pub latency_profiler: Mutex<crate::network::latency_profiler::SwarmLatencyProfiler>,
     /// BEP 38 WebSeed mirror health tracker managing dynamic endpoint scoring and fallback routing.
     pub webseed_tracker: Mutex<crate::network::webseed_tracker::WebSeedMirrorTracker>,
+    // Domain aggregates (Phase 1 SOLID decomposition)
+    pub piece_store: PieceStore,
+    pub swarm_topology: SwarmTopology,
+    pub transfer_metrics: TransferMetrics,
+    pub metadata_bootstrap: MetadataBootstrap,
 }
 
 struct TorrentContextParams {
@@ -255,6 +234,20 @@ impl TorrentContext {
             cache
         };
 
+        let total_bytes_downloaded = Arc::new(AtomicU64::new(0));
+        let total_bytes_uploaded = Arc::new(AtomicU64::new(0));
+        let mut transfer_metrics = TransferMetrics::new(params.total_bytes_to_download);
+        transfer_metrics.total_bytes_downloaded = total_bytes_downloaded.clone();
+        transfer_metrics.total_bytes_uploaded = total_bytes_uploaded.clone();
+
+        let piece_store = PieceStore::new(
+            params.number_of_pieces,
+            params.piece_length,
+            params.pieces_info_hash.clone(),
+        );
+        let swarm_topology = SwarmTopology::new(crate::constants::MAXIMUM_SWARM_SIZE);
+        let metadata_bootstrap = MetadataBootstrap::new();
+
         TorrentContext {
             info_hash: params.info_hash,
             tracker_url: params.tracker_url,
@@ -264,10 +257,10 @@ impl TorrentContext {
             pieces_info_hash: params.pieces_info_hash,
             bitfield: params.bitfield,
             files_to_download: params.files_to_download,
-            total_bytes_downloaded: Arc::new(AtomicU64::new(0)),
+            total_bytes_downloaded,
             initial_bytes_downloaded: 0,
             total_bytes_to_download: params.total_bytes_to_download,
-            total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
+            total_bytes_uploaded,
             status: params.status,
             file_name: params.file_name,
             main_tracker: None,
@@ -353,6 +346,10 @@ impl TorrentContext {
                 crate::network::latency_profiler::SwarmLatencyProfiler::new(),
             ),
             webseed_tracker,
+            piece_store,
+            swarm_topology,
+            transfer_metrics,
+            metadata_bootstrap,
         }
     }
 
@@ -486,6 +483,7 @@ impl TorrentContext {
                 });
             }
         }
+        self.piece_store.init_pieces(number_of_pieces, piece_length);
     }
 
     /// Adds a BEP 19 WebSeed mirror URL to the context if not already present.
@@ -750,54 +748,71 @@ impl TorrentContext {
 
     /// Returns the progress in parts per ten thousand (0 to 10000).
     pub fn progress_ppm(&self) -> u32 {
-        if self.total_bytes_to_download == 0 {
+        let total = if self.total_bytes_to_download > 0 {
+            self.total_bytes_to_download
+        } else {
+            self.transfer_metrics.total_bytes_to_download
+        };
+        if total == 0 {
             return 10000;
         }
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
-        let ppm = (downloaded * 10000) / self.total_bytes_to_download;
+        let ppm = (downloaded * 10000) / total;
         ppm.min(10000) as u32
     }
 
     /// Computes percentage completion from bytes downloaded versus total.
     #[cfg(feature = "std")]
     pub fn progress_percent(&self) -> f32 {
-        self.progress_ppm() as f32 / 100.0
+        self.transfer_metrics.progress_percent()
     }
 
     /// Sets or clears a specific piece completion bit in the local bitfield.
     pub fn mark_piece_local(&mut self, piece_number: u32, local: bool) {
         let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
-        if local {
-            self.bitfield[byte_index] |= bit_mask;
-        } else {
-            self.bitfield[byte_index] &= !bit_mask;
+        if byte_index < self.bitfield.len() {
+            if local {
+                self.bitfield[byte_index] |= bit_mask;
+            } else {
+                self.bitfield[byte_index] &= !bit_mask;
+            }
         }
+        self.piece_store.mark_piece_local(piece_number, local);
     }
 
     /// Checks if a specific piece has been fully downloaded and verified locally.
     pub fn is_piece_local(&self, piece_number: u32) -> bool {
         let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
-        self.bitfield[byte_index] & bit_mask != 0
+        if byte_index < self.bitfield.len() {
+            return self.bitfield[byte_index] & bit_mask != 0;
+        }
+        self.piece_store.is_piece_local(piece_number)
     }
 
     /// Sets or clears a specific piece index in the missing pieces tracking vector.
     pub fn mark_piece_missing(&mut self, piece_number: u32, missing: bool) {
         let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
-        if missing {
-            if self.pieces_missing[byte_index] & bit_mask == 0 {
-                self.pieces_missing[byte_index] |= bit_mask;
-                self.missing_pieces_count += 1;
+        if byte_index < self.pieces_missing.len() {
+            if missing {
+                if self.pieces_missing[byte_index] & bit_mask == 0 {
+                    self.pieces_missing[byte_index] |= bit_mask;
+                    self.missing_pieces_count += 1;
+                }
+            } else if self.pieces_missing[byte_index] & bit_mask != 0 {
+                self.pieces_missing[byte_index] &= !bit_mask;
+                self.missing_pieces_count = self.missing_pieces_count.saturating_sub(1);
             }
-        } else if self.pieces_missing[byte_index] & bit_mask != 0 {
-            self.pieces_missing[byte_index] &= !bit_mask;
-            self.missing_pieces_count = self.missing_pieces_count.saturating_sub(1);
         }
+        self.piece_store.mark_piece_missing(piece_number, missing);
     }
 
     /// Checks if a specific piece index is currently marked as missing.
     pub fn is_piece_missing(&self, piece_number: u32) -> bool {
         let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
-        self.pieces_missing[byte_index] & bit_mask != 0
+        if byte_index < self.pieces_missing.len() {
+            return self.pieces_missing[byte_index] & bit_mask != 0;
+        }
+        self.piece_store.is_piece_missing(piece_number)
     }
 
     fn update_piece_peer_counts(&mut self, remote_peer: &Peer, increment: bool) {
@@ -899,12 +914,17 @@ impl TorrentContext {
     /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the computed remaining bytes turn negative.
     pub fn bytes_left_to_download(&self) -> Result<u64, crate::error::BitTorrentError> {
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
-        if self.total_bytes_to_download < downloaded {
+        let total = if self.total_bytes_to_download > 0 {
+            self.total_bytes_to_download
+        } else {
+            self.transfer_metrics.total_bytes_to_download
+        };
+        if total < downloaded {
             return Err(crate::error::BitTorrentError::Parse(
                 "Bytes left to download turned negative.".to_string(),
             ));
         }
-        Ok(self.total_bytes_to_download - downloaded)
+        Ok(total - downloaded)
     }
 
     /// Integrates a verified piece buffer, updating local bitfields, download speeds, and completion metrics.
@@ -2039,98 +2059,12 @@ impl TorrentContext {
 
     /// Estimates the current download transfer rate in bytes per second with EMA smoothing.
     pub fn bytes_per_second(&self) -> i64 {
-        let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
-            if let Ok(guard) = self.download_speed_tracker.lock() {
-                let now = std::time::Instant::now();
-                let elapsed = now.duration_since(guard.0);
-                let current_bytes = self.total_bytes_downloaded.load(Ordering::Relaxed);
-                if elapsed.as_millis() >= 500 {
-                    (
-                        elapsed,
-                        current_bytes.saturating_sub(guard.1),
-                        true,
-                        now,
-                        current_bytes,
-                        guard.2,
-                    )
-                } else {
-                    (elapsed, 0, false, now, current_bytes, guard.2)
-                }
-            } else {
-                return 0;
-            }
-        };
-
-        if needs_update {
-            let instant_bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
-            let bps = if delta_bytes > 0 {
-                if old_bps > 0 {
-                    ((old_bps as f64 * 0.7) + (instant_bps as f64 * 0.3)).round() as i64
-                } else {
-                    instant_bps
-                }
-            } else if old_bps > 0 {
-                let decayed = (old_bps as f64 * 0.75).round() as i64;
-                if decayed < 50 { 0 } else { decayed }
-            } else {
-                0
-            };
-
-            if let Ok(mut guard) = self.download_speed_tracker.lock() {
-                *guard = (now, current_bytes, bps);
-            }
-            bps
-        } else {
-            old_bps
-        }
+        self.transfer_metrics.bytes_per_second()
     }
 
     /// Estimates the current upload transfer rate in bytes per second with EMA smoothing.
     pub fn upload_bytes_per_second(&self) -> i64 {
-        let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
-            if let Ok(guard) = self.upload_speed_tracker.lock() {
-                let now = std::time::Instant::now();
-                let elapsed = now.duration_since(guard.0);
-                let current_bytes = self.total_bytes_uploaded.load(Ordering::Relaxed);
-                if elapsed.as_millis() >= 500 {
-                    (
-                        elapsed,
-                        current_bytes.saturating_sub(guard.1),
-                        true,
-                        now,
-                        current_bytes,
-                        guard.2,
-                    )
-                } else {
-                    (elapsed, 0, false, now, current_bytes, guard.2)
-                }
-            } else {
-                return 0;
-            }
-        };
-
-        if needs_update {
-            let instant_bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
-            let bps = if delta_bytes > 0 {
-                if old_bps > 0 {
-                    ((old_bps as f64 * 0.7) + (instant_bps as f64 * 0.3)).round() as i64
-                } else {
-                    instant_bps
-                }
-            } else if old_bps > 0 {
-                let decayed = (old_bps as f64 * 0.75).round() as i64;
-                if decayed < 50 { 0 } else { decayed }
-            } else {
-                0
-            };
-
-            if let Ok(mut guard) = self.upload_speed_tracker.lock() {
-                *guard = (now, current_bytes, bps);
-            }
-            bps
-        } else {
-            old_bps
-        }
+        self.transfer_metrics.upload_bytes_per_second()
     }
 
     /// Checks if a peer is in the active connection swarm map.
@@ -2320,11 +2254,7 @@ impl TorrentContext {
 
     /// Checks whether a piece is currently in flight undergoing background hash verification.
     pub fn is_piece_verifying(&self, piece_number: u32) -> bool {
-        if let Ok(guard) = self.pieces_verifying.lock() {
-            guard.contains(&piece_number)
-        } else {
-            false
-        }
+        self.piece_store.is_piece_verifying(piece_number)
     }
 
     /// Marks or unmarks a piece as currently undergoing background verification.
@@ -2336,6 +2266,7 @@ impl TorrentContext {
                 guard.remove(&piece_number);
             }
         }
+        self.piece_store.set_piece_verifying(piece_number, verifying);
     }
 
     /// Applies a completed background piece verification result.
@@ -2862,6 +2793,46 @@ impl TorrentContext {
     pub fn remove_webseed(&mut self, url: &str) -> bool {
         self.web_seeds.retain(|ws| ws != url);
         self.webseed_tracker.lock().unwrap().remove_mirror(url)
+    }
+
+    /// Returns a reference to the `PieceStore` aggregate.
+    pub fn pieces(&self) -> &PieceStore {
+        &self.piece_store
+    }
+
+    /// Returns a mutable reference to the `PieceStore` aggregate.
+    pub fn pieces_mut(&mut self) -> &mut PieceStore {
+        &mut self.piece_store
+    }
+
+    /// Returns a reference to the `SwarmTopology` aggregate.
+    pub fn swarm(&self) -> &SwarmTopology {
+        &self.swarm_topology
+    }
+
+    /// Returns a mutable reference to the `SwarmTopology` aggregate.
+    pub fn swarm_mut(&mut self) -> &mut SwarmTopology {
+        &mut self.swarm_topology
+    }
+
+    /// Returns a reference to the `TransferMetrics` aggregate.
+    pub fn metrics(&self) -> &TransferMetrics {
+        &self.transfer_metrics
+    }
+
+    /// Returns a mutable reference to the `TransferMetrics` aggregate.
+    pub fn metrics_mut(&mut self) -> &mut TransferMetrics {
+        &mut self.transfer_metrics
+    }
+
+    /// Returns a reference to the `MetadataBootstrap` aggregate.
+    pub fn metadata(&self) -> &MetadataBootstrap {
+        &self.metadata_bootstrap
+    }
+
+    /// Returns a mutable reference to the `MetadataBootstrap` aggregate.
+    pub fn metadata_mut(&mut self) -> &mut MetadataBootstrap {
+        &mut self.metadata_bootstrap
     }
 }
 

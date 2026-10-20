@@ -91,7 +91,7 @@ graph TD
 
 ---
 
-### Phase 1: `TorrentContext` God Object Decomposition (SRP)
+### Phase 1: `TorrentContext` God Object Decomposition (SRP) [COMPLETED]
 
 #### Problem Statement
 `TorrentContext` in [`library/src/core/torrent_context.rs`](file:///c:/Projects/BitTorrent/library/src/core/torrent_context.rs) is an anti-pattern God Object (2,800+ lines, ~80 fields, 200+ methods) holding state for multiple distinct domains simultaneously. Modifying any feature (e.g. BEP 52 v2 Merkle verification) touches the same struct that tracks peer connection limits, speed metrics, and file priority.
