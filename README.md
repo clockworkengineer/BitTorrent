@@ -1,72 +1,147 @@
-# BitTorrent
+# BitTorrent-rs
 
 [![CI](https://github.com/clockworkengineer/BitTorrent/actions/workflows/ci.yml/badge.svg)](https://github.com/clockworkengineer/BitTorrent/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
-[![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-orange.svg)](CHANGELOG.md)
+[![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE-MIT)
+[![Windows Setup](https://img.shields.io/badge/Windows-Installer%20v0.1.1-blueviolet.svg)](dist/BitTorrent-Setup-v0.1.1.exe)
 [![Buy Me a Coffee](https://img.shields.io/badge/Donate-Buy%20Me%20A%20Coffee-orange.svg)](https://www.buymeacoffee.com/clockworkengineer)
 
-A full-featured BitTorrent client library implemented in Rust with:
+An enterprise-grade, `#![no_std]`-capable BitTorrent client, daemon, Web UI, and protocol library implemented in modern Rust. Features comprehensive support for 24 BitTorrent Enhancement Proposals (BEPs), BitTorrent v2 (BEP 52) SHA-256 Merkle trees, WebTorrent WebRTC browser bridging, uTP LEDBAT congestion control with SACK loss recovery, seekable progressive media streaming, and high-throughput disk write coalescing.
 
-- `.torrent` metadata parsing via `MetaInfoFile` (v1 SHA-1 and v2 SHA-256)
-- Tracker announce and peer discovery via `Tracker` (HTTP BEP 3, UDP BEP 15)
-- Kademlia DHT peer discovery (BEP 5)
-- Local Service Discovery (LSD — BEP 14)
-- Peer Exchange (PEX — BEP 11) with IPv6 support
-- Magnet link parsing and metadata bootstrap
-- WebSeed HTTP seeding (BEP 17 / BEP 19)
-- Peer wire protocol framing with Fast Extension (BEP 6) and Extension Protocol (BEP 10)
-- Message Stream Encryption (MSE/PE) via RC4 + Diffie-Hellman
-- uTorrent Transport Protocol framing (uTP — BEP 29)
-- NAT-PMP auto port forwarding
-- Private torrent enforcement (BEP 27)
-- Piece selection, block request management, and disk-backed assembly
-- Download lifecycle management with pause/resume and seeding support
-- `#![no_std]` compatible core with hardware-agnostic I/O traits
+---
+
+## Key Features
+
+- **BitTorrent v1, v2 (BEP 52), & Hybrid Swarms**: Full `.torrent` and Magnet metadata parsing, power-of-two padded SHA-256 Merkle trees, on-the-fly 16 KiB block proof verification (`MerkleProof`), `.layers` disk cache, pad file insertion, and legacy v1-to-v2 upgrading via `TorrentUpgrader`.
+- **WebTorrent WebRTC Browser Bridging**: Direct browser-to-desktop cross-swarm bridging via WebRTC Data Channels (`WebRtcSocketAdapter`), WebSocket tracker signaling (`ws://` and `wss://`), and automatic Magnet URI mirror injection.
+- **Micro Transport Protocol (uTP — BEP 29)**: Complete UDP-based framing adapter, RFC 6817 LEDBAT delay-based congestion control, SACK (Selective Acknowledgment) out-of-order reassembly buffers, and RFC 6298 microsecond RTT/RTO fast loss recovery.
+- **High-Throughput Storage & Disk Cache**: In-memory write cache with sequential block coalescing (reducing disk write syscalls by >95%), corrupted block discard on hash failure, and persistent BEP 47 fast-resume state (`.fastresume`).
+- **Parallel Hash Verification Pool**: Multi-threaded worker pool (`HashVerificationPool`) offloading CPU-intensive SHA-1 and SHA-256 block verifications from the async event loop, with piece selector in-flight guards.
+- **Seekable Media Streaming Engine**: `TorrentStream` implementing standard Rust `Read + Seek` traits with dynamic cursor lookahead piece selection (`StreamingPieceSelector`), paired with an embedded HTTP 206 `Range` server and media player launchers for Desktop GUI and Web UI.
+- **Super-Seeding Mode (BEP 16 & BEP 6)**: Rarest piece allocation, single-piece offer tracking, upload gatekeeping, and synergistic integration with BEP 6 `Suggest Piece` and `Allowed Fast` grants.
+- **Adaptive Endgame Mode**: Multi-source block request staging, RFC 6298 swarm latency profiling, and redundant late block absorption.
+- **Dynamic WebSeed Failover (BEP 17 / BEP 19 / BEP 38)**: Multi-mirror HTTP/HTTPS downloads with smoothed latency scoring, circuit-breaker backoff cooldowns, and automatic canary probing.
+- **NAT & Firewall Traversal**: Dual-mode UPnP (SSDP/IGD SOAP) and NAT-PMP (RFC 6886) port mapping, alongside BEP 55 `ut_holepunch` peer rendezvous traversal.
+- **Decentralized Discovery**: Kademlia DHT (BEP 5, BEP 32 IPv6, BEP 51 scrape), Local Service Discovery (LSD — BEP 14), and dual-stack Peer Exchange (PEX — BEP 11) with IPv6 support.
+- **Privacy & Traffic Obfuscation**: Message Stream Encryption (MSE / PE) via Diffie-Hellman + RC4 ciphers, and strict Private Torrent enforcement (BEP 27).
+- **Bare-Metal Portability**: Core protocol logic, Bencode parsing, and message framing compile cleanly under `#![no_std]` targets using hardware-agnostic `AsyncSocket` and `BlockStorage` abstractions.
+
+---
+
+## Applications & Ecosystem
+
+The workspace includes a complete suite of desktop, server, and command-line clients:
+
+| Application | Path | Description |
+| :--- | :--- | :--- |
+| **Desktop Client** | [`clients/torrent_client`](clients/torrent_client) | Interactive GUI (`egui`/`eframe`) featuring live piece heatmaps, peer badges, integrated media streaming, and settings. |
+| **Server Daemon** | [`clients/bt_daemon`](clients/bt_daemon) | Headless background daemon with IPC socket service, embedded HTTP streaming server, and `.fastresume` state persistence. |
+| **CLI Tool** | [`clients/bt_cli`](clients/bt_daemon) | Command-line management utility (`bt-cli`) for querying, adding, inspecting, and upgrading torrent swarms. |
+| **Web Dashboard** | [`clients/bt_webui`](clients/bt_webui) | Modern glassmorphic Web UI with interactive swarm visualizer, file priority controls, and HTML5 video player modal. |
+| **LAN Sync Hub** | [`clients/sync_hub`](clients/sync_hub) | Local-first, decentralized folder synchronization client using private torrents, LSD, and MSE encryption. |
+
+---
+
+## Windows Installation & Packaging
+
+Pre-compiled Windows release artifacts are available directly in the repository:
+
+- **Windows Setup Installer**: [`dist/BitTorrent-Setup-v0.1.1.exe`](dist/BitTorrent-Setup-v0.1.1.exe) (Compiled with Inno Setup 6, featuring file associations for `.torrent` and `magnet:`, Start Menu shortcuts, and clean uninstaller).
+- **Portable ZIP Package**: [`dist/BitTorrent-v0.1.1-windows-x86_64-portable.zip`](dist/BitTorrent-v0.1.1-windows-x86_64-portable.zip) (Zero-install standalone archive containing all binaries, icons, and licenses).
+
+To build the installer and release package from source on Windows:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\packaging\windows\package_release.ps1
+```
+
+---
 
 ## Getting Started
 
-Build the library and run the test suite:
+### 1. Build and Test the Workspace
 
 ```bash
-cargo test
+# Run the entire test suite (unit, integration, and doctests)
+cargo test --workspace
+
+# Run clippy linter across all targets
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Run the example downloader:
-
-```bash
-cargo run -p torrent_session_example --release -- <torrent-file> <download-dir>
-```
-
-Run the desktop client UI:
+### 2. Launch the Desktop GUI Client
 
 ```bash
 cargo run -p torrent_client --release -- [torrent-file] [download-dir]
 ```
 
-Replace `[torrent-file]` with the path to a `.torrent` file and `[download-dir]` with the local directory where files should be created (both parameters are optional for the desktop client).
+### 3. Run the Headless Daemon & Web UI
 
-## Project Structure
+```bash
+# Terminal 1: Start the server daemon (runs IPC on port/socket, stream server on :8081)
+cargo run -p bt_daemon --release -- --dir ./downloads
 
-- `library/` — core BitTorrent library crate
-- `examples/` — workspace example app showing how to instantiate and use `TorrentSession`
-- `clients/` — interactive desktop GUI client (`egui`/`eframe`)
-- `docs/` — roadmap, architecture, and API documentation
+# Terminal 2: Start the Web UI gateway (serves dashboard on http://localhost:8080)
+cargo run -p bt_webui --release -- --port 8080
+```
+
+### 4. Manage Transfers with the CLI (`bt-cli`)
+
+```bash
+# Add a torrent
+cargo run -p bt_daemon --bin bt-cli -- add linux.torrent ./downloads
+
+# Inspect live peer swarm and client software versions
+cargo run -p bt_daemon --bin bt-cli -- peers <info-hash>
+
+# View interactive piece availability heatmap
+cargo run -p bt_daemon --bin bt-cli -- pieces <info-hash>
+
+# Upgrade legacy v1 torrent to BitTorrent v2 / Hybrid format
+cargo run -p bt_daemon --bin bt-cli -- upgrade input.torrent ./downloads --format hybrid
+```
+
+---
+
+## Workspace Structure
+
+- `library/` — Core BitTorrent protocol library crate (optionally `#![no_std]`).
+- `clients/` — Workspace client applications (`torrent_client`, `bt_daemon`, `bt_webui`, `sync_hub`, `torrent_client_shared`).
+- `examples/` — 8 demonstration programs showcasing library APIs (sessions, creator, streaming, fast-resume, selective download, port mapping).
+- `packaging/` — Windows Inno Setup installer script and packaging automation tools.
+- `docs/` — Architecture, API reference, BEP compliance matrix, user guides, and protocol specifications.
+
+---
 
 ## Documentation
 
-- [`docs/architecture.md`](docs/architecture.md) — module layout, components, and data flow
-- [`docs/api-reference.md`](docs/api-reference.md) — full public API reference
-- [`docs/roadmap.md`](docs/roadmap.md) — implementation phases and future work
-- [`docs/dht.md`](docs/dht.md) — DHT peer discovery internals
-- [`docs/encryption.md`](docs/encryption.md) — MSE/RC4 encryption protocol
-- [`docs/utp.md`](docs/utp.md) — uTP transport protocol
-- [`docs/nat-pmp.md`](docs/nat-pmp.md) — NAT-PMP port forwarding
-- [`docs/portability.md`](docs/portability.md) — `#![no_std]` bare-metal support and mock environments
-- [`docs/performance.md`](docs/performance.md) — zero-copy slice parsing and fast-resume caching
-- [`docs/ui-layout.md`](docs/ui-layout.md) — desktop client GUI layout notes
-- [`docs/use-cases.md`](docs/use-cases.md) — potential applications and architectures using the library
-- [`docs/sync-hub.md`](docs/sync-hub.md) — local-first encrypted file-syncing hub user guide
-- [`docs/solid-refactor-plan.md`](docs/solid-refactor-plan.md) — concrete plan to refactor library and clients to adhere strictly to SOLID principles
-- [`docs/dry-refactor-plan.md`](docs/dry-refactor-plan.md) — concrete refactoring plan to eliminate code duplication across workspace
+| Document | Purpose |
+| :--- | :--- |
+| [`docs/bep-compliance.md`](docs/bep-compliance.md) | **BEP Compliance Matrix**: Full breakdown of all 24 supported BitTorrent specifications. |
+| [`docs/architecture.md`](docs/architecture.md) | **System Architecture**: High-level subsystems, concurrency model, data flow, and IPC layout. |
+| [`docs/api-reference.md`](docs/api-reference.md) | **Public API Reference**: `TorrentSession`, builder patterns, configuration, and data structures. |
+| [`docs/user-guide.md`](docs/user-guide.md) | **End-User Guide**: Instructions for GUI client, daemon, Web UI, and settings. |
+| [`docs/cli-reference.md`](docs/cli-reference.md) | **CLI Reference**: Complete manual for the `bt-cli` command-line tool. |
+| [`docs/daemon-and-webui.md`](docs/daemon-and-webui.md) | **Daemon & Web UI**: Headless server installation, REST endpoints, and systemd deployment. |
+| [`docs/streaming.md`](docs/streaming.md) | **Media Streaming Guide**: Seekable `TorrentStream`, HTTP 206 range server, and player integration. |
+| [`docs/v2-merkle.md`](docs/v2-merkle.md) | **BitTorrent v2 Guide**: SHA-256 Merkle trees, piece layers, pad files, and upgrader tooling. |
+| [`docs/webtorrent-bridge.md`](docs/webtorrent-bridge.md) | **WebTorrent Guide**: WebRTC Data Channels, WebSocket signaling, and browser cross-swarming. |
+| [`docs/utp.md`](docs/utp.md) | **uTP Transport**: Packet framing, LEDBAT congestion control, and SACK loss recovery. |
+| [`docs/nat-pmp.md`](docs/nat-pmp.md) | **Port Forwarding**: UPnP (SSDP/IGD SOAP) and NAT-PMP automated mapping protocols. |
+| [`docs/encryption.md`](docs/encryption.md) | **Encryption**: Message Stream Encryption (MSE / PE) handshake and RC4 ciphers. |
+| [`docs/dht.md`](docs/dht.md) | **Kademlia DHT**: Distributed Hash Table, IPv6 DHT, and trackerless discovery. |
+| [`docs/sync-hub.md`](docs/sync-hub.md) | **Sync Hub**: Local-first encrypted folder synchronization guide. |
+| [`docs/packaging-and-distribution.md`](docs/packaging-and-distribution.md) | **Packaging Guide**: Inno Setup installer compilation, icon assets, and portable packaging. |
+| [`docs/performance.md`](docs/performance.md) | **Performance**: Zero-copy slice parsing, buffer pooling, and integer math optimizations. |
+| [`docs/portability.md`](docs/portability.md) | **Portability**: `#![no_std]` bare-metal support, hardware traits, and mock testing. |
+| [`docs/roadmap.md`](docs/roadmap.md) | **Milestone Roadmap**: Detailed chronological record of all 44 development phases. |
 
+---
+
+## License
+
+Dual-licensed under either of:
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.

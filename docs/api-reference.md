@@ -1,24 +1,26 @@
 # API Reference
 
-This document describes the public API of the BitTorrent Rust library.
+This document describes the public Rust API of the `bittorrent-rs` library.
 
 ---
 
-## Torrent Session Management
+## 1. Torrent Session Management
 
-The library uses a builder pattern to instantiate and configure transfer sessions.
+Transfers are orchestrated through `TorrentSession`, constructed via `TorrentSessionBuilder`.
 
-### `TorrentSessionBuilder`
-Builder helper to configure `TorrentSession` attributes.
+### 1.1 `TorrentSessionBuilder`
+
+Builder pattern for configuring and instantiating `TorrentSession`.
 
 ```rust
-pub struct TorrentSessionBuilder {
-    // Private configuration details
-}
+pub struct TorrentSessionBuilder { /* private fields */ }
 
 impl TorrentSessionBuilder {
-    /// Creates a builder with mandatory torrent file and target download directory paths.
+    /// Creates a builder with mandatory torrent file and download directory paths.
     pub fn new(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> Self;
+
+    /// Initializes a session from a Magnet URI string.
+    pub fn from_magnet(magnet_uri: &str, download_path: impl AsRef<Path>) -> Result<Self, BitTorrentError>;
 
     /// Configures the session for seeding (skips starting download checks).
     pub fn seeding(self, seeding: bool) -> Self;
@@ -26,37 +28,81 @@ impl TorrentSessionBuilder {
     /// Injects a shared peer discovery/blacklist Manager registry.
     pub fn manager(self, manager: Arc<Manager>) -> Self;
 
-    /// Configures timeouts, intervals, and feature flags.
+    /// Injects a custom SessionConfig.
     pub fn config(self, config: SessionConfig) -> Self;
 
     /// Injects a pluggable piece selection strategy.
     pub fn selector(self, selector: Arc<dyn PieceSelector>) -> Self;
+
+    /// Attaches verified FastResumeData to restore session state instantly.
+    pub fn fast_resume(self, data: FastResumeData) -> Self;
+
+    /// Loads fast-resume data from a .fastresume file on disk.
+    pub fn fast_resume_file(self, path: impl AsRef<Path>) -> Self;
+
+    /// Enables or disables Super-Seeding mode (BEP 16).
+    pub fn super_seeding(self, enable: bool) -> Self;
+
+    /// Configures IPv6 listening address and enables dual-stack mode.
+    pub fn ipv6(self, addr: impl Into<String>) -> Self;
+    pub fn enable_ipv6(self, enable: bool) -> Self;
+
+    /// Enables or disables Peer Exchange (PEX — BEP 11).
+    pub fn enable_pex(self, enable: bool) -> Self;
+
+    /// Sets the maximum capacity (in MB) for the in-memory write cache.
+    pub fn disk_cache_size_mb(self, mb: usize) -> Self;
+
+    /// Enables or disables the BEP 55 Holepunch extension.
+    pub fn enable_holepunch(self, enable: bool) -> Self;
+
+    /// Configures WebTorrent WebRTC bridge support.
+    pub fn enable_webtorrent(self, enable: bool) -> Self;
+    pub fn webtorrent_bridge_mode(self, bridge: bool) -> Self;
+    pub fn webtorrent_max_web_peers(self, max: usize) -> Self;
+
+    /// Configures BitTorrent v2 piece layers persistent disk caching.
+    pub fn enable_piece_layers_cache(self, enable: bool) -> Self;
+    pub fn piece_layers_cache_dir(self, dir: impl AsRef<Path>) -> Self;
+    pub fn piece_layers_cache_max_mb(self, mb: usize) -> Self;
+
+    /// Configures the multi-threaded asynchronous hash verification pool.
+    pub fn enable_async_verification(self, enable: bool) -> Self;
+    pub fn verification_workers(self, workers: usize) -> Self;
+    pub fn verification_queue_capacity(self, capacity: usize) -> Self;
+
+    /// Configures adaptive endgame mode with erasure block staging.
+    pub fn enable_adaptive_endgame(self, enable: bool) -> Self;
+    pub fn endgame_straggler_ratio(self, ratio: f64) -> Self;
+    pub fn endgame_max_clones_per_block(self, max: usize) -> Self;
+
+    /// Configures WebSeed mirror latency tracking and circuit breaking.
+    pub fn enable_webseed_health_tracker(self, enable: bool) -> Self;
+    pub fn webseed_failure_threshold(self, threshold: usize) -> Self;
+    pub fn webseed_cooldowns(self, base_secs: u64, max_secs: u64) -> Self;
+    pub fn webseed_timeout(self, timeout_secs: u64) -> Self;
+
+    /// Attaches additional WebSeed mirror URLs.
+    pub fn with_web_seed(self, url: impl Into<String>) -> Self;
+    pub fn with_web_seeds(self, urls: Vec<String>) -> Self;
 
     /// Builds the configured TorrentSession.
     pub fn build(self) -> Result<TorrentSession, BitTorrentError>;
 }
 ```
 
-### `TorrentSession`
-Handles starting, pausing, resuming, and stopping downloads, and tracks overall progress.
+### 1.2 `TorrentSession`
+
+The runtime orchestrator for an active torrent transfer.
 
 ```rust
-pub struct TorrentSession {
-    // Private implementation details
-}
+pub struct TorrentSession { /* private fields */ }
 
 impl TorrentSession {
     /// Creates a builder instance.
     pub fn builder(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> TorrentSessionBuilder;
 
-    /// Creates a session with default settings.
-    pub fn new(
-        torrent_path: impl AsRef<Path>,
-        download_path: impl AsRef<Path>,
-        seeding: bool,
-    ) -> Result<Self, BitTorrentError>;
-
-    /// Commences tracker announcing, DHT bootstrapping, NAT-PMP mapping, and active peer connections.
+    /// Starts tracker announcing, DHT discovery, port mapping, and peer workers.
     pub fn start_download(&mut self) -> Result<(), BitTorrentError>;
 
     /// Temporarily pauses peer wire block requests.
@@ -65,17 +111,14 @@ impl TorrentSession {
     /// Resumes block downloading/uploading.
     pub fn resume(&mut self) -> Result<(), BitTorrentError>;
 
-    /// Halts all active network sockets, releases NAT-PMP port mappings, and stops background tasks.
+    /// Safely halts all active sockets, flushes disk cache, and releases port mappings.
     pub fn stop(&mut self) -> Result<(), BitTorrentError>;
 
-    /// Returns the current lifecycle state of the transfer.
+    /// Returns the current lifecycle state (Initialised, Downloading, Paused, Seeding, Ended).
     pub fn status(&self) -> TorrentStatus;
 
     /// Returns download completion percentage (0.0 to 100.0).
     pub fn progress(&self) -> f32;
-
-    /// Validates verified file presence and exact sizes on disk.
-    pub fn validate(&self) -> Result<(), BitTorrentError>;
 
     /// Returns a thread-safe handle to the internal TorrentContext.
     pub fn context(&self) -> Arc<Mutex<TorrentContext>>;
@@ -83,327 +126,318 @@ impl TorrentSession {
     /// Returns the root download directory path.
     pub fn download_path(&self) -> &Path;
 
-    /// Spawns re-announce loop thread reporting events to the tracker.
-    pub fn start_reannounce_loop(&self, tracker: Tracker) -> JoinHandle<()>;
+    // --- Media Streaming ---
 
-    /// Cleanly joins and terminates all active peer worker threads.
-    pub fn join_peer_workers(&mut self);
+    /// Creates a seekable stream across the entire torrent (Read + Seek).
+    pub fn create_stream(&self) -> Result<TorrentStream, BitTorrentError>;
+
+    /// Creates a seekable stream for a specific file index (Read + Seek).
+    pub fn create_file_stream(&self, file_index: usize) -> Result<TorrentStream, BitTorrentError>;
+
+    // --- File Priorities & Selective Download ---
+
+    /// Dynamically sets the download priority for a specific file index.
+    pub fn set_file_priority(&mut self, file_index: usize, priority: FilePriority) -> Result<(), BitTorrentError>;
+
+    /// Returns the list of currently selected file indices (BEP 53).
+    pub fn selected_files(&self) -> Vec<usize>;
+
+    /// Sets selective file indices and evaluates bandwidth/piece savings.
+    pub fn select_files(&mut self, file_indices: &[usize]) -> Result<(), BitTorrentError>;
+    pub fn bep53_evaluation(&self) -> Option<BEP53SelectionEvaluation>;
+
+    // --- Super-Seeding (BEP 16) ---
+
+    /// Checks if the session is currently in super-seeding mode.
+    pub fn is_super_seeding(&self) -> bool;
+
+    /// Toggles super-seeding mode on or off dynamically.
+    pub fn set_super_seeding(&mut self, enabled: bool);
+
+    // --- Fast Resume Persistence (BEP 47) ---
+
+    /// Generates FastResumeData capturing current download state.
+    pub fn generate_fast_resume(&self) -> Result<FastResumeData, BitTorrentError>;
+
+    /// Persists .fastresume data to disk.
+    pub fn save_fast_resume(&self, path: impl AsRef<Path>) -> Result<(), BitTorrentError>;
+
+    // --- BitTorrent v2 & Torrent Export ---
+
+    /// Exports the current session state into v1, pure v2, or hybrid .torrent bytes.
+    pub fn export_torrent(&self, format: TorrentExportFormat) -> Result<(Vec<u8>, TorrentUpgradeReport), BitTorrentError>;
+
+    // --- Verification & Telemetry ---
+
+    /// Triggers parallel re-verification of all downloaded pieces.
+    pub fn recheck_pieces(&self) -> Result<(), BitTorrentError>;
+
+    /// Returns metrics from the background hash verification worker pool.
+    pub fn verification_metrics(&self) -> Option<VerificationPoolMetrics>;
+
+    /// Returns adaptive endgame staging metrics.
+    pub fn endgame_metrics(&self) -> Option<EndgameStagingMetrics>;
+
+    /// Returns telemetry summaries of all configured WebSeed mirror endpoints.
+    pub fn webseed_mirror_summary(&self) -> Vec<MirrorHealthSummary>;
+
+    /// Dynamically adds or removes a WebSeed mirror URL at runtime.
+    pub fn add_webseed(&self, url: &str);
+    pub fn remove_webseed(&self, url: &str);
+
+    /// Flushes pending dirty blocks in the in-memory write cache to disk.
+    pub fn flush_disk_cache(&self) -> Result<(), BitTorrentError>;
 }
 ```
 
 ---
 
-## Session Configuration
+## 2. Session Configuration (`SessionConfig`)
 
-Timeout boundaries, feature flags, and custom network socket drivers are managed via `SessionConfig`.
+Fine-grained network, protocol, and buffer configuration options:
 
 ```rust
 pub struct SessionConfig {
-    /// Maximum time to wait for a TCP/UDP connection to succeed.
+    // Network Timeouts
     pub connect_timeout: Duration,
-    /// Maximum time to wait for a socket read before timing out.
     pub read_timeout: Duration,
-    /// Maximum time to wait for a socket write before timing out.
     pub write_timeout: Duration,
-    /// Minimum re-announce interval in seconds (tracker minimum is honoured if higher).
     pub min_reannounce_interval: u32,
-    /// Pluggable socket factory (default: TcpSocketFactory).
+    pub listen_port: u16,
+
+    // Sockets & HTTP
     pub socket_factory: Arc<dyn SocketFactory>,
-    /// Injected HTTP client (feature = "http-tracker").
     #[cfg(feature = "http-tracker")]
     pub http_client: Arc<dyn HttpClient>,
-    /// Enable Kademlia DHT peer discovery (default: true).
-    pub dht_enabled: bool,
-    /// UDP port for the DHT listener (default: 6881).
-    pub dht_port: u16,
-    /// Enable Message Stream Encryption / Protocol Encryption handshake obfuscation (default: false).
-    pub mse_enabled: bool,
-}
 
-impl Default for SessionConfig {
-    fn default() -> Self {
-        SessionConfig {
-            connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(5),
-            write_timeout: Duration::from_secs(5),
-            min_reannounce_interval: 60,
-            socket_factory: Arc::new(TcpSocketFactory),
-            #[cfg(feature = "http-tracker")]
-            http_client: Arc::new(UreqHttpClient),
-            dht_enabled: true,
-            dht_port: 6881,
-            mse_enabled: false,
-        }
-    }
+    // Protocol Flags
+    pub dht_enabled: bool,
+    pub dht_port: u16,
+    pub mse_enabled: bool,
+    pub enable_pex: bool,
+    pub enable_holepunch: bool,
+
+    // Dual-Stack IPv6
+    pub enable_ipv6: bool,
+    pub ipv6: Option<String>,
+
+    // WebTorrent WebRTC Bridge
+    pub enable_webtorrent: bool,
+    pub webtorrent_bridge_mode: bool,
+    pub webtorrent_max_web_peers: usize,
+
+    // Storage & Caching
+    pub disk_cache_size_mb: usize,
+    pub v2_piece_layers_cache_enabled: bool,
+    pub v2_piece_layers_cache_dir: Option<PathBuf>,
+    pub v2_piece_layers_cache_max_mb: usize,
+
+    // Async Hash Verification Pool
+    pub enable_async_verification: bool,
+    pub verification_workers: usize,
+    pub verification_queue_capacity: usize,
+
+    // Adaptive Endgame & WebSeeds
+    pub enable_adaptive_endgame: bool,
+    pub endgame_straggler_ratio: f64,
+    pub endgame_max_clones_per_block: usize,
+    pub enable_webseed_health_tracker: bool,
+    pub webseed_failure_threshold: usize,
+    pub webseed_base_cooldown_secs: u64,
+    pub webseed_max_cooldown_secs: u64,
+    pub webseed_timeout_secs: u64,
+
+    // Super-Seeding
+    pub super_seeding: bool,
 }
 ```
 
 ---
 
-## Torrent Metadata
+## 3. Metadata & Torrent Construction
 
-### `MetaInfoFile`
-Parses `.torrent` file content and provides typed access to torrent properties.
+### 3.1 `MetaInfoFile`
+
+Parses `.torrent` metainfo buffers and extracts v1/v2 metadata:
 
 ```rust
 impl MetaInfoFile {
-    /// Creates a MetaInfoFile from raw `.torrent` bytes (no std::fs access needed).
     pub fn from_bytes(data: &[u8]) -> Self;
-
-    /// Parses the bencoded metadata; must be called before any accessor methods.
     pub fn parse(&mut self) -> Result<(), BitTorrentError>;
 
-    /// Returns the SHA-1 (v1) or SHA-256 (v2) info-hash bytes.
     pub fn get_info_hash(&self) -> Result<Vec<u8>, BitTorrentError>;
+    pub fn get_v1_info_hash(&self) -> Option<[u8; 20]>;
+    pub fn get_v2_info_hash(&self) -> Option<[u8; 32]>;
 
-    /// Returns true if the `"private": 1` flag is set in the info dictionary.
+    pub fn is_v1(&self) -> bool;
+    pub fn is_v2(&self) -> bool;
+    pub fn is_hybrid(&self) -> bool;
     pub fn is_private(&self) -> bool;
 
-    /// Returns true if this is a BitTorrent v2 torrent (`"meta version": 2`).
-    pub fn is_v2(&self) -> bool;
-
-    /// Returns HTTP web seed mirror URLs from the `"url-list"` key.
-    pub fn get_web_seeds(&self) -> Vec<String>;
-
-    /// Returns the announce URL (first tracker).
     pub fn get_announce(&self) -> Result<String, BitTorrentError>;
-
-    /// Returns all tracker announce URLs (including backup tiers).
     pub fn get_announce_list(&self) -> Vec<String>;
-
-    /// Returns piece count, piece length, and total torrent length.
-    pub fn get_piece_info(&self) -> Result<(u32, u32, u64), BitTorrentError>;
-
-    /// Returns the list of files to be downloaded with their lengths and paths.
+    pub fn get_web_seeds(&self) -> Vec<String>;
     pub fn get_files_to_download(&self) -> Result<Vec<FileInfo>, BitTorrentError>;
 }
 ```
 
----
+### 3.2 `TorrentBuilder`
 
-## Zero-Copy Lifetime Structures
-
-For optimized memory efficiency under `#![no_std]`, Bencode keys and peer payloads borrow slices directly from lifetime-bound buffers.
-
-### `BNode<'a>`
-A parsed Bencode syntax node.
+Constructs new BitTorrent v1, v2, and Hybrid `.torrent` files:
 
 ```rust
-pub enum BNode<'a> {
-    Int(i64),
-    Str(&'a [u8]),
-    List(Vec<BNode<'a>>),
-    Dict(BTreeMap<&'a str, BNode<'a>>),
+pub struct TorrentBuilder { /* private fields */ }
+
+impl TorrentBuilder {
+    pub fn new(source_path: impl AsRef<Path>) -> Self;
+    pub fn piece_length(self, length: u32) -> Self;
+    pub fn comment(self, comment: impl Into<String>) -> Self;
+    pub fn created_by(self, creator: impl Into<String>) -> Self;
+    pub fn is_private(self, private: bool) -> Self;
+    pub fn add_tracker(self, announce_url: impl Into<String>) -> Self;
+    pub fn add_web_seed(self, url: impl Into<String>) -> Self;
+
+    /// Builds a legacy BitTorrent v1 .torrent file.
+    pub fn build_v1(&self) -> Result<Vec<u8>, BitTorrentError>;
+
+    /// Builds a pure BitTorrent v2 .torrent file with Merkle trees.
+    pub fn build_v2(&self) -> Result<Vec<u8>, BitTorrentError>;
+
+    /// Builds a dual-compatible Hybrid (v1 + v2) .torrent file with pad files.
+    pub fn build_hybrid(&self) -> Result<Vec<u8>, BitTorrentError>;
 }
 ```
 
-### `PeerMessage<'a>`
-Framer for all peer wire protocol messages.
+### 3.3 `TorrentUpgrader`
+
+Converts legacy v1 `.torrent` files into v2 or Hybrid formats:
 
 ```rust
-pub enum PeerMessage<'a> {
-    // Core messages (BEP 3)
-    KeepAlive,
-    Choke,
-    Unchoke,
-    Interested,
-    NotInterested,
-    Have(u32),
-    Bitfield(&'a [u8]),
-    Request { index: u32, begin: u32, length: u32 },
-    Piece { index: u32, begin: u32, block: &'a [u8] },
-    Cancel { index: u32, begin: u32, length: u32 },
-    Port(u16),
+pub enum TorrentExportFormat { V1, V2, Hybrid }
 
-    // Fast Extension messages (BEP 6)
-    HaveAll,                                          // ID 14
-    HaveNone,                                         // ID 15
-    Suggest(u32),                                     // ID 13
-    AllowedFast(u32),                                 // ID 17
-    Reject { index: u32, begin: u32, length: u32 },  // ID 16
+pub struct TorrentUpgrader;
 
-    // Extension Protocol (BEP 10)
-    Extended { ext_id: u8, payload: &'a [u8] },      // ID 20
-}
-```
+impl TorrentUpgrader {
+    /// Upgrades a parsed MetaInfoFile and raw file buffers.
+    pub fn upgrade_metainfo(
+        meta: &MetaInfoFile,
+        files_data: &HashMap<PathBuf, Vec<u8>>,
+        format: TorrentExportFormat,
+    ) -> Result<(Vec<u8>, TorrentUpgradeReport), BitTorrentError>;
 
----
+    /// Upgrades a .torrent file by hashing content files directly on disk.
+    pub fn upgrade_from_file(
+        torrent_path: impl AsRef<Path>,
+        data_dir: impl AsRef<Path>,
+        format: TorrentExportFormat,
+    ) -> Result<(Vec<u8>, TorrentUpgradeReport), BitTorrentError>;
 
-## Pluggable Piece Selection
-
-Downloads can leverage custom selection algorithms by implementing `PieceSelector`.
-
-```rust
-pub trait PieceSelector: Send + Sync {
-    /// Returns the next piece index to request from the remote peer, or None if no pieces are ready.
-    fn select_piece(&self, context: &TorrentContext, remote_peer: &Peer) -> Option<u32>;
-}
-```
-
-### Provided Implementations
-- **`RarestFirstSelector`**: Prioritizes downloading pieces that have the lowest availability in the connected peer swarm.
-- **`SequentialSelector`**: Downloads pieces sequentially in linear order (ideal for streaming media playback).
-
----
-
-## Tracker Scrape (BEP 48)
-
-```rust
-pub struct ScrapeResponse {
-    /// Number of peers currently seeding (have a complete copy).
-    pub complete: u32,
-    /// Total number of times the torrent has been fully downloaded.
-    pub downloaded: u32,
-    /// Number of peers currently downloading (leeching).
-    pub incomplete: u32,
-}
-
-impl Tracker {
-    /// Queries the tracker scrape endpoint and returns swarm statistics.
-    pub fn scrape(&mut self) -> Result<ScrapeResponse, BitTorrentError>;
+    /// Generates a canonical Magnet URI featuring dual v1/v2 info-hashes.
+    pub fn generate_magnet_uri(report: &TorrentUpgradeReport, trackers: &[String]) -> String;
 }
 ```
 
 ---
 
-## Message Stream Encryption (`mse` module)
+## 4. Seekable Streaming (`TorrentStream`)
 
-Provides a pure-Rust RC4 stream cipher and Diffie-Hellman key exchange. See [encryption.md](file:///c:/Projects/BitTorrent/docs/encryption.md) for the full protocol walkthrough.
-
-```rust
-pub struct Rc4 {
-    /* private state */
-}
-impl Rc4 {
-    /// Creates a new RC4 cipher initialized with the given secret key.
-    pub fn new(key: &[u8]) -> Self;
-    /// Encrypts (or decrypts) the buffer in place using the keystream.
-    pub fn encrypt(&mut self, data: &mut [u8]);
-}
-
-pub struct DiffieHellman {
-    pub public_key: u64,  // Share this with the remote peer
-    /* private_key: u64 */
-}
-impl DiffieHellman {
-    /// Generates a new random private/public key pair.
-    pub fn new() -> Self;
-    /// Computes the 8-byte shared secret from the remote party's public key.
-    pub fn compute_shared_secret(&self, remote_public_key: u64) -> [u8; 8];
-}
-
-/// Overflow-safe 128-bit modular multiplication (Russian Peasant algorithm).
-pub fn mulmod(a: u128, b: u128, m: u128) -> u128;
-
-/// Binary modular exponentiation: returns (base^exp) % modulus.
-pub fn mod_pow(base: u128, exp: u128, modulus: u128) -> u128;
-```
-
----
-
-## uTorrent Transport Protocol (`utp` module)
-
-Provides uTP packet framing and a `AsyncSocket`-compatible adapter over UDP. See [utp.md](file:///c:/Projects/BitTorrent/docs/utp.md) for the full header layout and state machine.
+Implements standard Rust I/O traits over an active torrent transfer:
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UtpPacketType {
-    Data = 0, Ack = 1, Syn = 2, Reset = 3, State = 4,
+pub struct TorrentStream { /* private fields */ }
+
+impl std::io::Read for TorrentStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
 }
 
-pub struct UtpHeader {
-    pub packet_type: UtpPacketType,
-    pub version: u8,
-    pub extension: u8,
-    pub connection_id: u16,
-    pub timestamp_us: u32,
-    pub timestamp_difference_us: u32,
-    pub wnd_size: u32,
-    pub seq_nr: u16,
-    pub ack_nr: u16,
-}
-impl UtpHeader {
-    pub fn encode(&self) -> Vec<u8>;             // Serializes to 20 bytes
-    pub fn decode(buf: &[u8]) -> Result<Self, BitTorrentError>;
+impl std::io::Seek for TorrentStream {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64>;
 }
 
-pub struct UtpSocketAdapter { /* private */ }
-impl AsyncSocket for UtpSocketAdapter { /* ... */ }
-```
+impl TorrentStream {
+    /// Configures blocking timeout when awaiting missing piece blocks.
+    pub fn with_read_timeout(mut self, timeout: Duration) -> Self;
 
----
-
-## NAT-PMP Port Mapping (`nat` module)
-
-Provides automatic port forwarding via NAT-PMP. See [nat-pmp.md](file:///c:/Projects/BitTorrent/docs/nat-pmp.md) for packet formats and lifecycle details.
-
-```rust
-pub struct NatPmpClient { /* private: gateway: Ipv4Addr */ }
-
-impl NatPmpClient {
-    pub fn new(gateway: Ipv4Addr) -> Self;
-    pub fn request_mapping(
-        &self, is_tcp: bool, internal_port: u16,
-        external_port: u16, lifetime_secs: u32,
-    ) -> Result<u16, BitTorrentError>;
-    pub fn release_mapping(&self, is_tcp: bool, internal_port: u16) -> Result<(), BitTorrentError>;
-    pub fn build_mapping_request(
-        &self, is_tcp: bool, internal_port: u16,
-        external_port: u16, lifetime_secs: u32,
-    ) -> Vec<u8>;
-    pub fn parse_mapping_response(buf: &[u8]) -> Result<(u16, u16, u32), BitTorrentError>;
-}
-
-/// Infers the default gateway IP from the local IP address.
-pub fn get_default_gateway() -> Ipv4Addr;
-```
-
----
-
-## Local Service Discovery (`lsd` module)
-
-Discovers peers on the same local network without a tracker.
-
-```rust
-pub struct LsdAnnouncer { /* private */ }
-impl LsdAnnouncer {
-    /// Starts periodic BT-SEARCH multicast broadcasts on 239.192.152.143:6771.
-    pub fn start(info_hash: &[u8], port: u16, peer_tx: Sender<PeerDetails>);
-}
-
-pub struct LsdListener { /* private */ }
-impl LsdListener {
-    /// Binds a UDP multicast socket and processes incoming BT-SEARCH announcements.
-    pub fn start(info_hash: &[u8], peer_tx: Sender<PeerDetails>);
+    /// Configures polling sleep interval while waiting for piece arrival.
+    pub fn with_poll_interval(mut self, interval: Duration) -> Self;
 }
 ```
 
 ---
 
-## Hardware Abstractions
+## 5. Merkle Tree & Audit Proofs (`MerkleTree`)
 
-### `AsyncSocket`
-Defines asynchronous non-blocking stream interactions.
+Cryptographic SHA-256 Merkle tree calculation conforming to BEP 52:
 
 ```rust
-pub trait AsyncSocket: Send + Sync {
-    fn read<'a>(&'a self, buf: &'a mut [u8])
-        -> Pin<Box<dyn Future<Output = Result<usize, BitTorrentError>> + Send + 'a>>;
-    fn write<'a>(&'a self, buf: &'a [u8])
-        -> Pin<Box<dyn Future<Output = Result<(), BitTorrentError>> + Send + 'a>>;
+pub struct MerkleProof {
+    pub leaf_index: usize,
+    pub sibling_hashes: Vec<[u8; 32]>,
+}
+
+pub struct MerkleTree { /* private fields */ }
+
+impl MerkleTree {
+    pub const BLOCK_SIZE: usize = 16384; // 16 KiB
+
+    /// Computes Merkle tree from in-memory bytes.
+    pub fn from_bytes(data: &[u8]) -> Self;
+
+    /// Computes Merkle tree incrementally from any Read stream.
+    pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self, std::io::Error>;
+
+    /// Computes Merkle tree directly from a file on disk.
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, std::io::Error>;
+
+    /// Returns the 32-byte root hash (pieces_root).
+    pub fn root(&self) -> [u8; 32];
+
+    /// Generates a minimal logarithmic audit proof path for a 16 KiB block.
+    pub fn proof_for_block(&self, block_index: usize) -> Option<MerkleProof>;
+
+    /// Verifies a 16 KiB block hash against root using an audit proof path.
+    pub fn verify_block_hash(
+        root: &[u8; 32],
+        block_hash: &[u8; 32],
+        proof: &MerkleProof,
+    ) -> bool;
 }
 ```
 
-### `BlockStorage`
-Defines block-level reads and writes.
+---
+
+## 6. Magnet URIs (`MagnetLink` & `MagnetUriBuilder`)
+
+Canonical parser and builder supporting dual info-hashes and BEP 53 file selection:
 
 ```rust
-pub trait BlockStorage: Send + Sync {
-    fn read_block(&self, offset: u64, buf: &mut [u8]) -> Result<usize, BitTorrentError>;
-    fn write_block(&self, offset: u64, buf: &[u8]) -> Result<(), BitTorrentError>;
+pub struct MagnetLink {
+    pub info_hash: Vec<u8>,
+    pub display_name: Option<String>,
+    pub trackers: Vec<String>,
+    pub web_seeds: Vec<String>,
+    pub v2_info_hash: Option<[u8; 32]>,
+    pub selected_files: Vec<usize>,
+}
+
+impl MagnetLink {
+    pub fn from_uri(uri: &str) -> Result<Self, BitTorrentError>;
+    pub fn to_uri(&self) -> String;
+    pub fn is_hybrid(&self) -> bool;
+    pub fn is_v2(&self) -> bool;
+    pub fn is_webtorrent(&self) -> bool;
+}
+
+pub struct MagnetUriBuilder { /* private fields */ }
+
+impl MagnetUriBuilder {
+    pub fn new(info_hash: &[u8]) -> Self;
+    pub fn display_name(self, name: impl Into<String>) -> Self;
+    pub fn add_tracker(self, tracker: impl Into<String>) -> Self;
+    pub fn add_web_seed(self, seed: impl Into<String>) -> Self;
+    pub fn v2_info_hash(self, hash: [u8; 32]) -> Self;
+    pub fn select_file(self, index: usize) -> Self;
+    pub fn with_webtorrent_defaults(self) -> Self;
+    pub fn build(self) -> String;
 }
 ```
-
-### Test Implementations
-- **`MockSocket`** — in-memory channel-based socket for port-free testing.
-- **`MemStorage`** — heap-backed `BlockStorage` for filesystem-free testing.

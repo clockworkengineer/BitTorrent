@@ -837,10 +837,10 @@ async fn run_peer_loop(
 ///
 /// This is the top-level function spawned by the session for each peer.
 /// Internally it delegates to:
-/// - [`perform_handshake`] — socket connect, MSE, BitTorrent handshake, initial messages
-/// - [`run_peer_loop`] — the message dispatch / PEX / request loop
-/// - [`handle_magnet_bootstrap`] (inside the loop) — metadata piece exchange
-/// - [`send_block_requests`] (inside the loop) — pipelined block requests
+/// - `perform_handshake` — socket connect, MSE, BitTorrent handshake, initial messages
+/// - `run_peer_loop` — the message dispatch / PEX / request loop
+/// - `handle_magnet_bootstrap` (inside the loop) — metadata piece exchange
+/// - `send_block_requests` (inside the loop) — pipelined block requests
 pub async fn handle_peer_session(
     peer_details: PeerDetails,
     context: Arc<Mutex<TorrentContext>>,

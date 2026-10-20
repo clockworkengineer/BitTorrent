@@ -356,7 +356,7 @@ impl TorrentContext {
     /// Creates and initializes a `TorrentContext` from parsed metainfo, creating target directories and scanning existing disk files.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent contains no tracker URLs,
+    /// Returns a [`BitTorrentError::Parse`] if the torrent contains no tracker URLs,
     /// or if there are errors parsing pieces or files from the metadata.
     pub fn new(
         torrent_meta_info: &MetaInfoFile,
@@ -424,7 +424,7 @@ impl TorrentContext {
     /// Creates a placeholder `TorrentContext` for magnet links bootstrapping.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError`](crate::error::BitTorrentError) if the tracker URLs list is empty or initialization fails.
+    /// Returns a [`BitTorrentError`] if the tracker URLs list is empty or initialization fails.
     pub fn new_magnet_bootstrap(
         info_hash: Vec<u8>,
         tracker_urls: Vec<String>,
@@ -516,7 +516,7 @@ impl TorrentContext {
     /// Transitions a magnet bootstrap context to a standard torrent download session once metadata is fetched.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError`](crate::error::BitTorrentError) if decoding the info dictionary or parsing files fails,
+    /// Returns a [`BitTorrentError`] if decoding the info dictionary or parsing files fails,
     /// or if storage files cannot be created.
     pub fn transition_from_metadata(
         &mut self,
@@ -638,7 +638,7 @@ impl TorrentContext {
     /// Validates the structure and length constraints of context data fields.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if any validated field constraints are violated.
+    /// Returns a [`BitTorrentError::Parse`] if any validated field constraints are violated.
     pub fn validate(&self) -> Result<(), crate::error::BitTorrentError> {
         if self.pieces_info_hash.is_empty() {
             // In magnet bootstrap mode
@@ -676,7 +676,7 @@ impl TorrentContext {
     /// Sets the status to `Downloading` if initialized.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent is already downloading or ended.
+    /// Returns a [`BitTorrentError::Parse`] if the torrent is already downloading or ended.
     pub fn start_downloading(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status == TorrentStatus::Downloading {
             return Err(crate::error::BitTorrentError::Parse(
@@ -700,7 +700,7 @@ impl TorrentContext {
     /// Pauses the torrent download thread, updating state flags.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent is not downloading or seeding.
+    /// Returns a [`BitTorrentError::Parse`] if the torrent is not downloading or seeding.
     pub fn pause(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status != TorrentStatus::Downloading && self.status != TorrentStatus::Seeding {
             return Err(crate::error::BitTorrentError::Parse(
@@ -715,7 +715,7 @@ impl TorrentContext {
     /// Resumes the paused torrent download thread.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent is not currently paused.
+    /// Returns a [`BitTorrentError::Parse`] if the torrent is not currently paused.
     pub fn resume(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status != TorrentStatus::Paused {
             return Err(crate::error::BitTorrentError::Parse(
@@ -734,7 +734,7 @@ impl TorrentContext {
     /// Transitions the state to `Ended` and signals download completion.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the torrent is already stopped.
+    /// Returns a [`BitTorrentError::Parse`] if the torrent has already been stopped.
     pub fn stop(&mut self) -> Result<(), crate::error::BitTorrentError> {
         if self.status == TorrentStatus::Ended {
             return Err(crate::error::BitTorrentError::Parse(
@@ -911,7 +911,7 @@ impl TorrentContext {
     /// Returns the number of bytes remaining to be downloaded.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Parse`](crate::error::BitTorrentError::Parse) if the computed remaining bytes turn negative.
+    /// Returns a [`BitTorrentError::Parse`] if the computed remaining bytes turn negative.
     pub fn bytes_left_to_download(&self) -> Result<u64, crate::error::BitTorrentError> {
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
         let total = if self.total_bytes_to_download > 0 {
@@ -1400,8 +1400,8 @@ impl TorrentContext {
     /// Appends incoming sub-block data, writing the fully assembled piece to disk upon completion and hash validation.
     ///
     /// # Errors
-    /// Returns a [`BitTorrentError::Protocol`](crate::error::BitTorrentError::Protocol) if the block parameters are invalid or if hash verification fails.
-    /// Returns a [`BitTorrentError::Io`](crate::error::BitTorrentError::Io) if writing to block storage fails.
+    /// Returns a [`BitTorrentError::Protocol`] if the block parameters are invalid or if hash verification fails.
+    /// Returns a [`BitTorrentError::Io`] if writing to block storage fails.
     pub fn process_piece_block(
         &mut self,
         storage: &dyn crate::io_traits::BlockStorage,

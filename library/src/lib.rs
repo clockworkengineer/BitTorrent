@@ -1,10 +1,20 @@
 //! BitTorrent Library
 //!
-//! A comprehensive BitTorrent protocol implementation in Rust, containing
-//! metainfo parsing, tracker communication, peer wire protocol, piece selection,
-//! disk I/O, and session management.
+//! A comprehensive, `#![no_std]`-capable BitTorrent protocol implementation in Rust,
+//! featuring BitTorrent v2 (BEP 52) SHA-256 Merkle trees, WebTorrent WebRTC browser bridging,
+//! uTP LEDBAT congestion control with SACK loss recovery (BEP 29), seekable media streaming
+//! (`TorrentStream`), in-memory disk write coalescing, and support for 24 BitTorrent Enhancement Proposals.
 //!
-//! # Examples
+//! # Core Features
+//!
+//! - **BitTorrent v1, v2 (BEP 52), & Hybrid**: Power-of-two padded Merkle trees, on-the-fly 16 KiB block verification, `.layers` disk caching, and legacy `.torrent` upgrading.
+//! - **WebTorrent & WebRTC**: WebSocket tracker signaling (`ws://`/`wss://`), message-oriented data channel framing, and cross-swarm TCP/WebRTC piece distribution.
+//! - **uTP & Congestion Control**: Micro Transport Protocol (BEP 29) with RFC 6817 LEDBAT queuing delay throttling and SACK out-of-order reassembly buffers.
+//! - **Storage & Verification**: Multi-tier in-memory write cache with contiguous block coalescing and dedicated multi-threaded hash verification worker pool (`HashVerificationPool`).
+//! - **Seekable Media Streaming**: Progressive streaming reader (`TorrentStream`) implementing standard Rust `Read + Seek` with dynamic forward lookahead piece selection.
+//! - **Decentralized Discovery**: Kademlia DHT (BEP 5, BEP 32 IPv6, BEP 51 scrape), Local Service Discovery (LSD — BEP 14), and dual-stack Peer Exchange (PEX — BEP 11).
+//! - **Port Mapping**: Dual-protocol automated traversal via UPnP (SSDP/IGD SOAP) and NAT-PMP (RFC 6886).
+//!
 //!
 //! ```no_run
 //! use bittorrent_rs::{TorrentSession, Tracker};

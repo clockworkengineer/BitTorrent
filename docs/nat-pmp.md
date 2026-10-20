@@ -195,5 +195,5 @@ In addition to NAT-PMP, the library includes a complete pure-Rust **UPnP IGD** c
 
 - [RFC 6886 — NAT-PMP](https://www.rfc-editor.org/rfc/rfc6886)
 - [RFC 6887 — PCP (successor)](https://www.rfc-editor.org/rfc/rfc6887)
-- [`nat.rs`](file:///c:/Projects/BitTorrent/library/src/nat.rs) — full source
-- [`session.rs`](file:///c:/Projects/BitTorrent/library/src/session.rs) — lifecycle integration
+- [`library/src/network/nat.rs`](file:///c:/Projects/BitTorrent/library/src/network/nat.rs) — full source
+- [`library/src/session/session.rs`](file:///c:/Projects/BitTorrent/library/src/session/session.rs) — lifecycle integration

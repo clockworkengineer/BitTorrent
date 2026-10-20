@@ -57,8 +57,33 @@ For peer discovery:
 4. If node lists are returned, they are added to a search queue, and the client continues querying the closest uncontacted nodes recursively.
 
 ### 3. Session Integration
-In [session.rs](file:///c:/Projects/BitTorrent/library/src/session.rs), if `dht_enabled` is set to `true`:
+In [`library/src/session/session.rs`](file:///c:/Projects/BitTorrent/library/src/session/session.rs), if `dht_enabled` is set to `true`:
 - The `Dht` server binds to the UDP port specified by `dht_port` (defaulting to `6881`).
 - The session starts the UDP receiver listener thread.
 - Discovered peers are pushed through a thread-safe Channel, where the session downloader thread spawns worker instances to connect to them.
 - When `session.stop()` is invoked, the UDP socket is closed, shutting down the background listener threads cleanly.
+
+---
+
+## 4. Dual-Stack IPv6 DHT Support (BEP 32)
+
+The DHT engine implements full IPv6 support adhering to **BEP 32**:
+- **Compact IPv6 Node Records (`nodes6`)**: Decodes 38-byte compact node structures (20-byte Node ID + 16-byte IPv6 address + 2-byte port) received in `find_node` and `get_peers` query responses.
+- **Compact IPv6 Peer Contacts (`values`)**: Extracts 18-byte compact IPv6 peer entries (`[ipv6]:port`) alongside legacy 6-byte IPv4 addresses.
+- **Dual-Stack Serialization**: Encodes both `nodes` and `nodes6` compact lists in outgoing replies when communicating across dual-stack network interfaces.
+
+---
+
+## 5. DHT Scrape Protocol (BEP 51)
+
+Supports the BEP 51 DHT Scrape extension:
+- Queries return seeder count (`complete`), leecher count (`incomplete`), and download count (`downloaded`) for an `info_hash` directly from DHT swarm nodes without requiring tracker announces.
+
+---
+
+## 6. References
+
+- [BEP 5 — DHT Protocol](https://www.bittorrent.org/beps/bep_0005.html)
+- [BEP 32 — IPv6 DHT Extension](https://www.bittorrent.org/beps/bep_0032.html)
+- [BEP 51 — DHT Scrape](https://www.bittorrent.org/beps/bep_0051.html)
+- Source: [`library/src/network/dht.rs`](file:///c:/Projects/BitTorrent/library/src/network/dht.rs)

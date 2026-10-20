@@ -1,27 +1,28 @@
 # uTorrent Transport Protocol (uTP — BEP 29)
 
-The library provides a **uTP framing adapter** in [`library/src/utp.rs`](file:///c:/Projects/BitTorrent/library/src/utp.rs), which wraps a UDP socket as a `AsyncSocket`-compatible transport that can carry BitTorrent peer wire messages.
+The library provides a high-performance **uTP transport adapter** in [`library/src/network/utp.rs`](file:///c:/Projects/BitTorrent/library/src/network/utp.rs), wrapping UDP sockets as `AsyncSocket`-compatible transports capable of driving BitTorrent peer wire connections.
 
 ---
 
-## Overview
+## 1. Overview
 
-uTP (μTP) is a UDP-based transport protocol designed to transfer data while being **friendly to other network traffic**. Unlike TCP, uTP uses the **LEDBAT** (Low Extra Delay Background Transport) congestion control algorithm, which backs off aggressively when it detects router queue buildup. This prevents a torrent client from saturating the local router and degrading web browsing and VoIP quality.
+uTP (μTP) is a UDP-based transport protocol standardized in **BEP 29**. It is designed to transfer data while being **scrupulously friendly to other network traffic on the local LAN**. Unlike standard TCP Reno or CUBIC, uTP uses the **LEDBAT** (Low Extra Delay Background Transport — RFC 6817) congestion control algorithm, which actively measures one-way queuing delay and throttles back aggressively when it detects router queue buildup. This prevents large torrent downloads from degrading latency-sensitive traffic such as web browsing, DNS queries, and voice/video calls.
 
-### Why uTP Matters
+### Protocol Comparison
 
-| Property | TCP | uTP |
-|---|---|---|
-| Transport | TCP | UDP |
-| Congestion control | TCP Reno / CUBIC | LEDBAT (delay-based) |
-| NAT traversal | Hard | Easier via UDP hole-punching |
-| Effect on other traffic | Can saturate routers | Self-throttles based on latency |
+| Property | Standard TCP | uTP (BEP 29) |
+| :--- | :--- | :--- |
+| **Transport** | TCP | UDP |
+| **Congestion Control** | Loss-based (Reno / CUBIC) | Delay-based (RFC 6817 LEDBAT) |
+| **NAT Traversal** | Difficult without UPnP | Easier via UDP holepunching (BEP 55) |
+| **Queue Impact** | Saturates router buffers | Self-throttles based on queue delay |
+| **Loss Recovery** | SACK / DupACK | SACK Extension + RFC 6298 RTO |
 
 ---
 
-## Packet Structure
+## 2. Packet Structure & Header Framing
 
-Every uTP packet begins with a fixed **20-byte header** (`UtpHeader`):
+Every uTP packet begins with a fixed **20-byte header** (`UtpHeader`), followed by optional chained extension headers and payload data:
 
 ```
  0               1               2               3
@@ -42,110 +43,96 @@ Every uTP packet begins with a fixed **20-byte header** (`UtpHeader`):
 ### Field Descriptions
 
 | Field | Size | Description |
-|---|---|---|
-| `type` | 4 bits | Packet type (Data, Ack, Syn, Reset, State) |
-| `version` | 4 bits | Protocol version (always `1`) |
-| `extension` | 1 byte | Extension header type (`0` = none) |
-| `connection_id` | 2 bytes | Connection identifier shared by both peers |
-| `timestamp_us` | 4 bytes | Sender's current time in microseconds |
-| `timestamp_difference_us` | 4 bytes | One-way delay measurement (remote ts − local ts) |
-| `wnd_size` | 4 bytes | Receive window size advertised by sender |
-| `seq_nr` | 2 bytes | Sequence number of this packet |
-| `ack_nr` | 2 bytes | Sequence number of the last packet acknowledged |
+| :--- | :--- | :--- |
+| `type` | 4 bits | Packet type: `ST_DATA` (0), `ST_FIN` (1), `ST_STATE` (2), `ST_RESET` (3), `ST_SYN` (4). |
+| `version` | 4 bits | Protocol version (always `1`). |
+| `extension` | 1 byte | First extension header type (`0` = none, `1` = Selective Acknowledgment). |
+| `connection_id` | 2 bytes | Shared connection identifier (initiator uses send ID; responder uses receive ID). |
+| `timestamp_us` | 4 bytes | Sender's local microsecond clock at packet dispatch time. |
+| `timestamp_difference_us` | 4 bytes | Measured one-way delay (`remote_timestamp - local_timestamp`). |
+| `wnd_size` | 4 bytes | Advertised receive window in bytes. |
+| `seq_nr` | 2 bytes | 16-bit sequence number (increments monotonically per payload packet). |
+| `ack_nr` | 2 bytes | 16-bit sequence number of the last sequentially received packet. |
 
 ---
 
-## Packet Types
+## 3. LEDBAT Congestion Control (RFC 6817)
+
+The `LedbatCongestionController` enforces delay-based congestion window scaling:
+
+### 3.1 Delay Tracking & Baseline Calculation
+- **`DelayTracker`**: Maintains 4 circular time buckets of 60 seconds each (4 minutes total), tracking the minimum one-way delay observed over the network.
+- **Obsolete Baseline Expiry**: Automatically purges stale delay baselines caused by route shifts or system clock drift.
+- **Queuing Delay Estimation**:
+  $$\text{queuing\_delay} = \text{current\_delay} - \text{base\_delay}$$
+
+### 3.2 Linear Window Scaling
+On every successfully acknowledged packet, the congestion window (`cwnd`) scales according to its offset from the target queuing delay threshold ($\text{TARGET} = 100\text{ ms}$):
+
+$$\Delta = \frac{\text{TARGET} - \text{queuing\_delay}}{\text{TARGET}} \times \frac{\text{bytes\_acked} \times \text{MSS}}{\text{cwnd}}$$
+
+- If $\text{queuing\_delay} < \text{TARGET}$, `cwnd` grows linearly to consume idle bandwidth.
+- If $\text{queuing\_delay} > \text{TARGET}$, `cwnd` backs off smoothly to yield bandwidth to other network flows.
+
+---
+
+## 4. Selective Acknowledgment (SACK Extension — BEP 29)
+
+The library implements full BEP 29 chained extension headers with selective acknowledgments:
+
+### 4.1 SACK Extension Header Wire Format
+```
+ 0               1               2               3
+ 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| next_ext = 0  |  len = 4 * N  |        bitmask (32 bits)      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+- Bit 0 in the bitmask represents packet sequence number `ack_nr + 2`.
+- Subsequent bits correspond to sequentially higher sequence numbers.
+- A value of `1` indicates that the packet has been successfully received out of order.
+
+### 4.2 Out-of-Order Reassembly Buffer
+- Incoming packets received out of sequence are buffered in a sorted map (`BTreeMap<u16, Vec<u8>>`).
+- The receiver immediately replies with an `ST_STATE` packet carrying a SACK bitmask.
+- As missing sequence gaps arrive, contiguous chunks are assembled sequentially into the user stream buffer.
+- Buffer capacity is bounded (`max_out_of_order_packets = 128`) to prevent memory exhaustion from packet floods.
+
+---
+
+## 5. SACK-Driven Fast Loss Recovery & RFC 6298 RTO
+
+- **Sequence Gap Detection (`detect_receive_gaps`)**: Proactively evaluates circular 16-bit sequence differences to identify lost packets.
+- **Fast Retransmission**: When a SACK bitmask indicates $\ge 3$ higher sequence numbers have arrived safely while an intermediate packet remains missing, the lost packet is retransmitted immediately without waiting for the RTO timer.
+- **Burst Loss Window Scaling (`LossRecoveryState`)**: Multi-gap loss epochs trigger multiplicative decrease (`cwnd * 0.65`) while preventing redundant window collapses during a single loss event.
+- **RFC 6298 Microsecond Precision RTT/RTO**:
+  - Smoothed round-trip time (`srtt_us`) and RTT variance (`rttvar_us`) calculated on microsecond samples.
+  - Exponential backoff doubles the RTO timer upon timeout up to a 30s maximum.
+
+---
+
+## 6. Telemetry & Metrics
+
+Real-time pipeline metrics are exposed via `UtpSocketAdapter::pipeline_metrics()`:
 
 ```rust
-pub enum UtpPacketType {
-    Data  = 0,  // ST_DATA  — carries payload bytes
-    Ack   = 1,  // ST_FIN   — graceful connection close
-    Syn   = 2,  // ST_STATE — pure acknowledgement (no payload)
-    Reset = 3,  // ST_RESET — abort connection immediately
-    State = 4,  // ST_SYN   — initiate a new connection
+pub struct UtpPipelineMetrics {
+    pub fast_retransmits: u64,
+    pub rto_timeouts: u64,
+    pub burst_loss_events: u64,
+    pub sacked_packets: u64,
+    pub out_of_order_buffered: usize,
+    pub srtt_us: u64,
+    pub rttvar_us: u64,
+    pub rto_us: u64,
 }
 ```
 
-### Connection State Machine
-
-```
-Initiator                       Receiver
-    │                               │
-    │── SYN (seq=0, conn_id=X) ────►│  Receiver allocates connection X+1
-    │◄─ STATE (ack=0, conn_id=X+1) ─│  SYN-ACK equivalent
-    │                               │
-    │── DATA (seq=1) ──────────────►│
-    │◄─ STATE (ack=1) ──────────────│  Pure ACK
-    │                               │
-    │── ACK/FIN ───────────────────►│  Graceful close
-    │◄─ RESET (on error) ───────────│  Abort
-```
-
 ---
 
-## `UtpSocketAdapter`
-
-`UtpSocketAdapter` adapts a `std::net::UdpSocket` to implement the `AsyncSocket` trait, making it usable anywhere a TCP socket could be used (e.g., as an injected `socket_factory` transport for peer connections).
-
-```rust
-pub struct UtpSocketAdapter {
-    socket: Arc<UdpSocket>,
-    conn_id_send: u16,
-    conn_id_recv: u16,
-    seq_nr: Mutex<u16>,
-    ack_nr: Mutex<u16>,
-}
-```
-
-### Key Behaviours
-
-| Method | Behaviour |
-|---|---|
-| `connect(ip, port)` | Sends a SYN packet and waits for a STATE response to establish the connection |
-| `write(buf)` | Splits the buffer into uTP DATA packets with incrementing sequence numbers; sends each and waits for STATE ACK |
-| `read(buf)` | Receives a UDP datagram, parses the uTP header, sends an ACK, and returns the payload bytes |
-| `close()` | Sends a RESET packet to signal connection termination |
-
----
-
-## LEDBAT Congestion Control (RFC 6817)
-
-The `UtpSocketAdapter` incorporates full **LEDBAT congestion control**:
-- **One-Way Delay Tracking**: Uses `timestamp_us` and `timestamp_difference_us` headers to estimate network queuing delay without requiring synchronized clocks.
-- **Sliding-Window Baseline**: `DelayTracker` maintains 4 time buckets of 60 seconds each (4 minutes total) to track `base_delay` and automatically expire obsolete baselines from route switches or clock drift.
-- **Linear Window Scaling**: `LedbatCongestionController` adjusts the congestion window (`cwnd`) on each acknowledged packet:
-  $$\Delta = \frac{\text{TARGET} - \text{queuing\_delay}}{\text{TARGET}} \times \frac{\text{bytes\_acked} \times \text{MSS}}{\text{cwnd}}$$
-- **Fast Retransmit & Loss Multiplicative Decrease**: On 3 duplicate ACKs or packet loss, `cwnd` is cut in half down to `MIN_CWND` (2 × MSS = 2920 bytes).
-- **Window Capacity Enforcement**: Outgoing transmissions via `write()` throttle when bytes in flight exceed the effective congestion window.
-
----
-
-## Usage via `SessionConfig`
-
-To use uTP as the peer transport, inject a `UtpSocketFactory` via `SessionConfig`:
-
-```rust
-use bittorrent_rs::utp::UtpSocketAdapter;
-use bittorrent_rs::session::SessionConfig;
-
-let config = SessionConfig {
-    socket_factory: Arc::new(UtpSocketFactory::default()),
-    ..SessionConfig::default()
-};
-```
-
----
-
-## Future Work
-
-- **Selective Acknowledgement (SACK)**: Support selective ACK extension headers for efficient out-of-order delivery.
-- **`UtpSocketFactory`**: A proper `SocketFactory` impl for injecting uTP as a first-class peer transport.
-
----
-
-## References
+## 7. References
 
 - [BEP 29 — uTorrent Transport Protocol](https://www.bittorrent.org/beps/bep_0029.html)
-- [LEDBAT — RFC 6817](https://www.rfc-editor.org/rfc/rfc6817)
-- [`utp.rs`](file:///c:/Projects/BitTorrent/library/src/utp.rs) — full source
+- [RFC 6817 — Low Extra Delay Background Transport (LEDBAT)](https://www.rfc-editor.org/rfc/rfc6817)
+- [RFC 6298 — Computing TCP's Retransmission Timer](https://www.rfc-editor.org/rfc/rfc6298)
+- Source: [`library/src/network/utp.rs`](file:///c:/Projects/BitTorrent/library/src/network/utp.rs)

@@ -286,8 +286,7 @@ impl HashVerificationPool {
     /// Submits a piece verification job to the background pool.
     ///
     /// # Errors
-    /// Returns [`BitTorrentError::Capacity`](BitTorrentError::Capacity) if the queue is full,
-    /// or [`BitTorrentError::Protocol`](BitTorrentError::Protocol) if the pool has been shut down.
+    /// Returns [`BitTorrentError::Protocol`] if the queue is full or if the pool has been shut down.
     pub fn submit(&self, job: PieceVerificationJob) -> Result<(), BitTorrentError> {
         let current_depth = self.pending_jobs.load(Ordering::Relaxed);
         if current_depth >= self.queue_capacity {

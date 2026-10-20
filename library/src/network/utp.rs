@@ -763,7 +763,7 @@ impl LedbatCongestionController {
         self.cwnd
     }
 
-    /// Alias for [`on_loss`].
+    /// Alias for [`Self::on_loss`].
     pub fn on_packet_loss(&mut self) -> u32 {
         self.on_loss()
     }
