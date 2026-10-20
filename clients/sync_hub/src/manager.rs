@@ -1,19 +1,27 @@
-use crate::torrent_gen::generate_torrent_bytes;
-use crate::watcher::DirectoryWatcher;
-use bittorrent_rs::session::{SessionConfig, TorrentSession};
+//! Synchronization directory and session coordinator (Single Responsibility Principle).
+//!
+//! Decomposes synchronization into `SyncSessionController` (session lifecycle & torrent generation)
+//! and `SyncManager` (directory watcher orchestration).
+
 use std::path::PathBuf;
 
-pub struct SyncManager {
+use bittorrent_rs::session::{SessionConfig, TorrentSession};
+
+use crate::torrent_gen::generate_torrent_bytes;
+use crate::watcher::DirectoryWatcher;
+
+/// Controls torrent metainfo generation and local seeding session lifecycle (SRP).
+pub struct SyncSessionController {
     sync_dir: PathBuf,
     torrent_path: PathBuf,
     session: Option<TorrentSession>,
     listen_port: u16,
 }
 
-impl SyncManager {
-    pub fn new(sync_dir: PathBuf, listen_port: u16) -> Self {
-        let torrent_path = sync_dir.join(".sync.torrent");
-        SyncManager {
+impl SyncSessionController {
+    /// Creates a new `SyncSessionController`.
+    pub fn new(sync_dir: PathBuf, torrent_path: PathBuf, listen_port: u16) -> Self {
+        Self {
             sync_dir,
             torrent_path,
             session: None,
@@ -21,24 +29,22 @@ impl SyncManager {
         }
     }
 
-    pub fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. Initial generation of the torrent
-        self.rebuild_torrent()?;
-
-        // 2. Start directory watcher
-        let _watcher = DirectoryWatcher::watch(&self.sync_dir)?;
-
-        println!("Watching directory {:?} for sync changes...", self.sync_dir);
-
-        Ok(())
+    /// Accesses the active seeding session if one is currently running.
+    pub fn session(&self) -> Option<&TorrentSession> {
+        self.session.as_ref()
     }
 
-    pub fn rebuild_torrent(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Stop current session if any
+    /// Stops and waits for the active torrent session to terminate.
+    pub fn stop(&mut self) {
         if let Some(mut sess) = self.session.take() {
             let _ = sess.stop();
             sess.join_peer_workers();
         }
+    }
+
+    /// Regenerates the `.sync.torrent` file and launches a fresh seeding session.
+    pub fn rebuild_and_start(&mut self) -> Result<String, Box<dyn std::error::Error>> {
+        self.stop();
 
         // Remove old torrent file if it exists to avoid self-inclusion
         if self.torrent_path.exists() {
@@ -46,7 +52,11 @@ impl SyncManager {
         }
 
         // Generate new torrent bytes (using 256 KB pieces)
-        let name = self.sync_dir.file_name().unwrap().to_string_lossy();
+        let name = self
+            .sync_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
         let bytes = generate_torrent_bytes(&self.sync_dir, &name, 262144)?;
 
         // Write torrent to file
@@ -71,9 +81,55 @@ impl SyncManager {
 
         let info_hash = session.context().lock().unwrap().info_hash.clone();
         let info_hash_hex = bittorrent_rs::util::to_hex(&info_hash);
-        println!("Sync Session Started. Info Hash: {}", info_hash_hex);
 
         self.session = Some(session);
+        Ok(info_hash_hex)
+    }
+}
+
+/// Orchestrates filesystem change watching and delegates session rebuilds (SRP).
+pub struct SyncManager {
+    controller: SyncSessionController,
+    sync_dir: PathBuf,
+}
+
+impl SyncManager {
+    /// Creates a new `SyncManager` for the specified synchronization directory.
+    pub fn new(sync_dir: PathBuf, listen_port: u16) -> Self {
+        let torrent_path = sync_dir.join(".sync.torrent");
+        let controller =
+            SyncSessionController::new(sync_dir.clone(), torrent_path, listen_port);
+        SyncManager {
+            controller,
+            sync_dir,
+        }
+    }
+
+    /// Starts directory synchronization, performing an initial rebuild and watching for changes.
+    pub fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let info_hash_hex = self.controller.rebuild_and_start()?;
+        println!("Sync Session Started. Info Hash: {}", info_hash_hex);
+
+        let _watcher = DirectoryWatcher::watch(&self.sync_dir)?;
+        println!("Watching directory {:?} for sync changes...", self.sync_dir);
+
         Ok(())
+    }
+
+    /// Rebuilds the torrent and restarts the seeding session.
+    pub fn rebuild_torrent(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let info_hash_hex = self.controller.rebuild_and_start()?;
+        println!("Sync Session Started. Info Hash: {}", info_hash_hex);
+        Ok(())
+    }
+
+    /// Reference to the underlying session controller.
+    pub fn controller(&self) -> &SyncSessionController {
+        &self.controller
+    }
+
+    /// Mutable reference to the underlying session controller.
+    pub fn controller_mut(&mut self) -> &mut SyncSessionController {
+        &mut self.controller
     }
 }

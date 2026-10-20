@@ -313,16 +313,16 @@ Separate the **choking algorithm policy** from the **loop execution runtime**:
 
 ---
 
-### Phase 7: Client Architecture Hardening (`bt_daemon` & `sync_hub`) (SRP & DIP)
+### Phase 7: Client Architecture Hardening (`bt_daemon` & `sync_hub`) (SRP & DIP) [COMPLETED]
 
 #### Problem Statement
-In [`clients/bt_daemon/src/bin/bt_daemon.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/bin/bt_daemon.rs), struct `Engine` is 870 lines long and handles:
+In [`clients/bt_daemon/src/bin/bt_daemon.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/bin/bt_daemon.rs), struct `Engine` was 870 lines long and handled:
 1. In-memory `TorrentSession` collection management.
 2. State file JSON serialization & fastresume disk persistence.
 3. HTTP range media streaming server and socket parsing.
 4. IPC command routing and response mapping.
 
-In `sync_hub/src/manager.rs`, `SyncManager` directly coordinates directory watchers, file generation, and session lifecycle.
+In `sync_hub/src/manager.rs`, `SyncManager` directly coordinated directory watchers, file generation, and session lifecycle.
 
 #### Target Architecture
 Decompose `bt_daemon` into single-responsibility services:
@@ -331,50 +331,39 @@ Decompose `bt_daemon` into single-responsibility services:
 - `StreamingServer`: HTTP range streaming server delegating to `torrent_client_shared`.
 - `IpcCommandHandler`: Pure command handler processing `IpcMessage` against the pool.
 
-#### Implementation Specifications
-
-```rust
-// clients/bt_daemon/src/repository.rs
-pub struct DaemonStateRepository {
-    state_file: PathBuf,
-}
-
-impl DaemonStateRepository {
-    pub fn load(&self) -> Result<DaemonState, std::io::Error> { ... }
-    pub fn save(&self, state: &DaemonState) -> Result<(), std::io::Error> { ... }
-}
-
-// clients/bt_daemon/src/session_pool.rs
-pub struct TorrentSessionPool {
-    sessions: Vec<SessionState>,
-}
-
-impl TorrentSessionPool {
-    pub fn add(&mut self, session: TorrentSession) { ... }
-    pub fn find_by_hash(&self, hash: &str) -> Option<&TorrentSession> { ... }
-    pub fn remove(&mut self, hash: &str) -> Option<TorrentSession> { ... }
-}
-```
-
-#### Affected Files to Update
-- Refactor `clients/bt_daemon/src/bin/bt_daemon.rs` into modular sub-files:
-  - `clients/bt_daemon/src/repository.rs`
-  - `clients/bt_daemon/src/session_pool.rs`
-  - `clients/bt_daemon/src/streaming.rs`
+#### Completed Deliverables
+1. **Daemon State Persistence (`DaemonStateRepository`) (SRP)**:
+   - Created [`DaemonStateRepository`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/repository.rs#L25-L60) in [`clients/bt_daemon/src/repository.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/repository.rs), isolating state file reading/writing and fastresume path resolution.
+2. **In-Memory Session Pool (`TorrentSessionPool`) (SRP)**:
+   - Created [`TorrentSessionPool`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/session_pool.rs#L21-L150) in [`clients/bt_daemon/src/session_pool.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/session_pool.rs), providing thread-safe session containment, hash-based lookups, lifecycle operations (pause, resume, remove, stop), and status snapshots.
+3. **HTTP Media Streaming Server (SRP)**:
+   - Extracted [`StreamingServer`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/streaming.rs) in [`clients/bt_daemon/src/streaming.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/streaming.rs), handling `/stream/:info_hash`, `/stream/:info_hash/:file_index`, and `/stream/:info_hash/files`.
+4. **IPC Transport & Command Handling (SRP & DIP)**:
+   - Extracted cross-platform [`IpcServer`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/ipc.rs) in [`clients/bt_daemon/src/ipc.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/ipc.rs) supporting Unix domain sockets and Windows Named Pipes.
+   - Created [`handle_ipc_message`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/ipc_handler.rs#L18) in [`clients/bt_daemon/src/ipc_handler.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/ipc_handler.rs), cleanly mapping incoming `IpcMessage` to daemon engine operations.
+5. **Decoupled Daemon Coordinator & Binary Entrypoint**:
+   - Created [`Engine`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/engine.rs#L16) in [`clients/bt_daemon/src/engine.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/engine.rs) coordinating pool and repository.
+   - Refactored [`clients/bt_daemon/src/bin/bt_daemon.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/bin/bt_daemon.rs) into a lightweight 85-line entrypoint.
+   - Exposed modular library in [`clients/bt_daemon/src/lib.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/src/lib.rs).
+6. **Sync Hub Deconstruction (`SyncSessionController`) (SRP)**:
+   - Decomposed [`clients/sync_hub/src/manager.rs`](file:///c:/Projects/BitTorrent/clients/sync_hub/src/manager.rs) by extracting [`SyncSessionController`](file:///c:/Projects/BitTorrent/clients/sync_hub/src/manager.rs#L13-L84) for torrent metainfo generation and session lifecycle, keeping [`SyncManager`](file:///c:/Projects/BitTorrent/clients/sync_hub/src/manager.rs#L87-L127) focused purely on directory watching.
+7. **Comprehensive Testing & Verification**:
+   - Created unit test suites [`clients/bt_daemon/tests/daemon_architecture_tests.rs`](file:///c:/Projects/BitTorrent/clients/bt_daemon/tests/daemon_architecture_tests.rs) and [`clients/sync_hub/tests/sync_controller_tests.rs`](file:///c:/Projects/BitTorrent/clients/sync_hub/tests/sync_controller_tests.rs).
+   - 100% test pass rate across `cargo test --workspace` with 0 warnings on `cargo clippy --workspace --all-targets -- -D warnings` and `#![no_std]` core build verification passing.
 
 ---
 
 ## 4. Implementation Order & Verification Quality Gates
 
-| Phase | Focus Principle | Target Deliverable | Risk | Verification Command |
+| Phase | Focus Principle | Target Deliverable | Status | Verification Command |
 |:---:|:---:|:---|:---:|:---|
-| **Phase 1** | **SRP** | Decompose `TorrentContext` into `PieceStore`, `SwarmTopology`, `TransferMetrics` | Medium | `cargo test -p bittorrent-rs -- context_tests` |
-| **Phase 2** | **DIP / SRP** | Replace `Peer.tc` cyclic reference with `PeerEventListener` | Medium | `cargo test -p bittorrent-rs -- peer_tests mock_peer_tests` |
-| **Phase 3** | **ISP** | Introduce `PieceAvailabilityView`, `SwarmView`, update `PieceSelector` | Low | `cargo test -p bittorrent-rs -- selection_tests` |
-| **Phase 4** | **OCP** | Open `AnnouncerRegistry` supporting runtime protocol additions | Low | `cargo test -p bittorrent-rs -- tracker_tests` |
-| **Phase 5** | **SRP / LSP** | Extract `FileAllocationManager` & enforce storage LSP contract tests | Low | `cargo test -p bittorrent-rs -- disk_io_tests` |
-| **Phase 6** | **OCP / SRP** | Separate `ChokingPolicy` algorithmic decisions from execution runner | Low | `cargo test -p bittorrent-rs -- session_tests` |
-| **Phase 7** | **SRP / DIP** | Modularize `bt_daemon::Engine` into repository, pool, and streaming | Low | `cargo check -p bt_daemon && cargo test --workspace` |
+| **Phase 1** | **SRP** | Decompose `TorrentContext` into `PieceStore`, `SwarmTopology`, `TransferMetrics` | `COMPLETED` | `cargo test -p bittorrent-rs -- context_tests` |
+| **Phase 2** | **DIP / SRP** | Replace `Peer.tc` cyclic reference with `PeerEventListener` | `COMPLETED` | `cargo test -p bittorrent-rs -- peer_tests mock_peer_tests` |
+| **Phase 3** | **ISP** | Introduce `PieceAvailabilityView`, `SwarmView`, update `PieceSelector` | `COMPLETED` | `cargo test -p bittorrent-rs -- selection_tests` |
+| **Phase 4** | **OCP** | Open `AnnouncerRegistry` supporting runtime protocol additions | `COMPLETED` | `cargo test -p bittorrent-rs -- tracker_tests` |
+| **Phase 5** | **SRP / LSP** | Extract `FileAllocationManager` & enforce storage LSP contract tests | `COMPLETED` | `cargo test -p bittorrent-rs -- disk_io_tests` |
+| **Phase 6** | **OCP / SRP** | Separate `ChokingPolicy` algorithmic decisions from execution runner | `COMPLETED` | `cargo test -p bittorrent-rs -- session_tests` |
+| **Phase 7** | **SRP / DIP** | Modularize `bt_daemon::Engine` into repository, pool, and streaming | `COMPLETED` | `cargo check -p bt_daemon && cargo test --workspace` |
 
 ---
 
