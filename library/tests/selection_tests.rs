@@ -1,14 +1,10 @@
+mod common;
+
 use bittorrent_rs::{Peer, PieceSelector};
+use common::sample_file;
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::thread;
-
-fn sample_file(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name)
-}
 
 #[test]
 fn test_next_block_request_from_peer_reserves_request() {

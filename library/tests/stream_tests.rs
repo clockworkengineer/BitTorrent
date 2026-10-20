@@ -1,19 +1,15 @@
+mod common;
+
 use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::selector::{PieceSelector, StreamingPieceSelector};
 use bittorrent_rs::storage::stream::{StorageBlockReader, TorrentStream};
 use bittorrent_rs::{BlockWriter, MemStorage, MetaInfoFile, Peer, SessionConfig};
+use common::sample_file;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-fn sample_file(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name)
-}
 
 fn create_test_context_and_storage(
     torrent_name: &str,

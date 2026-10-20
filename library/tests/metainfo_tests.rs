@@ -1,12 +1,7 @@
-use bittorrent_rs::MetaInfoFile;
-use std::path::PathBuf;
+mod common;
 
-fn sample_file(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name)
-}
+use bittorrent_rs::MetaInfoFile;
+use common::sample_file;
 
 #[test]
 fn test_exception_on_file_not_existing() {

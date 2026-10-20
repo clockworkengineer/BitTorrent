@@ -1,4 +1,7 @@
+mod common;
+
 use bittorrent_rs::TorrentStatus;
+use common::sample_file;
 use bittorrent_rs::announcer::Announcer;
 use bittorrent_rs::disk_io::DiskIO;
 use bittorrent_rs::internals::TorrentContext;
@@ -34,12 +37,6 @@ impl Announcer for FakeAnnouncer {
     }
 }
 
-fn sample_file(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name)
-}
 
 #[test]
 fn test_tracker_started_and_peer_list() {

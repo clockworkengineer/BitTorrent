@@ -1,4 +1,7 @@
+mod common;
+
 use bittorrent_rs::announcer::Announcer;
+use common::sample_file;
 use bittorrent_rs::disk_io::DiskIO;
 use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::metainfo::MetaInfoFile;
@@ -30,12 +33,6 @@ impl Announcer for FakeAnnouncer {
     }
 }
 
-fn sample_file(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name)
-}
 
 #[test]
 fn test_meta_info_parsing_and_validation() {

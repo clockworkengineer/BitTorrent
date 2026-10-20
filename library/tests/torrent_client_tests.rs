@@ -1,12 +1,7 @@
-use bittorrent_rs::{TorrentClient, TorrentStatus};
-use std::path::PathBuf;
+mod common;
 
-fn sample_file(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name)
-}
+use bittorrent_rs::{TorrentClient, TorrentStatus};
+use common::sample_file;
 
 #[test]
 fn test_torrent_client_lifecycle() {

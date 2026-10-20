@@ -1,13 +1,7 @@
-use bittorrent_rs::Bencode;
-use std::fs;
+mod common;
 
-fn sample_file(name: &str) -> Vec<u8> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name);
-    fs::read(path).expect("Unable to read sample torrent file")
-}
+use bittorrent_rs::Bencode;
+use common::sample_file_bytes as sample_file;
 
 #[test]
 fn test_single_file_torrent_decode_encode_roundtrip() {

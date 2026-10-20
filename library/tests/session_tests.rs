@@ -1,10 +1,13 @@
 #![allow(unexpected_cfgs)]
 #![cfg(test_real_files)]
 
+mod common;
+
 use bittorrent_rs::peer_network::PeerNetwork;
 use bittorrent_rs::{
     HttpClient, PeerDetails, PeerMessage, TorrentSession, TorrentStatus, session::SessionConfig,
 };
+use common::sample_file;
 use std::fs;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -21,12 +24,6 @@ impl HttpClient for DummyHttpClient {
     }
 }
 
-fn sample_file(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join(name)
-}
 
 fn cleanup_download_path(download_path: &PathBuf) {
     let _ = fs::remove_dir_all(download_path);

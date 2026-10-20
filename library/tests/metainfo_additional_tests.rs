@@ -1,6 +1,9 @@
+mod common;
+
 use bittorrent_rs::MetaInfoFile;
+use common::sample_file;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[test]
 fn test_parse_missing_announce_fails() {
@@ -16,10 +19,7 @@ fn test_parse_missing_announce_fails() {
 
 #[test]
 fn test_local_files_to_download_list_single_file() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("files")
-        .join("singlefile.torrent");
+    let path = sample_file("singlefile.torrent");
     let mut torrent = MetaInfoFile::new(&path).expect("Failed to open singlefile.torrent");
     torrent.parse().expect("Failed to parse singlefile.torrent");
 
