@@ -58,23 +58,18 @@ header {
 }
 
 .logo-icon {
-    width: 32px;
-    height: 32px;
-    background: var(--primary);
-    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    background-image: url('/icon.png');
+    background-size: cover;
+    background-position: center;
+    border-radius: 9px;
     position: relative;
-    box-shadow: 0 0 15px var(--primary);
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.45);
 }
 
 .logo-icon::after {
-    content: '';
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    width: 16px;
-    height: 16px;
-    background: #0f172a;
-    border-radius: 4px;
+    display: none;
 }
 
 header h1 {

@@ -266,6 +266,20 @@ async fn serve_js() -> impl IntoResponse {
     )
 }
 
+async fn serve_icon() -> impl IntoResponse {
+    (
+        [("content-type", "image/png")],
+        &include_bytes!("../frontend/icon.png")[..],
+    )
+}
+
+async fn serve_favicon() -> impl IntoResponse {
+    (
+        [("content-type", "image/png")],
+        &include_bytes!("../frontend/favicon.png")[..],
+    )
+}
+
 async fn health_check() -> impl IntoResponse {
     (
         StatusCode::OK,
@@ -314,6 +328,8 @@ async fn main() {
         .route("/", get(serve_html))
         .route("/style.css", get(serve_css))
         .route("/app.js", get(serve_js))
+        .route("/icon.png", get(serve_icon))
+        .route("/favicon.png", get(serve_favicon))
         // Health check endpoint
         .route("/api/health", get(health_check))
         // API routes

@@ -37,10 +37,17 @@ fn main() {
     let (log_tx, log_rx) = std::sync::mpsc::channel::<String>();
     bittorrent_rs::util::set_log_sender(log_tx.clone());
 
+    let icon = std::sync::Arc::new(egui::IconData {
+        rgba: include_bytes!("../assets/icon_32.rgba").to_vec(),
+        width: 32,
+        height: 32,
+    });
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([960.0, 620.0])
-            .with_title("BitTorrent Desktop Client"),
+            .with_title("BitTorrent Desktop Client")
+            .with_icon(icon),
         ..Default::default()
     };
     eframe::run_native(
