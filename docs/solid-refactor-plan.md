@@ -238,74 +238,38 @@ Replace the static if-else factory with an extensible `AnnouncerRegistry` suppor
 
 ---
 
-### Phase 5: Storage Subsystem Separation & Invariant Enforcement (SRP & LSP)
+### Phase 5: Storage Subsystem Separation & Invariant Enforcement (SRP & LSP) [COMPLETED]
 
 #### Problem Statement
-[`library/src/storage/disk_io.rs`](file:///c:/Projects/BitTorrent/library/src/storage/disk_io.rs) conflates 4 distinct responsibilities:
+[`library/src/storage/disk_io.rs`](file:///c:/Projects/BitTorrent/library/src/storage/disk_io.rs) previously conflated 4 distinct responsibilities:
 1. Block read/write implementation (`BlockReader`, `BlockWriter`).
 2. Local filesystem directory tree creation and file preallocation (`create_local_torrent_structure`).
 3. Sequential file reading for bitfield generation (`create_torrent_bitfield`).
-4. Direct mutation of `TorrentContext` fields during parallel verification (`create_torrent_bitfield_parallel`).
+4. Parallel verification dispatching and progress tracking.
 
-Furthermore, `MemStorage` with 0 capacity violates LSP when used as a drop-in `BlockStorage` placeholder in magnet links bootstrap.
+Furthermore, placeholder storages used during magnet links bootstrap risked LSP contract violations on out-of-bounds reads/writes without explicit invariant protection.
 
 #### Target Architecture
-1. **SRP**: Decompose `DiskIO` into:
-   - `DiskBlockStorage`: Pure implementation of `BlockReader` and `BlockWriter`.
-   - `FileAllocationManager`: Pre-creates directories and sparse/preallocated files.
-   - `DiskBitfieldScanner`: Scans disk files and outputs a bitfield without mutating context.
-2. **LSP**: Standardize `BlockStorage` behavioral contracts and create `library/tests/common/storage_contract.rs` ensuring consistent bounds checking and idempotent flushing.
+1. **SRP**: Decompose `DiskIO` into focused components:
+   - `DiskBlockStorage`: Pure implementation of `BlockReader` and `BlockWriter` over target file slices.
+   - `FileAllocationManager`: Pre-creates directory trees and pre-allocated files.
+   - `BitfieldScanner`: Pure calculation scanning disk files or abstract `BlockStorage` to output verified bitfields.
+2. **LSP**: Standardize `BlockStorage` behavioral contracts across all implementors (`MemStorage`, `DiskBlockStorage`, `CachedBlockStorage`, and `NullBlockStorage`), verifying uniform bounds checking, overflow arithmetic protection, and idempotent flushing.
 
-#### Implementation Specifications
-
-```rust
-// library/src/storage/file_allocation.rs
-pub struct FileAllocationManager;
-
-impl FileAllocationManager {
-    pub fn allocate_torrent_structure(
-        download_path: &Path,
-        files: &[FileDetails],
-    ) -> Result<(), BitTorrentError> {
-        for file in files {
-            let path = Path::new(&file.name);
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            if !path.exists() {
-                let handle = std::fs::File::create(path)?;
-                handle.set_len(file.length)?;
-            }
-        }
-        std::fs::create_dir_all(download_path)?;
-        Ok(())
-    }
-}
-```
-
-```rust
-// library/src/storage/bitfield_scanner.rs
-pub struct BitfieldScanner;
-
-impl BitfieldScanner {
-    /// Scans disk files and returns the detected bitfield without mutating the context directly.
-    pub fn scan_local_files(
-        files: &[FileDetails],
-        piece_length: u32,
-        expected_hashes: &[u8],
-    ) -> Result<Vec<u8>, BitTorrentError> {
-        // Pure calculation returning bitfield vector
-    }
-}
-```
-
-#### Affected Files to Update
-- Create:
-  - `library/src/storage/file_allocation.rs`
-  - `library/src/storage/bitfield_scanner.rs`
-- Modify:
-  - `library/src/storage/disk_io.rs` (extract helper responsibilities; delegate).
-  - `library/src/utils/io_traits.rs` (ensure `MemStorage` honors bounds-checking contract cleanly).
+#### Completed Implementation Details
+1. **Decomposed Storage Subsystems (SRP)**:
+   - **`FileAllocationManager`** in [`library/src/storage/file_allocation.rs`](file:///c:/Projects/BitTorrent/library/src/storage/file_allocation.rs): Handles filesystem directory tree creation, file sizing, and existence verification.
+   - **`DiskBlockStorage`** in [`library/src/storage/disk_block_storage.rs`](file:///c:/Projects/BitTorrent/library/src/storage/disk_block_storage.rs): Pure `BlockReader` and `BlockWriter` resolving global torrent offsets to target file ranges.
+   - **`BitfieldScanner`** in [`library/src/storage/bitfield_scanner.rs`](file:///c:/Projects/BitTorrent/library/src/storage/bitfield_scanner.rs): Pure calculation scanning files or abstract storage, returning [`ScanResult`](file:///c:/Projects/BitTorrent/library/src/storage/bitfield_scanner.rs#L25) with verified bitfield and piece statuses without mutating `TorrentContext`.
+   - **Refactored `DiskIO`** in [`library/src/storage/disk_io.rs`](file:///c:/Projects/BitTorrent/library/src/storage/disk_io.rs): Delegates allocation to `FileAllocationManager`, bitfield verification to `BitfieldScanner`, and block read/write to `DiskBlockStorage` while maintaining 100% backward compatibility for all existing callers.
+2. **Standardized Storage Behavioral Invariants (LSP)**:
+   - Enhanced **`MemStorage`** in [`library/src/utils/io_traits.rs`](file:///c:/Projects/BitTorrent/library/src/utils/io_traits.rs) with safe zero-length I/O, `checked_add` arithmetic overflow protection, explicit capacity getters, and idempotent flushing.
+   - Introduced **`NullBlockStorage`** in [`library/src/utils/io_traits.rs`](file:///c:/Projects/BitTorrent/library/src/utils/io_traits.rs) as an explicit placeholder for uninitialized / bootstrap sessions, replacing 0-capacity allocations in `TorrentContext::new_magnet_bootstrap`.
+   - Hardened **`CachedBlockStorage`** in [`library/src/storage/disk_cache.rs`](file:///c:/Projects/BitTorrent/library/src/storage/disk_cache.rs) with arithmetic overflow validation on `read_block` and `write_block`.
+3. **Comprehensive Test Suite & Verification**:
+   - Created generic contract test harness in [`library/tests/common/storage_contract.rs`](file:///c:/Projects/BitTorrent/library/tests/common/storage_contract.rs) verifying zero-byte I/O safety, in-bounds roundtrip, out-of-bounds rejection, arithmetic overflow safety, and idempotent flushing.
+   - Created test suite [`library/tests/solid_phase5_tests.rs`](file:///c:/Projects/BitTorrent/library/tests/solid_phase5_tests.rs) running the contract across `MemStorage`, `DiskBlockStorage`, `CachedBlockStorage`, and `NullBlockStorage`, along with isolated unit tests for `FileAllocationManager` and `BitfieldScanner`.
+   - 100% test pass rate across `cargo test --workspace` with 0 warnings on `cargo clippy --workspace --all-targets -- -D warnings` and `#![no_std]` core build verification passing.
 
 ---
 

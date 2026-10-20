@@ -259,8 +259,14 @@ fn test_torrent_context_async_verification_pipeline_and_selection_guard() {
     );
 
     // Wait and drain verification result
-    thread::sleep(Duration::from_millis(100));
-    let drained = ctx.drain_verification_results(&*disk_io);
+    let mut drained = 0;
+    for _ in 0..20 {
+        thread::sleep(Duration::from_millis(50));
+        drained += ctx.drain_verification_results(&*disk_io);
+        if drained >= 1 {
+            break;
+        }
+    }
     assert_eq!(drained, 1);
 
     // Piece is now local and verified

@@ -433,7 +433,7 @@ impl TorrentContext {
         config: SessionConfig,
     ) -> Result<Self, crate::error::BitTorrentError> {
         let tracker_url = tracker_urls.get(0).cloned().unwrap_or_default();
-        let storage = Arc::new(crate::io_traits::MemStorage::new(0));
+        let storage = Arc::new(crate::io_traits::NullBlockStorage);
 
         let context = Self::new_base(TorrentContextParams {
             info_hash,

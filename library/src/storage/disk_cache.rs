@@ -294,6 +294,17 @@ impl CachedBlockStorage {
 
 impl BlockWriter for CachedBlockStorage {
     fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        if offset.checked_add(data.len() as u64).is_none() {
+            return Err(BitTorrentError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "write offset + length overflowed u64",
+            )));
+        }
+
         let mut state = self.state.lock().unwrap();
 
         // Check if block already exists at exact offset
@@ -344,7 +355,15 @@ impl BlockReader for CachedBlockStorage {
             return Ok(0);
         }
         let target_start = offset;
-        let target_end = offset + target_len as u64;
+        let target_end = match offset.checked_add(target_len as u64) {
+            Some(end) => end,
+            None => {
+                return Err(BitTorrentError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "read offset + length overflowed u64",
+                )));
+            }
+        };
 
         let mut state = self.state.lock().unwrap();
         let now = Instant::now();

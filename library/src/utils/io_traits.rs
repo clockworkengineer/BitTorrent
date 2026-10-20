@@ -234,14 +234,43 @@ impl MemStorage {
             data: SpinLock::new(alloc::vec![0u8; size]),
         }
     }
+
+    /// Returns the capacity of the memory storage in bytes.
+    pub fn len(&self) -> usize {
+        self.data.lock().len()
+    }
+
+    /// Returns true if the storage buffer has 0 capacity.
+    pub fn is_empty(&self) -> bool {
+        self.data.lock().is_empty()
+    }
 }
 
 impl BlockReader for MemStorage {
     fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError> {
-        let start = offset as usize;
-        let end = start + buffer.len();
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+
         let guard = self.data.lock();
-        if end > guard.len() {
+        let capacity = guard.len() as u64;
+
+        let end = match offset.checked_add(buffer.len() as u64) {
+            Some(e) => e,
+            None => {
+                #[cfg(feature = "std")]
+                return Err(BitTorrentError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "read offset + length exceeds storage capacity (overflow)",
+                )));
+                #[cfg(not(feature = "std"))]
+                return Err(BitTorrentError::Protocol(
+                    "read offset + length exceeds storage capacity (overflow)".into(),
+                ));
+            }
+        };
+
+        if end > capacity || offset > capacity {
             #[cfg(feature = "std")]
             return Err(BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -252,17 +281,39 @@ impl BlockReader for MemStorage {
                 "read offset + length exceeds storage capacity".into(),
             ));
         }
-        buffer.copy_from_slice(&guard[start..end]);
+
+        let start = offset as usize;
+        let end_idx = end as usize;
+        buffer.copy_from_slice(&guard[start..end_idx]);
         Ok(buffer.len())
     }
 }
 
 impl BlockWriter for MemStorage {
     fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
-        let start = offset as usize;
-        let end = start + data.len();
+        if data.is_empty() {
+            return Ok(());
+        }
+
         let mut guard = self.data.lock();
-        if end > guard.len() {
+        let capacity = guard.len() as u64;
+
+        let end = match offset.checked_add(data.len() as u64) {
+            Some(e) => e,
+            None => {
+                #[cfg(feature = "std")]
+                return Err(BitTorrentError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "write offset + length exceeds storage capacity (overflow)",
+                )));
+                #[cfg(not(feature = "std"))]
+                return Err(BitTorrentError::Protocol(
+                    "write offset + length exceeds storage capacity (overflow)".into(),
+                ));
+            }
+        };
+
+        if end > capacity || offset > capacity {
             #[cfg(feature = "std")]
             return Err(BitTorrentError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -273,9 +324,68 @@ impl BlockWriter for MemStorage {
                 "write offset + length exceeds storage capacity".into(),
             ));
         }
-        guard[start..end].copy_from_slice(data);
+
+        let start = offset as usize;
+        let end_idx = end as usize;
+        guard[start..end_idx].copy_from_slice(data);
         Ok(())
     }
+
+    fn flush(&self) -> Result<(), BitTorrentError> {
+        Ok(())
+    }
+
+    fn discard_range(&self, _offset: u64, _length: u64) {}
+}
+
+/// A null/placeholder block storage implementation for uninitialized or bootstrap sessions (LSP).
+///
+/// Implements `BlockStorage` contract safely without allocating memory or throwing panics:
+/// - Zero-length reads/writes succeed (no-op).
+/// - Non-zero reads return error indicating bootstrap uninitialized state.
+/// - Non-zero writes return error indicating bootstrap uninitialized state.
+/// - Flush and discard operations are idempotent no-ops.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NullBlockStorage;
+
+impl BlockReader for NullBlockStorage {
+    fn read_block(&self, _offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        #[cfg(feature = "std")]
+        return Err(BitTorrentError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Storage uninitialized in bootstrap state",
+        )));
+        #[cfg(not(feature = "std"))]
+        return Err(BitTorrentError::Protocol(
+            "Storage uninitialized in bootstrap state".into(),
+        ));
+    }
+}
+
+impl BlockWriter for NullBlockStorage {
+    fn write_block(&self, _offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        #[cfg(feature = "std")]
+        return Err(BitTorrentError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Storage uninitialized in bootstrap state",
+        )));
+        #[cfg(not(feature = "std"))]
+        return Err(BitTorrentError::Protocol(
+            "Storage uninitialized in bootstrap state".into(),
+        ));
+    }
+
+    fn flush(&self) -> Result<(), BitTorrentError> {
+        Ok(())
+    }
+
+    fn discard_range(&self, _offset: u64, _length: u64) {}
 }
 
 #[derive(Debug)]

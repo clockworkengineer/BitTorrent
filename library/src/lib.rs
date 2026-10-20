@@ -210,7 +210,15 @@ pub use session::manager::Manager;
 #[cfg(feature = "std")]
 pub use storage::assembler::Assembler;
 #[cfg(feature = "std")]
+pub use storage::bitfield_scanner::{BitfieldScanner, PieceScanStatus, ScanResult};
+#[cfg(feature = "std")]
+pub use storage::disk_block_storage::{DiskBlockStorage, TargetFileRange};
+#[cfg(feature = "std")]
 pub use storage::disk_cache::{CacheBlock, CacheMetrics, CachedBlockStorage};
+#[cfg(feature = "std")]
+pub use storage::disk_io::DiskIO;
+#[cfg(feature = "std")]
+pub use storage::file_allocation::FileAllocationManager;
 pub use utils::average::Average;
 pub use utils::bencode::{BNode, Bencode};
 pub use utils::bencode_tokenizer::{BencodeToken, BencodeTokenizer};
@@ -219,7 +227,7 @@ pub use utils::error::{BencodeError, BitTorrentError};
 pub use utils::io_traits::SocketFactory;
 pub use utils::io_traits::{
     AsyncSocket, BlockReader, BlockStorage, BlockWriter, MemStorage, MockReceiver, MockSender,
-    MockSocket, Socket,
+    MockSocket, NullBlockStorage, Socket,
 };
 #[cfg(all(feature = "std", feature = "http-tracker"))]
 pub use utils::io_traits::{HttpClient, UreqHttpClient};

@@ -1,23 +1,33 @@
 //! Disk I/O management
 //!
-//! Handles file system interactions including directory/file structure initialization,
+//! Orchestrates file system interactions including directory/file structure initialization,
 //! scanning existing files to compute/verify the bitfield of local pieces, and writing downloaded pieces.
+//!
+//! Refactored under SOLID principles to delegate responsibilities to dedicated components:
+//! - [`FileAllocationManager`]: Filesystem directory creation and file sizing.
+//! - [`BitfieldScanner`]: Pure calculation of local piece hashes and bitfield verification.
+//! - [`DiskBlockStorage`]: Boundary-crossing block-level read and write I/O.
 
 use crate::core::torrent_context::TorrentContext;
 use crate::error::BitTorrentError;
 use crate::io_traits::{BlockReader, BlockWriter};
-use alloc::string::String;
 use alloc::vec::Vec;
-use std::fs::{File, OpenOptions, create_dir_all};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+pub use crate::storage::bitfield_scanner::{BitfieldScanner, PieceScanStatus, ScanResult};
+pub use crate::storage::disk_block_storage::{DiskBlockStorage, TargetFileRange};
+pub use crate::storage::file_allocation::FileAllocationManager;
+
 /// Manager for orchestrating reading and writing torrent data blocks to and from disk.
+///
+/// Decomposed under the Single Responsibility Principle into focused domain services
+/// while maintaining complete backward compatibility.
 #[derive(Debug)]
 pub struct DiskIO {
     pub download_path: PathBuf,
     pub files_to_download: Vec<crate::metainfo::FileDetails>,
     pub piece_length: u32,
+    block_storage: DiskBlockStorage,
 }
 
 impl DiskIO {
@@ -27,56 +37,37 @@ impl DiskIO {
         files_to_download: Vec<crate::metainfo::FileDetails>,
         piece_length: u32,
     ) -> Self {
+        let block_storage = DiskBlockStorage::new(files_to_download.clone());
         DiskIO {
             download_path: download_path.as_ref().to_path_buf(),
             files_to_download,
             piece_length,
+            block_storage,
         }
+    }
+
+    /// Returns a reference to the underlying pure block storage engine.
+    pub fn block_storage(&self) -> &DiskBlockStorage {
+        &self.block_storage
     }
 
     /// Pre-creates the files and directories on disk for the torrent, pre-allocating the correct file sizes.
+    ///
+    /// Delegates directly to [`FileAllocationManager`] (SRP).
     pub fn create_local_torrent_structure(&self) -> Result<(), BitTorrentError> {
-        for file in &self.files_to_download {
-            let path = Path::new(&file.name);
-            if let Some(dir) = path.parent() {
-                create_dir_all(dir)?;
-            }
-            if !path.exists() {
-                let handle = File::create(path)?;
-                handle.set_len(file.length)?;
-            }
-        }
-        create_dir_all(&self.download_path)?;
-        Ok(())
+        FileAllocationManager::allocate_torrent_structure(&self.download_path, &self.files_to_download)
     }
 
     /// Scans the local files to build and initialize the torrent session's bitfield based on what is already on disk.
+    ///
+    /// Delegates calculation to [`BitfieldScanner`] (SRP).
     pub fn create_torrent_bitfield(&self, tc: &mut TorrentContext) -> Result<(), BitTorrentError> {
-        let mut piece_buffer = vec![0u8; self.piece_length as usize];
-        let mut piece_number = 0u32;
-        let mut bytes_in_buffer = 0usize;
-        for file in &self.files_to_download {
-            let mut handle = File::open(&file.name)?;
-            loop {
-                let bytes_read = handle.read(&mut piece_buffer[bytes_in_buffer..])?;
-                if bytes_read == 0 {
-                    break;
-                }
-                bytes_in_buffer += bytes_read;
-                if bytes_in_buffer == piece_buffer.len() {
-                    tc.update_bitfield_from_buffer(
-                        piece_number,
-                        &piece_buffer,
-                        bytes_in_buffer as u32,
-                    );
-                    bytes_in_buffer = 0;
-                    piece_number += 1;
-                }
-            }
-        }
-        if bytes_in_buffer > 0 {
-            tc.update_bitfield_from_buffer(piece_number, &piece_buffer, bytes_in_buffer as u32);
-        }
+        let scan_result = BitfieldScanner::scan_local_files(
+            &self.files_to_download,
+            self.piece_length,
+            &tc.pieces_info_hash,
+        )?;
+        BitfieldScanner::apply_to_context(tc, &scan_result);
         Ok(())
     }
 
@@ -151,88 +142,20 @@ impl DiskIO {
 
 impl BlockWriter for DiskIO {
     fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
-        let ranges = resolve_file_ranges_internal(&self.files_to_download, offset, data.len());
+        self.block_storage.write_block(offset, data)
+    }
 
-        let total_resolved: usize = ranges.iter().map(|r| r.io_length).sum();
-        if total_resolved < data.len() {
-            return Err(BitTorrentError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "Not enough space in torrent files to write the block",
-            )));
-        }
+    fn flush(&self) -> Result<(), BitTorrentError> {
+        self.block_storage.flush()
+    }
 
-        let mut data_offset = 0usize;
-        for range in &ranges {
-            let mut handle = OpenOptions::new().write(true).open(&range.file_path)?;
-            handle.seek(SeekFrom::Start(range.seek_offset))?;
-            handle.write_all(&data[data_offset..data_offset + range.io_length])?;
-            data_offset += range.io_length;
-        }
-
-        Ok(())
+    fn discard_range(&self, offset: u64, length: u64) {
+        self.block_storage.discard_range(offset, length);
     }
 }
 
 impl BlockReader for DiskIO {
     fn read_block(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, BitTorrentError> {
-        let ranges = resolve_file_ranges_internal(&self.files_to_download, offset, buffer.len());
-
-        let total_resolved: usize = ranges.iter().map(|r| r.io_length).sum();
-        if total_resolved < buffer.len() {
-            return Err(BitTorrentError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "Not enough data in torrent files to read the block",
-            )));
-        }
-
-        let mut current_pos = 0;
-        for range in &ranges {
-            let mut handle = File::open(&range.file_path)?;
-            handle.seek(SeekFrom::Start(range.seek_offset))?;
-            handle.read_exact(&mut buffer[current_pos..current_pos + range.io_length])?;
-            current_pos += range.io_length;
-        }
-
-        Ok(buffer.len())
+        self.block_storage.read_block(offset, buffer)
     }
-}
-
-struct TargetFileRange {
-    file_path: String,
-    seek_offset: u64,
-    io_length: usize,
-}
-
-fn resolve_file_ranges_internal(
-    files_to_download: &[crate::metainfo::FileDetails],
-    global_offset: u64,
-    length: usize,
-) -> Vec<TargetFileRange> {
-    let mut ranges = Vec::new();
-    let mut remaining = length;
-    let mut current_offset = global_offset;
-
-    for file in files_to_download {
-        if current_offset >= file.length {
-            current_offset -= file.length;
-            continue;
-        }
-
-        let write_start = current_offset;
-        let write_size = std::cmp::min(remaining as u64, file.length - write_start) as usize;
-
-        ranges.push(TargetFileRange {
-            file_path: file.name.clone(),
-            seek_offset: write_start,
-            io_length: write_size,
-        });
-
-        remaining -= write_size;
-        current_offset = 0;
-
-        if remaining == 0 {
-            break;
-        }
-    }
-    ranges
 }
