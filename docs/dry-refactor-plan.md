@@ -282,7 +282,7 @@ impl TorrentBuilder {
 
 ---
 
-### Phase 5: `TorrentContext` Construction Decomposition
+### Phase 5: `TorrentContext` Construction Decomposition [COMPLETED]
 
 #### Problem Statement
 `TorrentContext::new` (lines 187–367) and `TorrentContext::new_magnet_bootstrap` (lines 373–480) duplicate approximately 140 lines initializing identical fields:
@@ -329,7 +329,7 @@ impl TorrentContext {
 
 ---
 
-### Phase 6: Session Lifecycle & Executor Plumbing
+### Phase 6: Session Lifecycle & Executor Plumbing [COMPLETED]
 
 #### Problem Statement
 In `library/src/session/session.rs`, `new_with_options_internal` and `new_magnet_with_options_internal` duplicate:

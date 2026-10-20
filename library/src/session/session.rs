@@ -81,6 +81,49 @@ impl TorrentSession {
         TorrentSessionBuilder::from_magnet(magnet_link, download_path)
     }
 
+    fn finalize_assembly(
+        context: Arc<Mutex<TorrentContext>>,
+        download_path: PathBuf,
+        config: &SessionConfig,
+        is_magnet: bool,
+        validate: bool,
+    ) -> Result<Self, BitTorrentError> {
+        let (task_tx, task_rx) =
+            std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
+        let executor_thread = spawn_executor(context.clone(), task_rx);
+
+        if is_magnet {
+            spawn_stats_loop_magnet(context.clone(), task_tx.clone());
+        } else {
+            spawn_stats_loop_standard(context.clone(), task_tx.clone());
+        }
+
+        let session = TorrentSession {
+            context,
+            download_path,
+            peer_workers: Arc::new(Mutex::new(Vec::new())),
+            task_tx,
+            executor_thread: Some(executor_thread),
+            manager: None,
+            #[cfg(feature = "dht")]
+            dht: None,
+            #[cfg(feature = "nat-pmp")]
+            nat_pmp: None,
+        };
+
+        if validate {
+            session.context.lock().unwrap().validate()?;
+        }
+
+        config.choking_strategy.spawn_choking_loop(
+            session.context.clone(),
+            session.task_tx.clone(),
+            None,
+        );
+
+        Ok(session)
+    }
+
     /// Creates and initializes a new `TorrentSession` using options.
     pub(crate) fn new_with_options_internal(
         torrent_path: impl AsRef<Path>,
@@ -180,32 +223,7 @@ impl TorrentSession {
             }
         }
 
-        let (task_tx, task_rx) =
-            std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
-        let executor_thread = spawn_executor(context.clone(), task_rx);
-        spawn_stats_loop_standard(context.clone(), task_tx.clone());
-
-        let session = TorrentSession {
-            context,
-            download_path,
-            peer_workers: Arc::new(Mutex::new(Vec::new())),
-            task_tx,
-            executor_thread: Some(executor_thread),
-            manager: None,
-            #[cfg(feature = "dht")]
-            dht: None,
-            #[cfg(feature = "nat-pmp")]
-            nat_pmp: None,
-        };
-
-        session.context.lock().unwrap().validate()?;
-        config.choking_strategy.spawn_choking_loop(
-            session.context.clone(),
-            session.task_tx.clone(),
-            None,
-        );
-
-        Ok(session)
+        Self::finalize_assembly(context, download_path, &config, false, true)
     }
 
     /// Creates and initializes a new `TorrentSession` using a magnet link and options.
@@ -250,31 +268,7 @@ impl TorrentSession {
                 .set_selected_files(magnet.selected_indices());
         }
 
-        let (task_tx, task_rx) =
-            std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
-        let executor_thread = spawn_executor(context.clone(), task_rx);
-        spawn_stats_loop_magnet(context.clone(), task_tx.clone());
-
-        let session = TorrentSession {
-            context,
-            download_path,
-            peer_workers: Arc::new(Mutex::new(Vec::new())),
-            task_tx,
-            executor_thread: Some(executor_thread),
-            manager: None,
-            #[cfg(feature = "dht")]
-            dht: None,
-            #[cfg(feature = "nat-pmp")]
-            nat_pmp: None,
-        };
-
-        config.choking_strategy.spawn_choking_loop(
-            session.context.clone(),
-            session.task_tx.clone(),
-            None,
-        );
-
-        Ok(session)
+        Self::finalize_assembly(context, download_path, &config, true, false)
     }
 
     /// Dynamically injects one or more BEP 19 WebSeed mirror URLs into the active session.
@@ -1047,28 +1041,10 @@ impl TorrentSession {
     /// Creates a `TorrentSession` using an already constructed `TorrentContext`.
     /// Bypasses all metainfo file parsing and disk checks.
     pub fn new_from_context(context: Arc<Mutex<TorrentContext>>) -> Self {
-        let (task_tx, task_rx) = std::sync::mpsc::channel();
-        let executor_thread = spawn_executor(context.clone(), task_rx);
         let download_path = context.lock().unwrap().download_path.clone();
         let config = context.lock().unwrap().config.clone();
-
-        spawn_stats_loop_standard(context.clone(), task_tx.clone());
-        config
-            .choking_strategy
-            .spawn_choking_loop(context.clone(), task_tx.clone(), None);
-
-        TorrentSession {
-            context,
-            download_path,
-            peer_workers: Arc::new(Mutex::new(Vec::new())),
-            task_tx,
-            executor_thread: Some(executor_thread),
-            manager: None,
-            #[cfg(feature = "dht")]
-            dht: None,
-            #[cfg(feature = "nat-pmp")]
-            nat_pmp: None,
-        }
+        Self::finalize_assembly(context, download_path, &config, false, false)
+            .expect("Finalizing assembly from context should never fail")
     }
 
     /// Spawns a background thread that re-announces to the tracker at the interval returned by

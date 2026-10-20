@@ -178,7 +178,184 @@ pub struct TorrentContext {
     pub webseed_tracker: Mutex<crate::network::webseed_tracker::WebSeedMirrorTracker>,
 }
 
+struct TorrentContextParams {
+    pub info_hash: Vec<u8>,
+    pub tracker_url: String,
+    pub tracker_urls: Vec<String>,
+    pub web_seeds: Vec<String>,
+    pub is_private: bool,
+    pub number_of_pieces: usize,
+    pub piece_length: u32,
+    pub pieces_info_hash: Vec<u8>,
+    pub bitfield: Vec<u8>,
+    pub pieces_missing: Vec<u8>,
+    pub piece_data: Vec<PieceInfo>,
+    pub files_to_download: Vec<FileDetails>,
+    pub total_bytes_to_download: u64,
+    pub status: TorrentStatus,
+    pub file_name: String,
+    pub selector: Arc<dyn PieceSelector>,
+    pub storage: Arc<dyn crate::io_traits::BlockStorage>,
+    pub download_path: std::path::PathBuf,
+    pub config: SessionConfig,
+    #[cfg(feature = "v2")]
+    pub piece_layers: HashMap<[u8; 32], Vec<[u8; 32]>>,
+}
+
 impl TorrentContext {
+    fn new_base(params: TorrentContextParams) -> Self {
+        let piece_priority_queue = {
+            let mut pq = std::collections::BinaryHeap::new();
+            for piece_index in 0..params.number_of_pieces as u32 {
+                pq.push(PieceRarity {
+                    peer_count: 0,
+                    piece_index,
+                });
+            }
+            pq
+        };
+
+        let webseed_tracker = {
+            let mut tracker = crate::network::webseed_tracker::WebSeedMirrorTracker::new(
+                params.config.webseed_failure_threshold,
+                params.config.webseed_base_cooldown_secs,
+                params.config.webseed_max_cooldown_secs,
+            );
+            for ws in &params.web_seeds {
+                tracker.register_mirror(ws);
+            }
+            Mutex::new(tracker)
+        };
+
+        #[cfg(all(feature = "std", feature = "v2"))]
+        let piece_layers_disk_cache = {
+            let cache_dir = params
+                .config
+                .v2_piece_layers_cache_dir
+                .clone()
+                .unwrap_or_else(|| params.download_path.join(".piece_layers"));
+            let cache = Arc::new(
+                crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
+                    &cache_dir,
+                    params.config.v2_piece_layers_cache_max_mb,
+                )
+                .unwrap_or_else(|_| {
+                    crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
+                        std::env::temp_dir().join("bt_piece_layers_fallback"),
+                        params.config.v2_piece_layers_cache_max_mb,
+                    )
+                    .unwrap()
+                }),
+            );
+            if params.config.v2_piece_layers_cache_enabled {
+                for (root, layer) in &params.piece_layers {
+                    let _ = cache.save_piece_layer(root, layer);
+                }
+            }
+            cache
+        };
+
+        TorrentContext {
+            info_hash: params.info_hash,
+            tracker_url: params.tracker_url,
+            tracker_urls: params.tracker_urls,
+            number_of_pieces: params.number_of_pieces,
+            piece_length: params.piece_length,
+            pieces_info_hash: params.pieces_info_hash,
+            bitfield: params.bitfield,
+            files_to_download: params.files_to_download,
+            total_bytes_downloaded: Arc::new(AtomicU64::new(0)),
+            initial_bytes_downloaded: 0,
+            total_bytes_to_download: params.total_bytes_to_download,
+            total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
+            status: params.status,
+            file_name: params.file_name,
+            main_tracker: None,
+            callback_data: None,
+            call_back: None,
+            paused: ManualResetEvent::new(false),
+            download_finished: Arc::new(ManualResetEvent::new(false)),
+            selector: params.selector,
+            peer_swarm: RwLock::new(HashMap::new()),
+            missing_pieces_count: 0,
+            maximum_swarm_size: crate::constants::MAXIMUM_SWARM_SIZE,
+            assembler: Assembler::new(),
+            pieces_missing: params.pieces_missing,
+            piece_data: params.piece_data,
+            bad_peer_scores: Mutex::new(HashMap::new()),
+            storage: params.storage,
+            super_seeding: SuperSeedingState {
+                enabled: params.config.super_seeding,
+                ..Default::default()
+            },
+            config: params.config.clone(),
+            download_path: params.download_path,
+            web_seeds: params.web_seeds,
+            is_private: params.is_private,
+            metadata_size: None,
+            metadata_pieces: alloc::collections::BTreeMap::new(),
+            requested_metadata_pieces: alloc::collections::BTreeMap::new(),
+            info_dict_bytes: None,
+            download_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
+            upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
+            piece_priority_queue: Mutex::new(piece_priority_queue),
+            unchoked_peers_count: AtomicUsize::new(0),
+            pex_dropped_peers: Mutex::new(Vec::new()),
+            pex_added_peers_count: AtomicUsize::new(0),
+            pex_dropped_peers_count: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            file_merkle_trees: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            file_merkle_proofs: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            piece_layers: Mutex::new(params.piece_layers),
+            #[cfg(feature = "v2")]
+            verified_v2_hashes: Mutex::new(HashMap::new()),
+            #[cfg(feature = "v2")]
+            v2_hash_requests_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_requests_received: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hashes_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hashes_received: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_rejects_sent: AtomicUsize::new(0),
+            #[cfg(feature = "v2")]
+            v2_hash_rejects_received: AtomicUsize::new(0),
+            holepunch_rendezvous_sent: AtomicUsize::new(0),
+            holepunch_rendezvous_received: AtomicUsize::new(0),
+            holepunch_connect_sent: AtomicUsize::new(0),
+            holepunch_connect_received: AtomicUsize::new(0),
+            holepunch_error_sent: AtomicUsize::new(0),
+            holepunch_error_received: AtomicUsize::new(0),
+            #[cfg(feature = "webrtc")]
+            webrtc_bridge: Arc::new(crate::network::webrtc::WebTorrentBridge::new()),
+            #[cfg(all(feature = "std", feature = "v2"))]
+            piece_layers_disk_cache,
+            #[cfg(feature = "std")]
+            verification_pool: Arc::new(
+                crate::storage::verification_pool::HashVerificationPool::new(
+                    params.config.verification_workers,
+                    params.config.verification_queue_capacity,
+                ),
+            ),
+            pieces_verifying: Mutex::new(std::collections::HashSet::new()),
+            selected_file_indices: None,
+            expedited_manifest: None,
+            endgame_staging: Mutex::new(
+                crate::storage::erasure_staging::AdaptiveErasureStaging::new(
+                    params.config.endgame_max_clones_per_block,
+                    params.config.endgame_straggler_ratio,
+                ),
+            ),
+            latency_profiler: Mutex::new(
+                crate::network::latency_profiler::SwarmLatencyProfiler::new(),
+            ),
+            webseed_tracker,
+        }
+    }
+
     /// Creates and initializes a `TorrentContext` from parsed metainfo, creating target directories and scanning existing disk files.
     ///
     /// # Errors
@@ -209,23 +386,25 @@ impl TorrentContext {
         let piece_data = vec![
             PieceInfo {
                 peer_count: 0,
-                piece_length
+                piece_length,
             };
             number_of_pieces
         ];
 
-        let context = TorrentContext {
+        let context = Self::new_base(TorrentContextParams {
             info_hash,
             tracker_url,
+            tracker_urls,
+            web_seeds: web_seeds.clone(),
+            is_private,
             number_of_pieces,
             piece_length,
             pieces_info_hash,
             bitfield,
+            pieces_missing,
+            piece_data,
             files_to_download: all_files_to_download,
-            total_bytes_downloaded: Arc::new(AtomicU64::new(0)),
-            initial_bytes_downloaded: 0,
             total_bytes_to_download: total_download_length,
-            total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
             status: if seeding {
                 TorrentStatus::Seeding
             } else {
@@ -235,134 +414,13 @@ impl TorrentContext {
                 .torrent_file_name
                 .to_string_lossy()
                 .to_string(),
-            tracker_urls,
-            main_tracker: None,
-            callback_data: None,
-            call_back: None,
-            paused: ManualResetEvent::new(false),
-            download_finished: Arc::new(ManualResetEvent::new(false)),
             selector,
-            peer_swarm: RwLock::new(HashMap::new()),
-            missing_pieces_count: 0,
-            maximum_swarm_size: crate::constants::MAXIMUM_SWARM_SIZE,
-            assembler: Assembler::new(),
-            pieces_missing,
-            piece_data,
-            bad_peer_scores: Mutex::new(HashMap::new()),
             storage,
-            super_seeding: SuperSeedingState {
-                enabled: config.super_seeding,
-                ..Default::default()
-            },
-            config: config.clone(),
             download_path: download_path.to_path_buf(),
-            web_seeds: web_seeds.clone(),
-            is_private,
-            metadata_size: None,
-            metadata_pieces: alloc::collections::BTreeMap::new(),
-            requested_metadata_pieces: alloc::collections::BTreeMap::new(),
-            info_dict_bytes: None,
-            download_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
-            upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
-            piece_priority_queue: Mutex::new({
-                let mut pq = std::collections::BinaryHeap::new();
-                for piece_index in 0..number_of_pieces as u32 {
-                    pq.push(PieceRarity {
-                        peer_count: 0,
-                        piece_index,
-                    });
-                }
-                pq
-            }),
-            unchoked_peers_count: AtomicUsize::new(0),
-            pex_dropped_peers: Mutex::new(Vec::new()),
-            pex_added_peers_count: AtomicUsize::new(0),
-            pex_dropped_peers_count: AtomicUsize::new(0),
+            config,
             #[cfg(feature = "v2")]
-            file_merkle_trees: Mutex::new(HashMap::new()),
-            #[cfg(feature = "v2")]
-            file_merkle_proofs: Mutex::new(HashMap::new()),
-            #[cfg(feature = "v2")]
-            piece_layers: Mutex::new(torrent_meta_info.get_piece_layers().clone()),
-            #[cfg(feature = "v2")]
-            verified_v2_hashes: Mutex::new(HashMap::new()),
-            #[cfg(feature = "v2")]
-            v2_hash_requests_sent: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hash_requests_received: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hashes_sent: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hashes_received: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hash_rejects_sent: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hash_rejects_received: AtomicUsize::new(0),
-            holepunch_rendezvous_sent: AtomicUsize::new(0),
-            holepunch_rendezvous_received: AtomicUsize::new(0),
-            holepunch_connect_sent: AtomicUsize::new(0),
-            holepunch_connect_received: AtomicUsize::new(0),
-            holepunch_error_sent: AtomicUsize::new(0),
-            holepunch_error_received: AtomicUsize::new(0),
-            #[cfg(feature = "webrtc")]
-            webrtc_bridge: Arc::new(crate::network::webrtc::WebTorrentBridge::new()),
-            #[cfg(all(feature = "std", feature = "v2"))]
-            piece_layers_disk_cache: {
-                let cache_dir = config
-                    .v2_piece_layers_cache_dir
-                    .clone()
-                    .unwrap_or_else(|| download_path.join(".piece_layers"));
-                let cache = Arc::new(
-                    crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
-                        &cache_dir,
-                        config.v2_piece_layers_cache_max_mb,
-                    )
-                    .unwrap_or_else(|_| {
-                        crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
-                            std::env::temp_dir().join("bt_piece_layers_fallback"),
-                            config.v2_piece_layers_cache_max_mb,
-                        )
-                        .unwrap()
-                    }),
-                );
-                if config.v2_piece_layers_cache_enabled {
-                    for (&root, layer) in torrent_meta_info.get_piece_layers() {
-                        let _ = cache.save_piece_layer(&root, layer);
-                    }
-                }
-                cache
-            },
-            #[cfg(feature = "std")]
-            verification_pool: Arc::new(
-                crate::storage::verification_pool::HashVerificationPool::new(
-                    config.verification_workers,
-                    config.verification_queue_capacity,
-                ),
-            ),
-            pieces_verifying: Mutex::new(std::collections::HashSet::new()),
-            selected_file_indices: None,
-            expedited_manifest: None,
-            endgame_staging: Mutex::new(
-                crate::storage::erasure_staging::AdaptiveErasureStaging::new(
-                    config.endgame_max_clones_per_block,
-                    config.endgame_straggler_ratio,
-                ),
-            ),
-            latency_profiler: Mutex::new(
-                crate::network::latency_profiler::SwarmLatencyProfiler::new(),
-            ),
-            webseed_tracker: {
-                let mut tracker = crate::network::webseed_tracker::WebSeedMirrorTracker::new(
-                    config.webseed_failure_threshold,
-                    config.webseed_base_cooldown_secs,
-                    config.webseed_max_cooldown_secs,
-                );
-                for ws in &web_seeds {
-                    tracker.register_mirror(ws);
-                }
-                Mutex::new(tracker)
-            },
-        };
+            piece_layers: torrent_meta_info.get_piece_layers().clone(),
+        });
         Ok(context)
     }
 
@@ -380,129 +438,29 @@ impl TorrentContext {
         let tracker_url = tracker_urls.get(0).cloned().unwrap_or_default();
         let storage = Arc::new(crate::io_traits::MemStorage::new(0));
 
-        let context = TorrentContext {
+        let context = Self::new_base(TorrentContextParams {
             info_hash,
             tracker_url,
+            tracker_urls,
             web_seeds: Vec::new(),
             is_private: false,
             number_of_pieces: 0,
             piece_length: 0,
             pieces_info_hash: Vec::new(),
             bitfield: Vec::new(),
-            files_to_download: Vec::new(),
-            total_bytes_downloaded: Arc::new(AtomicU64::new(0)),
-            initial_bytes_downloaded: 0,
-            total_bytes_to_download: 0,
-            total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
-            status: TorrentStatus::Initialised,
-            file_name: String::new(),
-            tracker_urls,
-            main_tracker: None,
-            callback_data: None,
-            call_back: None,
-            paused: ManualResetEvent::new(false),
-            download_finished: Arc::new(ManualResetEvent::new(false)),
-            selector,
-            peer_swarm: RwLock::new(HashMap::new()),
-            missing_pieces_count: 0,
-            maximum_swarm_size: crate::constants::MAXIMUM_SWARM_SIZE,
-            assembler: Assembler::new(),
             pieces_missing: Vec::new(),
             piece_data: Vec::new(),
-            bad_peer_scores: Mutex::new(HashMap::new()),
+            files_to_download: Vec::new(),
+            total_bytes_to_download: 0,
+            status: TorrentStatus::Initialised,
+            file_name: String::new(),
+            selector,
             storage,
-            super_seeding: SuperSeedingState {
-                enabled: config.super_seeding,
-                ..Default::default()
-            },
-            config: config.clone(),
             download_path: download_path.to_path_buf(),
-            metadata_size: None,
-            metadata_pieces: alloc::collections::BTreeMap::new(),
-            requested_metadata_pieces: alloc::collections::BTreeMap::new(),
-            info_dict_bytes: None,
-            download_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
-            upload_speed_tracker: Mutex::new((std::time::Instant::now(), 0, 0)),
-            piece_priority_queue: Mutex::new(std::collections::BinaryHeap::new()),
-            unchoked_peers_count: AtomicUsize::new(0),
-            pex_dropped_peers: Mutex::new(Vec::new()),
-            pex_added_peers_count: AtomicUsize::new(0),
-            pex_dropped_peers_count: AtomicUsize::new(0),
+            config,
             #[cfg(feature = "v2")]
-            file_merkle_trees: Mutex::new(HashMap::new()),
-            #[cfg(feature = "v2")]
-            file_merkle_proofs: Mutex::new(HashMap::new()),
-            #[cfg(feature = "v2")]
-            piece_layers: Mutex::new(HashMap::new()),
-            #[cfg(feature = "v2")]
-            verified_v2_hashes: Mutex::new(HashMap::new()),
-            #[cfg(feature = "v2")]
-            v2_hash_requests_sent: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hash_requests_received: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hashes_sent: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hashes_received: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hash_rejects_sent: AtomicUsize::new(0),
-            #[cfg(feature = "v2")]
-            v2_hash_rejects_received: AtomicUsize::new(0),
-            holepunch_rendezvous_sent: AtomicUsize::new(0),
-            holepunch_rendezvous_received: AtomicUsize::new(0),
-            holepunch_connect_sent: AtomicUsize::new(0),
-            holepunch_connect_received: AtomicUsize::new(0),
-            holepunch_error_sent: AtomicUsize::new(0),
-            holepunch_error_received: AtomicUsize::new(0),
-            #[cfg(feature = "webrtc")]
-            webrtc_bridge: Arc::new(crate::network::webrtc::WebTorrentBridge::new()),
-            #[cfg(all(feature = "std", feature = "v2"))]
-            piece_layers_disk_cache: {
-                let cache_dir = config
-                    .v2_piece_layers_cache_dir
-                    .clone()
-                    .unwrap_or_else(|| download_path.join(".piece_layers"));
-                Arc::new(
-                    crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
-                        &cache_dir,
-                        config.v2_piece_layers_cache_max_mb,
-                    )
-                    .unwrap_or_else(|_| {
-                        crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
-                            std::env::temp_dir().join("bt_piece_layers_fallback"),
-                            config.v2_piece_layers_cache_max_mb,
-                        )
-                        .unwrap()
-                    }),
-                )
-            },
-            #[cfg(feature = "std")]
-            verification_pool: Arc::new(
-                crate::storage::verification_pool::HashVerificationPool::new(
-                    config.verification_workers,
-                    config.verification_queue_capacity,
-                ),
-            ),
-            pieces_verifying: Mutex::new(std::collections::HashSet::new()),
-            selected_file_indices: None,
-            expedited_manifest: None,
-            endgame_staging: Mutex::new(
-                crate::storage::erasure_staging::AdaptiveErasureStaging::new(
-                    config.endgame_max_clones_per_block,
-                    config.endgame_straggler_ratio,
-                ),
-            ),
-            latency_profiler: Mutex::new(
-                crate::network::latency_profiler::SwarmLatencyProfiler::new(),
-            ),
-            webseed_tracker: Mutex::new(
-                crate::network::webseed_tracker::WebSeedMirrorTracker::new(
-                    config.webseed_failure_threshold,
-                    config.webseed_base_cooldown_secs,
-                    config.webseed_max_cooldown_secs,
-                ),
-            ),
-        };
+            piece_layers: HashMap::new(),
+        });
         Ok(context)
     }
 
