@@ -1,6 +1,8 @@
 #[cfg(feature = "std")]
 pub mod builder;
 #[cfg(feature = "std")]
+pub mod choking_policy;
+#[cfg(feature = "std")]
 pub mod client;
 #[cfg(feature = "std")]
 pub mod config;
@@ -15,6 +17,11 @@ pub mod worker;
 
 #[cfg(feature = "std")]
 pub use self::builder::{TorrentSessionBuilder, TorrentSource};
+#[cfg(feature = "std")]
+pub use self::choking_policy::{
+    BitTyrantPolicy, ChokingDecision, ChokingPolicy, PolicyChokingStrategy, RoundRobinPolicy,
+    StandardTitForTatPolicy,
+};
 #[cfg(feature = "std")]
 pub use self::client::*;
 #[cfg(feature = "std")]

@@ -355,4 +355,21 @@ impl SessionConfig {
         self.webseed_timeout_secs = secs.max(1);
         self
     }
+
+    /// Sets a custom pluggable choking policy (OCP & SRP).
+    pub fn with_choking_policy(
+        mut self,
+        policy: Arc<dyn crate::session::choking_policy::ChokingPolicy>,
+    ) -> Self {
+        self.choking_strategy = Arc::new(
+            crate::session::choking_policy::PolicyChokingStrategy::new(policy),
+        );
+        self
+    }
+
+    /// Sets a custom choking strategy.
+    pub fn with_choking_strategy(mut self, strategy: Arc<dyn ChokingStrategy>) -> Self {
+        self.choking_strategy = strategy;
+        self
+    }
 }

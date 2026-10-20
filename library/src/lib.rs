@@ -106,8 +106,8 @@ pub use core::torrent_context::{
 pub use core::views;
 #[cfg(feature = "std")]
 pub use core::views::{
-    MockPieceAvailabilityView, PeerSnapshot, PieceAvailabilityView, RemotePeerPieceView, SwarmView,
-    TransferStatsView,
+    MockPieceAvailabilityView, MockSwarmView, PeerSnapshot, PieceAvailabilityView,
+    RemotePeerPieceView, SwarmView, TransferStatsView,
 };
 
 #[cfg(feature = "std")]
@@ -266,10 +266,14 @@ pub use network::peer_event::{
     ContextEventListener, NullPeerEventListener, PeerEventListener, RecordingPeerEventListener,
 };
 #[cfg(feature = "std")]
+pub use session::choking_policy::{
+    BitTyrantPolicy, ChokingDecision, ChokingPolicy, PolicyChokingStrategy, RoundRobinPolicy,
+    StandardTitForTatPolicy,
+};
+#[cfg(feature = "std")]
 pub use session::client::TorrentClient;
 #[cfg(feature = "std")]
-#[cfg(feature = "std")]
-pub use session::config::SessionConfig;
+pub use session::config::{ChokingStrategy, SessionConfig, StandardChoking};
 #[cfg(feature = "std")]
 pub use session::session::{TorrentSession, TorrentSessionBuilder};
 #[cfg(feature = "std")]

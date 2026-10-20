@@ -273,7 +273,7 @@ Furthermore, placeholder storages used during magnet links bootstrap risked LSP 
 
 ---
 
-### Phase 6: Policy-Based Choking Engine (OCP & SRP)
+### Phase 6: Policy-Based Choking Engine (OCP & SRP) [COMPLETED]
 
 #### Problem Statement
 In [`library/src/session/config.rs`](file:///c:/Projects/BitTorrent/library/src/session/config.rs) (lines 105–114), `ChokingStrategy` requires:
@@ -291,43 +291,25 @@ This forces any strategy implementation to handle thread channels, asynchronous 
 
 #### Target Architecture
 Separate the **choking algorithm policy** from the **loop execution runtime**:
-- `ChokingPolicy`: Pure algorithmic evaluation (`fn evaluate(&self, swarm: &dyn SwarmView) -> ChokingDecisions`).
-- `ChokingLoopRunner`: Handles asynchronous timers, task queues, and sends message actions.
+- `ChokingPolicy`: Pure algorithmic evaluation (`fn evaluate(&self, swarm: &dyn SwarmView, max_upload_slots: usize, is_seeding: bool) -> ChokingDecision`).
+- `PolicyChokingStrategy`: Implements `ChokingStrategy`, drives the asynchronous periodic loop, updates rolling bandwidth rates, calls any `ChokingPolicy`, and dispatches `PeerAction` commands.
 
-#### Implementation Specifications
-
-```rust
-// library/src/session/choking_policy.rs
-
-pub struct ChokingDecision {
-    pub unchoked_peers: Vec<String>,
-    pub optimistically_unchoked_peer: Option<String>,
-    pub choked_peers: Vec<String>,
-}
-
-pub trait ChokingPolicy: Send + Sync + std::fmt::Debug {
-    /// Evaluates connected peers and determines who should be choked/unchoked.
-    fn evaluate(
-        &self,
-        swarm: &dyn SwarmView,
-        max_upload_slots: usize,
-    ) -> ChokingDecision;
-}
-
-#[derive(Debug, Default)]
-pub struct StandardTitForTatPolicy;
-
-impl ChokingPolicy for StandardTitForTatPolicy {
-    fn evaluate(&self, swarm: &dyn SwarmView, max_upload_slots: usize) -> ChokingDecision {
-        // Pure ranking based on download rate and reciprocal unchoking
-    }
-}
-```
-
-#### Affected Files to Update
-- Create `library/src/session/choking_policy.rs`.
-- Update `library/src/session/config.rs` (embed `Arc<dyn ChokingPolicy>`).
-- Update `library/src/session/worker.rs` (generic runner invoking policy).
+#### Completed Deliverables
+1. **Mock Swarm Testing Harness (ISP & SRP)**:
+   - Added [`MockSwarmView`](file:///c:/Projects/BitTorrent/library/src/core/views.rs#L258-L293) in `library/src/core/views.rs` implementing `SwarmView` for pure unit testing without network sockets or async runtimes.
+2. **Pluggable Policy Engine (OCP & SRP)**:
+   - Defined [`ChokingDecision`](file:///c:/Projects/BitTorrent/library/src/session/choking_policy.rs#L26-L34) and [`ChokingPolicy`](file:///c:/Projects/BitTorrent/library/src/session/choking_policy.rs#L36-L45) trait in `library/src/session/choking_policy.rs`.
+   - Implemented [`StandardTitForTatPolicy`](file:///c:/Projects/BitTorrent/library/src/session/choking_policy.rs#L52-L150) (BEP 3 reciprocal rate sorting + rotating optimistic unchoking).
+   - Implemented [`RoundRobinPolicy`](file:///c:/Projects/BitTorrent/library/src/session/choking_policy.rs#L152-L214) (uniform slot rotation across interested peers).
+   - Implemented [`BitTyrantPolicy`](file:///c:/Projects/BitTorrent/library/src/session/choking_policy.rs#L216-L275) (strategic reciprocity ratio ranking).
+   - Implemented [`PolicyChokingStrategy`](file:///c:/Projects/BitTorrent/library/src/session/choking_policy.rs#L277-L411) implementing `ChokingStrategy`.
+3. **Session & Configuration Integration**:
+   - Refactored [`StandardChoking`](file:///c:/Projects/BitTorrent/library/src/session/session.rs#L1246-L1258) in `library/src/session/session.rs` to delegate to `PolicyChokingStrategy::new(Arc::new(StandardTitForTatPolicy::default()))`, eliminating 160+ lines of duplicate inline code.
+   - Added [`SessionConfig::with_choking_policy`](file:///c:/Projects/BitTorrent/library/src/session/config.rs#L366-L372) and [`SessionConfig::with_choking_strategy`](file:///c:/Projects/BitTorrent/library/src/session/config.rs#L374-L376).
+   - Re-exported all choking types in `library/src/session/mod.rs` and `library/src/lib.rs`.
+4. **Comprehensive Test Suite & Quality Verification**:
+   - Created test suite [`library/tests/solid_phase6_tests.rs`](file:///c:/Projects/BitTorrent/library/tests/solid_phase6_tests.rs) testing standard Tit-for-Tat downloading/seeding mode, optimistic unchoke rotation, Round-Robin fairness, BitTyrant efficiency ratio, and configuration builders.
+   - 100% test pass rate across `cargo test --workspace` with 0 warnings on `cargo clippy --workspace --all-targets -- -D warnings` and `#![no_std]` core build verification passing.
 
 ---
 

@@ -254,3 +254,41 @@ impl PieceAvailabilityView for MockPieceAvailabilityView {
         self.peer_counts.get(piece as usize).copied().unwrap_or(0)
     }
 }
+
+/// Lightweight mock implementation of `SwarmView` for isolated unit tests.
+#[derive(Debug, Clone, Default)]
+pub struct MockSwarmView {
+    pub peers: Vec<PeerSnapshot>,
+    pub unchoked_count: usize,
+}
+
+impl MockSwarmView {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_peer(mut self, snapshot: PeerSnapshot) -> Self {
+        if !snapshot.am_choking {
+            self.unchoked_count += 1;
+        }
+        self.peers.push(snapshot);
+        self
+    }
+}
+
+impl SwarmView for MockSwarmView {
+    fn connected_peers_count(&self) -> usize {
+        self.peers.len()
+    }
+
+    fn unchoked_peers_count(&self) -> usize {
+        self.unchoked_count
+    }
+
+    fn for_each_peer(&self, f: &mut dyn FnMut(&str, &PeerSnapshot)) {
+        for p in &self.peers {
+            f(&p.ip, p);
+        }
+    }
+}
+
