@@ -17,6 +17,7 @@ This folder contains the architecture, API reference, roadmap, and design docume
 
 ## History & Planning
 - [roadmap.md](file:///c:/Projects/BitTorrent/docs/roadmap.md) — Implementation milestones (Phases 1–16), completed phases, and future improvements.
+- [dry-refactor-plan.md](file:///c:/Projects/BitTorrent/docs/dry-refactor-plan.md) — Concrete refactoring plan to eliminate code duplication across the workspace.
 
 ---
 

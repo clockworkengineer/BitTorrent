@@ -68,4 +68,5 @@ Replace `[torrent-file]` with the path to a `.torrent` file and `[download-dir]`
 - [`docs/use-cases.md`](docs/use-cases.md) — potential applications and architectures using the library
 - [`docs/sync-hub.md`](docs/sync-hub.md) — local-first encrypted file-syncing hub user guide
 - [`docs/solid-refactor-plan.md`](docs/solid-refactor-plan.md) — concrete plan to refactor library and clients to adhere strictly to SOLID principles
+- [`docs/dry-refactor-plan.md`](docs/dry-refactor-plan.md) — concrete refactoring plan to eliminate code duplication across workspace
 
