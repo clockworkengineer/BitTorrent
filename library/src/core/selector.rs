@@ -3,13 +3,16 @@
 //! Provides the pluggable `PieceSelector` trait to customize piece selection
 //! strategies (e.g. rarest-first vs. sequential download).
 
-use crate::core::torrent_context::TorrentContext;
-use crate::peer::Peer;
+use crate::core::views::{PieceAvailabilityView, RemotePeerPieceView};
 
-/// Pluggable piece selection strategy.
+/// Pluggable piece selection strategy (ISP & DIP).
 pub trait PieceSelector: std::fmt::Debug + Send + Sync {
-    /// Selects the next piece index to request from the remote peer.
-    fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32>;
+    /// Selects the next piece index to request from the remote peer using segregated views.
+    fn select_piece(
+        &self,
+        availability: &dyn PieceAvailabilityView,
+        peer: &dyn RemotePeerPieceView,
+    ) -> Option<u32>;
 }
 
 /// Rarest-First piece selection strategy (default).
@@ -17,53 +20,14 @@ pub trait PieceSelector: std::fmt::Debug + Send + Sync {
 pub struct RarestFirstSelector;
 
 impl PieceSelector for RarestFirstSelector {
-    /// Selects the next piece index to request from the remote peer using a priority queue (binary heap).
-    ///
-    /// # Performance Trade-off
-    /// - **Time Complexity**: Pushing/updating the priority queue takes O(log N) where N is the number of pieces.
-    ///   Peeking and popping from the heap takes O(log N) amortized.
-    /// - **Stale entries**: Populated incrementally when peer counts change, keeping selection efficient.
-    ///   This eliminates the previous linear O(N) scan per peer request.
-    /// - **Memory Trade-off**: Requires a small amount of extra memory to maintain the heap structure.
-    fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32> {
-        let mut pq = context.piece_priority_queue.lock().unwrap();
-        let mut temporary_list = Vec::new();
-        let mut selected = None;
-
-        while let Some(rarity) = pq.peek() {
-            let piece = rarity.piece_index;
-            // Check if this piece is desired (not skipped by selective download)
-            if !context.is_piece_wanted(piece) {
-                pq.pop();
-                continue;
-            }
-            // Check if this entry is stale (piece already completed locally or currently verifying)
-            if context.is_piece_local(piece) || context.is_piece_verifying(piece) {
-                pq.pop();
-                continue;
-            }
-            // Check if peer count has changed (lazy deletion of stale entries)
-            if context.get_piece_peer_count(piece) != rarity.peer_count {
-                pq.pop();
-                continue;
-            }
-            // It's valid! Now check if the remote peer actually has this piece.
-            if peer.is_piece_on_remote_peer(piece) {
-                selected = Some(piece);
-                break;
-            } else {
-                // Stash it temporarily because we can't request it from this peer,
-                // but other peers might have it.
-                temporary_list.push(pq.pop().unwrap());
-            }
-        }
-
-        // Put back the items we popped that this peer didn't have
-        for item in temporary_list {
-            pq.push(item);
-        }
-
-        selected
+    /// Selects the next piece index to request from the remote peer using the availability view's
+    /// prioritized index (O(log N) priority queue on TorrentContext or linear scan on mocks).
+    fn select_piece(
+        &self,
+        availability: &dyn PieceAvailabilityView,
+        peer: &dyn RemotePeerPieceView,
+    ) -> Option<u32> {
+        availability.pop_rarest_piece(peer)
     }
 }
 
@@ -72,11 +36,15 @@ impl PieceSelector for RarestFirstSelector {
 pub struct SequentialSelector;
 
 impl PieceSelector for SequentialSelector {
-    fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32> {
-        (0..context.number_of_pieces as u32).find(|&piece| {
-            context.is_piece_wanted(piece)
-                && !context.is_piece_local(piece)
-                && !context.is_piece_verifying(piece)
+    fn select_piece(
+        &self,
+        availability: &dyn PieceAvailabilityView,
+        peer: &dyn RemotePeerPieceView,
+    ) -> Option<u32> {
+        (0..availability.number_of_pieces() as u32).find(|&piece| {
+            availability.is_piece_wanted(piece)
+                && !availability.is_piece_local(piece)
+                && !availability.is_piece_verifying(piece)
                 && peer.is_piece_on_remote_peer(piece)
         })
     }
@@ -126,11 +94,15 @@ impl StreamingPieceSelector {
 }
 
 impl PieceSelector for StreamingPieceSelector {
-    fn select_piece(&self, context: &TorrentContext, peer: &Peer) -> Option<u32> {
+    fn select_piece(
+        &self,
+        availability: &dyn PieceAvailabilityView,
+        peer: &dyn RemotePeerPieceView,
+    ) -> Option<u32> {
         let cursor = self
             .cursor_piece
             .load(core::sync::atomic::Ordering::Relaxed);
-        let total_pieces = context.number_of_pieces as u32;
+        let total_pieces = availability.number_of_pieces() as u32;
 
         if total_pieces == 0 {
             return None;
@@ -140,9 +112,9 @@ impl PieceSelector for StreamingPieceSelector {
 
         // 1. Check lookahead window [cursor .. cursor + lookahead_window)
         for piece in cursor..window_end {
-            if context.is_piece_wanted(piece)
-                && !context.is_piece_local(piece)
-                && !context.is_piece_verifying(piece)
+            if availability.is_piece_wanted(piece)
+                && !availability.is_piece_local(piece)
+                && !availability.is_piece_verifying(piece)
                 && peer.is_piece_on_remote_peer(piece)
             {
                 return Some(piece);
@@ -151,9 +123,9 @@ impl PieceSelector for StreamingPieceSelector {
 
         // 2. Check remaining pieces from window_end to end of torrent
         for piece in window_end..total_pieces {
-            if context.is_piece_wanted(piece)
-                && !context.is_piece_local(piece)
-                && !context.is_piece_verifying(piece)
+            if availability.is_piece_wanted(piece)
+                && !availability.is_piece_local(piece)
+                && !availability.is_piece_verifying(piece)
                 && peer.is_piece_on_remote_peer(piece)
             {
                 return Some(piece);
@@ -162,9 +134,9 @@ impl PieceSelector for StreamingPieceSelector {
 
         // 3. Wrap around [0 .. cursor)
         for piece in 0..cursor.min(total_pieces) {
-            if context.is_piece_wanted(piece)
-                && !context.is_piece_local(piece)
-                && !context.is_piece_verifying(piece)
+            if availability.is_piece_wanted(piece)
+                && !availability.is_piece_local(piece)
+                && !availability.is_piece_verifying(piece)
                 && peer.is_piece_on_remote_peer(piece)
             {
                 return Some(piece);

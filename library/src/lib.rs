@@ -102,6 +102,13 @@ pub use core::selector;
 pub use core::torrent_context::{
     PieceWriteAccess, SessionStatusQuery, SwarmReadAccess, TorrentStatus,
 };
+#[cfg(feature = "std")]
+pub use core::views;
+#[cfg(feature = "std")]
+pub use core::views::{
+    MockPieceAvailabilityView, PeerSnapshot, PieceAvailabilityView, RemotePeerPieceView, SwarmView,
+    TransferStatsView,
+};
 
 #[cfg(feature = "std")]
 pub use network::announcer;

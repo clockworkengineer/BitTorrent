@@ -2897,3 +2897,116 @@ impl SessionStatusQuery for TorrentContext {
         self.total_bytes_uploaded.load(Ordering::Relaxed)
     }
 }
+
+impl crate::core::views::PieceAvailabilityView for TorrentContext {
+    fn number_of_pieces(&self) -> usize {
+        self.number_of_pieces
+    }
+
+    fn piece_length(&self, piece: u32) -> u32 {
+        self.get_piece_length(piece)
+    }
+
+    fn is_piece_local(&self, piece: u32) -> bool {
+        self.is_piece_local(piece)
+    }
+
+    fn is_piece_wanted(&self, piece: u32) -> bool {
+        self.is_piece_wanted(piece)
+    }
+
+    fn is_piece_verifying(&self, piece: u32) -> bool {
+        self.is_piece_verifying(piece)
+    }
+
+    fn peer_count_for_piece(&self, piece: u32) -> usize {
+        self.get_piece_peer_count(piece)
+    }
+
+    fn pop_rarest_piece(&self, peer: &dyn crate::core::views::RemotePeerPieceView) -> Option<u32> {
+        let mut pq = self.piece_priority_queue.lock().unwrap();
+        let mut temporary_list = Vec::new();
+        let mut selected = None;
+
+        while let Some(rarity) = pq.peek() {
+            let piece = rarity.piece_index;
+            if !self.is_piece_wanted(piece) {
+                pq.pop();
+                continue;
+            }
+            if self.is_piece_local(piece) || self.is_piece_verifying(piece) {
+                pq.pop();
+                continue;
+            }
+            if self.get_piece_peer_count(piece) != rarity.peer_count {
+                pq.pop();
+                continue;
+            }
+            if peer.is_piece_on_remote_peer(piece) {
+                selected = Some(piece);
+                break;
+            } else {
+                temporary_list.push(pq.pop().unwrap());
+            }
+        }
+
+        for item in temporary_list {
+            pq.push(item);
+        }
+
+        selected
+    }
+}
+
+impl crate::core::views::SwarmView for TorrentContext {
+    fn connected_peers_count(&self) -> usize {
+        self.peer_swarm.read().unwrap().len()
+    }
+
+    fn unchoked_peers_count(&self) -> usize {
+        self.unchoked_peers_count.load(Ordering::Relaxed)
+    }
+
+    fn for_each_peer(&self, f: &mut dyn FnMut(&str, &crate::core::views::PeerSnapshot)) {
+        if let Ok(swarm) = self.peer_swarm.read() {
+            for (ip, peer_arc) in swarm.iter() {
+                if let Ok(p) = peer_arc.lock() {
+                    let snapshot = crate::core::views::PeerSnapshot {
+                        ip: p.ip.clone(),
+                        port: p.port,
+                        am_choking: p.am_choking,
+                        am_interested: p.am_interested,
+                        peer_choking: p.peer_choking.wait_one(0),
+                        peer_interested: p.peer_interested,
+                        download_rate: p.rolling_download_rate,
+                        upload_rate: p.rolling_upload_rate,
+                    };
+                    f(ip, &snapshot);
+                }
+            }
+        }
+    }
+}
+
+impl crate::core::views::TransferStatsView for TorrentContext {
+    fn total_downloaded(&self) -> u64 {
+        self.total_bytes_downloaded.load(Ordering::Relaxed)
+    }
+
+    fn total_uploaded(&self) -> u64 {
+        self.total_bytes_uploaded.load(Ordering::Relaxed)
+    }
+
+    fn current_download_rate(&self) -> u64 {
+        self.bytes_per_second().max(0) as u64
+    }
+
+    fn current_upload_rate(&self) -> u64 {
+        self.upload_bytes_per_second().max(0) as u64
+    }
+
+    fn progress_percent(&self) -> f32 {
+        self.progress_percent()
+    }
+}
+

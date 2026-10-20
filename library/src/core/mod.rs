@@ -19,4 +19,6 @@ pub mod torrent_context;
 pub mod torrent_upgrader;
 #[cfg(feature = "std")]
 pub mod transfer_metrics;
+#[cfg(feature = "std")]
+pub mod views;
 
