@@ -16,7 +16,7 @@ use axum::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use torrent_client_shared::{IpcMessage, IpcReply};
+use torrent_client_shared::{IpcClient, IpcMessage, IpcReply};
 
 #[derive(Clone)]
 struct AppState {
@@ -25,61 +25,7 @@ struct AppState {
 }
 
 fn execute_ipc(msg: IpcMessage) -> Result<IpcReply, String> {
-    let serialized = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
-
-    #[cfg(unix)]
-    let response_str = {
-        use std::io::{BufRead, BufReader, Write};
-        use std::os::unix::net::UnixStream;
-        let mut stream = UnixStream::connect("/tmp/bt-daemon.sock").map_err(|e| e.to_string())?;
-        let mut msg_bytes = serialized.into_bytes();
-        msg_bytes.push(b'\n');
-        // Map io::Error to String since execute_ipc returns Result<_, String>
-        stream.write_all(&msg_bytes).map_err(|e| e.to_string())?;
-        stream.flush().map_err(|e| e.to_string())?;
-        let mut reader = BufReader::new(stream);
-        let mut reply = String::new();
-        reader.read_line(&mut reply).map_err(|e| e.to_string())?;
-        reply
-    };
-
-    #[cfg(windows)]
-    let response_str = {
-        use std::fs::OpenOptions;
-        use std::io::{BufRead, BufReader, Write};
-        let mut file = None;
-        for _ in 0..10 {
-            match OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open("\\\\.\\pipe\\bt-daemon")
-            {
-                Ok(f) => {
-                    file = Some(f);
-                    break;
-                }
-                Err(e) => {
-                    if e.raw_os_error() == Some(231) {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                        continue;
-                    }
-                    return Err(e.to_string());
-                }
-            }
-        }
-        let mut file = file.ok_or_else(|| "All pipe instances are busy".to_string())?;
-        let mut bytes = serialized.into_bytes();
-        bytes.push(b'\n');
-        file.write_all(&bytes).map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())?;
-        let mut reader = BufReader::new(file);
-        let mut reply = String::new();
-        reader.read_line(&mut reply).map_err(|e| e.to_string())?;
-        reply
-    };
-
-    let reply: IpcReply = serde_json::from_str(&response_str).map_err(|e| e.to_string())?;
-    Ok(reply)
+    IpcClient::send("bt-daemon", &msg)
 }
 
 // REST Handlers

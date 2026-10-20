@@ -4,47 +4,8 @@
 //! sends control commands, and displays statuses/results.
 
 use std::env;
-use torrent_client_shared::{IpcMessage, IpcReply, TorrentStatusInfo, fmt_bytes};
+use torrent_client_shared::{IpcClient, IpcMessage, IpcReply, TorrentStatusInfo, fmt_bytes};
 
-#[cfg(unix)]
-mod ipc_client {
-    use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
-
-    pub fn send_message(name: &str, msg: &str) -> std::io::Result<String> {
-        let path = format!("/tmp/{}.sock", name);
-        let mut stream = UnixStream::connect(path)?;
-        let mut msg_bytes = msg.as_bytes().to_vec();
-        msg_bytes.push(b'\n');
-        stream.write_all(&msg_bytes)?;
-        stream.flush()?;
-
-        let mut reader = BufReader::new(stream);
-        let mut reply = String::new();
-        reader.read_line(&mut reply)?;
-        Ok(reply)
-    }
-}
-
-#[cfg(windows)]
-mod ipc_client {
-    use std::fs::OpenOptions;
-    use std::io::{BufRead, BufReader, Write};
-
-    pub fn send_message(name: &str, msg: &str) -> std::io::Result<String> {
-        let pipe_path = format!("\\\\.\\pipe\\{}", name);
-        let mut file = OpenOptions::new().read(true).write(true).open(&pipe_path)?;
-        let mut msg_bytes = msg.as_bytes().to_vec();
-        msg_bytes.push(b'\n');
-        file.write_all(&msg_bytes)?;
-        file.flush()?;
-
-        let mut reader = BufReader::new(file);
-        let mut reply = String::new();
-        reader.read_line(&mut reply)?;
-        Ok(reply)
-    }
-}
 
 fn print_usage() {
     println!("BitTorrent CLI Companion Tool (bt-cli)\n");
@@ -819,121 +780,104 @@ fn main() {
         }
     };
 
-    let serialized = match serde_json::to_string(&message) {
-        Ok(s) => s,
+    println!("Connecting to daemon...");
+    let reply = match IpcClient::send("bt-daemon", &message) {
+        Ok(r) => r,
         Err(e) => {
-            eprintln!("Failed to serialize command: {}", e);
+            eprintln!("Failed to communicate with daemon: {}", e);
             return;
         }
     };
 
-    println!("Connecting to daemon...");
-    match ipc_client::send_message("bt-daemon", &serialized) {
-        Ok(response_str) => {
-            let reply: IpcReply = match serde_json::from_str(&response_str) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Received invalid response from daemon: {}", e);
-                    eprintln!("Raw response: {}", response_str);
-                    return;
-                }
-            };
-
-            match reply {
-                IpcReply::Success { message } => {
-                    println!("Success: {}", message);
-                }
-                IpcReply::StatusList { torrents } => {
-                    print_status_table(&torrents);
-                }
-                IpcReply::FileList { files } => {
-                    println!(
-                        "{:<6} {:<45} {:<12} {:<7} PRIORITY",
-                        "INDEX", "NAME", "SIZE", "MEDIA"
-                    );
-                    println!("{}", "-".repeat(82));
-                    for f in files {
-                        println!(
-                            "{:<6} {:<45} {:<12} {:<7} {}",
-                            f.index,
-                            if f.name.len() > 43 {
-                                format!("{}...", &f.name[..40])
-                            } else {
-                                f.name
-                            },
-                            torrent_client_shared::fmt_bytes(f.length),
-                            if f.is_media { "YES" } else { "NO" },
-                            f.priority
-                        );
-                    }
-                }
-                IpcReply::PeerList { peers } => {
-                    if peers.is_empty() {
-                        println!("No peers currently connected to this torrent.");
+    match reply {
+        IpcReply::Success { message } => {
+            println!("Success: {}", message);
+        }
+        IpcReply::StatusList { torrents } => {
+            print_status_table(&torrents);
+        }
+        IpcReply::FileList { files } => {
+            println!(
+                "{:<6} {:<45} {:<12} {:<7} PRIORITY",
+                "INDEX", "NAME", "SIZE", "MEDIA"
+            );
+            println!("{}", "-".repeat(82));
+            for f in files {
+                println!(
+                    "{:<6} {:<45} {:<12} {:<7} {}",
+                    f.index,
+                    if f.name.len() > 43 {
+                        format!("{}...", &f.name[..40])
                     } else {
-                        println!(
-                            "{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | FLAGS",
-                            "IP:PORT", "CLIENT", "PROGRESS", "DOWN RATE", "UP RATE"
-                        );
-                        println!("{}", "-".repeat(95));
-                        for p in peers {
-                            let endpoint = format!("{}:{}", p.ip, p.port);
-                            let progress_str = format!("{:.1}%", p.progress * 100.0);
-                            let down_str = format!("{}/s", fmt_bytes(p.down_rate));
-                            let up_str = format!("{}/s", fmt_bytes(p.up_rate));
-                            println!(
-                                "{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | {}",
-                                endpoint, p.client, progress_str, down_str, up_str, p.flags
-                            );
-                        }
-                    }
-                }
-                IpcReply::PieceStates { info } => {
-                    let pct = if info.total_pieces > 0 {
-                        (info.have_pieces as f64 / info.total_pieces as f64) * 100.0
-                    } else {
-                        0.0
-                    };
+                        f.name
+                    },
+                    torrent_client_shared::fmt_bytes(f.length),
+                    if f.is_media { "YES" } else { "NO" },
+                    f.priority
+                );
+            }
+        }
+        IpcReply::PeerList { peers } => {
+            if peers.is_empty() {
+                println!("No peers currently connected to this torrent.");
+            } else {
+                println!(
+                    "{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | FLAGS",
+                    "IP:PORT", "CLIENT", "PROGRESS", "DOWN RATE", "UP RATE"
+                );
+                println!("{}", "-".repeat(95));
+                for p in peers {
+                    let endpoint = format!("{}:{}", p.ip, p.port);
+                    let progress_str = format!("{:.1}%", p.progress * 100.0);
+                    let down_str = format!("{}/s", fmt_bytes(p.down_rate));
+                    let up_str = format!("{}/s", fmt_bytes(p.up_rate));
                     println!(
-                        "Piece Summary: {} / {} completed ({:.1}%) • Piece Size: {}",
-                        info.have_pieces,
-                        info.total_pieces,
-                        pct,
-                        fmt_bytes(info.piece_length as u64)
+                        "{:<22} | {:<24} | {:<8} | {:<12} | {:<12} | {}",
+                        endpoint, p.client, progress_str, down_str, up_str, p.flags
                     );
-
-                    let max_rarity = info.swarm_rarity.iter().copied().max().unwrap_or(0);
-                    println!(
-                        "Swarm Availability: Max peer copies for a piece: {}",
-                        max_rarity
-                    );
-
-                    // Render mini ASCII availability / completion bar (50 characters wide)
-                    let bar_width = 50.min(info.total_pieces);
-                    if bar_width > 0 {
-                        let mut bar = String::with_capacity(bar_width);
-                        for i in 0..bar_width {
-                            let piece_idx = (i * info.total_pieces) / bar_width;
-                            if info.local_have.get(piece_idx).copied().unwrap_or(false) {
-                                bar.push('█'); // Completed locally
-                            } else if info.swarm_rarity.get(piece_idx).copied().unwrap_or(0) > 0 {
-                                bar.push('▒'); // Available in swarm
-                            } else {
-                                bar.push('░'); // Missing everywhere
-                            }
-                        }
-                        println!("\nProgress: [{}]", bar);
-                        println!("Legend:   █ = Completed locally   ▒ = In Swarm   ░ = Missing\n");
-                    }
-                }
-                IpcReply::Error { reason } => {
-                    eprintln!("Error from daemon: {}", reason);
                 }
             }
         }
-        Err(e) => {
-            eprintln!("Could not connect to daemon or transmit command: {}", e);
-            eprintln!("Is the daemon running? Start it first.");
+        IpcReply::PieceStates { info } => {
+            let pct = if info.total_pieces > 0 {
+                (info.have_pieces as f64 / info.total_pieces as f64) * 100.0
+            } else {
+                0.0
+            };
+            println!(
+                "Piece Summary: {} / {} completed ({:.1}%) • Piece Size: {}",
+                info.have_pieces,
+                info.total_pieces,
+                pct,
+                fmt_bytes(info.piece_length as u64)
+            );
+
+            let max_rarity = info.swarm_rarity.iter().copied().max().unwrap_or(0);
+            println!(
+                "Swarm Availability: Max peer copies for a piece: {}",
+                max_rarity
+            );
+
+            // Render mini ASCII availability / completion bar (50 characters wide)
+            let bar_width = 50.min(info.total_pieces);
+            if bar_width > 0 {
+                let mut bar = String::with_capacity(bar_width);
+                for i in 0..bar_width {
+                    let piece_idx = (i * info.total_pieces) / bar_width;
+                    if info.local_have.get(piece_idx).copied().unwrap_or(false) {
+                        bar.push('█'); // Completed locally
+                    } else if info.swarm_rarity.get(piece_idx).copied().unwrap_or(0) > 0 {
+                        bar.push('▒'); // Available in swarm
+                    } else {
+                        bar.push('░'); // Missing everywhere
+                    }
+                }
+                println!("\nProgress: [{}]", bar);
+                println!("Legend:   █ = Completed locally   ▒ = In Swarm   ░ = Missing\n");
+            }
+        }
+        IpcReply::Error { reason } => {
+            eprintln!("Error from daemon: {}", reason);
         }
     }
 }

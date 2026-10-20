@@ -2,6 +2,9 @@ use bittorrent_rs::TorrentSession;
 use bittorrent_rs::internals::TorrentContext;
 use std::sync::mpsc;
 
+pub mod ipc;
+pub use ipc::IpcClient;
+
 pub struct SessionState {
     pub session: TorrentSession,
     pub torrent_path: String,
