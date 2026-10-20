@@ -28,6 +28,7 @@ pub struct TorrentBuilder {
     web_seeds: Vec<String>,
     comment: Option<String>,
     is_private: bool,
+    is_multi_file: bool,
     files: Vec<(String, Vec<u8>)>,
 }
 
@@ -41,6 +42,7 @@ impl TorrentBuilder {
             web_seeds: Vec::new(),
             comment: None,
             is_private: false,
+            is_multi_file: false,
             files: Vec::new(),
         }
     }
@@ -102,6 +104,50 @@ impl TorrentBuilder {
         let data = std::fs::read(disk_path.as_ref())?;
         self.files
             .push((relative_path.into().replace('\\', "/"), data));
+        Ok(self)
+    }
+
+    /// Explicitly sets whether this torrent is formatted as a multi-file directory torrent.
+    pub fn multi_file(mut self, is_multi_file: bool) -> Self {
+        self.is_multi_file = is_multi_file;
+        self
+    }
+
+    #[cfg(feature = "std")]
+    /// Recursively adds all files from a directory on the local filesystem.
+    ///
+    /// Files are sorted lexicographically by relative path to ensure deterministic layout.
+    pub fn add_dir(mut self, root_dir: impl AsRef<Path>) -> Result<Self, std::io::Error> {
+        let root = root_dir.as_ref();
+        let mut file_paths = Vec::new();
+        let mut dir_stack = vec![root.to_path_buf()];
+
+        while let Some(current_dir) = dir_stack.pop() {
+            for entry in std::fs::read_dir(&current_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    dir_stack.push(path);
+                } else if path.is_file() {
+                    file_paths.push(path);
+                }
+            }
+        }
+
+        // Sort files to ensure deterministic layout
+        file_paths.sort();
+
+        for path in file_paths {
+            let rel_path = path
+                .strip_prefix(root)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let data = std::fs::read(&path)?;
+            self = self.add_file(rel_path, data);
+        }
+
+        self.is_multi_file = true;
         Ok(self)
     }
 
@@ -235,7 +281,7 @@ impl TorrentBuilder {
         let mut v1_files_entries: Vec<BNode> = Vec::new();
         let mut pad_counter = 0;
 
-        let is_single_file = self.files.len() == 1;
+        let is_single_file = self.files.len() == 1 && !self.is_multi_file && !self.files[0].0.contains('/');
 
         for (rel_path, data) in &self.files {
             let file_len_bytes = leak_bytes(data.len().to_string());
@@ -357,7 +403,7 @@ impl TorrentBuilder {
         }
 
         let mut total_stream = Vec::new();
-        let is_single_file = self.files.len() == 1;
+        let is_single_file = self.files.len() == 1 && !self.is_multi_file && !self.files[0].0.contains('/');
         let mut v1_files = Vec::new();
 
         for (rel_path, data) in &self.files {
@@ -484,5 +530,34 @@ impl FileTreeNode {
                 BNode::Dictionary(empty_key_dict)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_add_dir_and_build_v1() {
+        let temp_dir = std::env::temp_dir().join("torrent_builder_test_dir");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(temp_dir.join("sub")).unwrap();
+        std::fs::write(temp_dir.join("a.txt"), b"Hello A").unwrap();
+        std::fs::write(temp_dir.join("sub/b.txt"), b"Hello B nested").unwrap();
+
+        let builder = TorrentBuilder::new("test_bundle")
+            .piece_length(16 * 1024)
+            .add_dir(&temp_dir)
+            .unwrap();
+
+        assert_eq!(builder.files.len(), 2);
+        assert_eq!(builder.files[0].0, "a.txt");
+        assert_eq!(builder.files[1].0, "sub/b.txt");
+
+        let bytes = builder.build_v1().unwrap();
+        assert!(!bytes.is_empty());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

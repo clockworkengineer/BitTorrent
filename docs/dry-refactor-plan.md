@@ -234,7 +234,7 @@ pub fn from_hex(hex: &str) -> Result<alloc::vec::Vec<u8>, crate::error::BitTorre
 
 ---
 
-### Phase 4: Torrent Generation & Directory Walking Unification
+### Phase 4: Torrent Generation & Directory Walking Unification [COMPLETED]
 
 #### Problem Statement
 `sync_hub/src/torrent_gen.rs` reimplements the entire torrent file generation pipeline (`visit_dirs`, Sha1 piece hashing, Bencode encoding) despite `bittorrent_rs::TorrentBuilder` being available in `library/src/core/torrent_builder.rs`. Furthermore, recursive directory traversal is duplicated between `sync_hub` and `examples/torrent_creator_example/src/main.rs`.

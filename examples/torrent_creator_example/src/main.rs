@@ -1,7 +1,7 @@
 use bittorrent_rs::{MetaInfoFile, TorrentBuilder};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn print_usage() {
     eprintln!(
@@ -21,30 +21,6 @@ fn print_usage() {
     eprintln!("Examples:");
     eprintln!("  torrent_creator_example ./my_movie.mp4 ./my_movie.torrent hybrid 128");
     eprintln!("  torrent_creator_example ./dataset/ ./dataset.torrent v2 256");
-}
-
-fn add_files_recursive(
-    builder: TorrentBuilder,
-    base_dir: &Path,
-    current_dir: &Path,
-) -> Result<TorrentBuilder, Box<dyn std::error::Error>> {
-    let mut b = builder;
-    for entry in fs::read_dir(current_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            b = add_files_recursive(b, base_dir, &path)?;
-        } else if path.is_file() {
-            let rel_path = path
-                .strip_prefix(base_dir)?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let data = fs::read(&path)?;
-            println!("  + Adding file: {} ({} bytes)", rel_path, data.len());
-            b = b.add_file(rel_path, data);
-        }
-    }
-    Ok(b)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  + Adding file: {} ({} bytes)", file_name, data.len());
         builder = builder.add_file(file_name, data);
     } else if input_path.is_dir() {
-        builder = add_files_recursive(builder, &input_path, &input_path)?;
+        builder = builder.add_dir(&input_path)?;
     }
 
     println!("\nBuilding {} torrent bytes...", format.to_uppercase());
