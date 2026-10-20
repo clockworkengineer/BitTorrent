@@ -158,57 +158,27 @@ pub struct TransferMetrics {
 
 ---
 
-### Phase 2: Inverting Peer Coupling via Event Sinks (DIP & SRP)
+### Phase 2: Inverting Peer Coupling via Event Sinks (DIP & SRP) [COMPLETED]
 
 #### Problem Statement
-In [`library/src/network/peer.rs`](file:///c:/Projects/BitTorrent/library/src/network/peer.rs), each `Peer` maintains `pub tc: Option<Arc<Mutex<TorrentContext>>>`. This creates:
+In [`library/src/network/peer.rs`](file:///c:/Projects/BitTorrent/library/src/network/peer.rs), each `Peer` maintained `pub tc: Option<Arc<Mutex<TorrentContext>>>`. This created:
 1. **Cyclic Reference**: `TorrentContext` -> `Peer` -> `TorrentContext`.
-2. **Tight Coupling**: `Peer` directly locks the 80-field context to record stats, verify blocks, and update bitfields.
-3. **Untestability**: Unit tests cannot instantiate a `Peer` in isolation without constructing a full `TorrentContext`.
+2. **Tight Coupling**: `Peer` directly locked the context to record stats, verify blocks, and update bitfields.
+3. **Untestability**: Unit tests could not instantiate a `Peer` in isolation without constructing a full `TorrentContext`.
 
-#### Target Architecture
-Replace `pub tc: Option<Arc<Mutex<TorrentContext>>>` with an abstract event listener trait `PeerEventListener`.
-
-#### Implementation Specifications
-
-```rust
-// library/src/network/peer_event.rs
-
-/// Decoupled event notification sink emitted by a peer connection.
-pub trait PeerEventListener: Send + Sync {
-    /// Notifies that a remote peer has completed a block upload.
-    fn on_block_received(&self, peer_ip: &str, piece_index: u32, begin: u32, block: &[u8]);
-    
-    /// Notifies that a remote peer announced possession of a piece.
-    fn on_peer_have(&self, peer_ip: &str, piece_index: u32);
-    
-    /// Notifies that a remote peer updated its bitfield.
-    fn on_peer_bitfield(&self, peer_ip: &str, bitfield: &[u8]);
-    
-    /// Notifies that a peer disconnected or timed out.
-    fn on_peer_disconnected(&self, peer_ip: &str);
-}
-```
-
-```rust
-// library/src/network/peer.rs
-
-pub struct Peer {
-    pub network: Option<PeerNetwork>,
-    pub ip: String,
-    pub port: u16,
-    pub choke_state: PeerChokeState,
-    pub scheduler: PeerBlockScheduler,
-    pub metrics: PeerRateEstimator,
-    // INVERTED DEPENDENCY: Peer communicates through abstract sink, not TorrentContext!
-    pub event_listener: Option<Arc<dyn PeerEventListener>>,
-}
-```
-
-#### Affected Files to Update
-- Create `library/src/network/peer_event.rs`.
-- Update `library/src/network/peer.rs` (remove `tc`, add `event_listener`).
-- Update `library/src/session/worker.rs` (forward peer events to context through listener adapter).
+#### Completed Implementation
+1. **`PeerEventListener` Trait & Implementations** (`library/src/network/peer_event.rs`):
+   - Created `PeerEventListener` trait defining decoupled lifecycle hooks: `on_block_received`, `on_peer_have`, `on_peer_bitfield`, `on_peer_choked`, `on_peer_unchoked`, `on_peer_disconnected`.
+   - Implemented `NullPeerEventListener` (no-op sink for headless/isolated peers), `RecordingPeerEventListener` (thread-safe event collector for testing), and `ContextEventListener` (adapter bridging peer disconnections and events to coordinator).
+2. **Peer Decoupling & Independent Initialization** (`library/src/network/peer.rs`):
+   - Added `pub event_listener: Option<Arc<dyn PeerEventListener>>` to `Peer`.
+   - Added `pub fn init_bitfield(&mut self, number_of_pieces: usize, bitfield_len: usize)` allowing complete peer setup without `TorrentContext`.
+   - Marked direct `tc` field as `#[deprecated]` while retaining non-breaking backward compatibility.
+   - Dispatched all peer wire events (`Choke`, `Unchoke`, `Have`, `Bitfield`, `Piece`) and `close()` notifications to `event_listener`.
+3. **Worker Integration & Verification**:
+   - Wired `ContextEventListener` in `library/src/session/worker.rs`.
+   - Created `library/tests/solid_phase2_tests.rs` with 4 comprehensive tests validating isolated instantiation, recording listeners, message dispatching, and context bridging.
+   - 100% test pass rate across `cargo test --workspace` with 0 warnings on `cargo clippy --workspace --all-targets -- -D warnings` and `#![no_std]` core build verified.
 
 ---
 

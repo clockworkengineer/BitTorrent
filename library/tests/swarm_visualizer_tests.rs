@@ -65,12 +65,14 @@ fn test_piece_availability_and_swarm_rarity() {
     ctx.bitfield = vec![0b1010_0000, 0b1000_0000]; // Pieces 0, 2, and 8 downloaded locally
 
     // Peer 1 holds pieces 0, 1, 2 (0b1110_0000, 0b0000_0000)
+    #[allow(deprecated)]
     let peer_1 = Arc::new(Mutex::new(Peer {
         network: None,
         packet_response_timer: None,
         average_packet_response: bittorrent_rs::Average::default(),
         connected: true,
         remote_peer_id: Some(b"-qB4600-peer11111111".to_vec()),
+        event_listener: None,
         tc: None,
         remote_piece_bitfield: vec![0b1110_0000, 0b0000_0000],
         ip: "192.168.1.100".to_string(),
@@ -99,12 +101,14 @@ fn test_piece_availability_and_swarm_rarity() {
     }));
 
     // Peer 2 holds pieces 2, 3, 8, 9 (0b0011_0000, 0b1100_0000)
+    #[allow(deprecated)]
     let peer_2 = Arc::new(Mutex::new(Peer {
         network: None,
         packet_response_timer: None,
         average_packet_response: bittorrent_rs::Average::default(),
         connected: true,
         remote_peer_id: Some(b"-TR4000-peer22222222".to_vec()),
+        event_listener: None,
         tc: None,
         remote_piece_bitfield: vec![0b0011_0000, 0b1100_0000],
         ip: "10.0.0.50".to_string(),

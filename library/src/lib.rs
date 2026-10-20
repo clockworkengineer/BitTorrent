@@ -240,6 +240,10 @@ pub use network::webrtc::{
     WebTorrentScrapeResponse, create_webtorrent_answer, create_webtorrent_offer,
 };
 #[cfg(feature = "std")]
+pub use network::peer_event::{
+    ContextEventListener, NullPeerEventListener, PeerEventListener, RecordingPeerEventListener,
+};
+#[cfg(feature = "std")]
 pub use session::client::TorrentClient;
 #[cfg(feature = "std")]
 #[cfg(feature = "std")]

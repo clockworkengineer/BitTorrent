@@ -155,6 +155,15 @@ pub async fn perform_handshake(
 
     let mut net = {
         let mut pg = peer.lock().unwrap();
+        let (num_pieces, bitfield_len) = {
+            let ctx = context.lock().unwrap();
+            (ctx.number_of_pieces, ctx.bitfield.len())
+        };
+        pg.init_bitfield(num_pieces, bitfield_len);
+        pg.set_event_listener(Arc::new(crate::network::peer_event::ContextEventListener::new(
+            context.clone(),
+        )));
+        #[allow(deprecated)]
         pg.set_torrent_context(context.clone());
         match &pg.network {
             Some(n) => n.clone(),

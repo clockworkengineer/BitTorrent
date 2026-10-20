@@ -36,6 +36,7 @@ use crate::io_traits::Socket;
 use crate::log_debug;
 use crate::manager::Manager;
 use crate::manual_reset_event::ManualResetEvent;
+use crate::network::peer_event::{ContextEventListener, PeerEventListener};
 use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::tracker::PeerDetails;
@@ -126,6 +127,8 @@ pub struct Peer {
     pub average_packet_response: Average,
     pub connected: bool,
     pub remote_peer_id: Option<Vec<u8>>,
+    pub event_listener: Option<Arc<dyn PeerEventListener>>,
+    #[deprecated(note = "Direct TorrentContext coupling is deprecated; use event_listener")]
     pub tc: Option<Arc<Mutex<TorrentContext>>>,
     pub remote_piece_bitfield: Vec<u8>,
     pub ip: String,
@@ -174,6 +177,8 @@ impl Peer {
             average_packet_response: Average::default(),
             connected: false,
             remote_peer_id: None,
+            event_listener: None,
+            #[allow(deprecated)]
             tc: None,
             remote_piece_bitfield: Vec::new(),
             ip,
@@ -222,12 +227,29 @@ impl Peer {
         self.last_message_sent = std::time::Instant::now();
     }
 
+    /// Sets an abstract event listener sink for peer events (DIP).
+    pub fn set_event_listener(&mut self, listener: Arc<dyn PeerEventListener>) {
+        self.event_listener = Some(listener);
+    }
+
+    /// Initializes the peer bitfield without requiring a TorrentContext (DIP).
+    pub fn init_bitfield(&mut self, number_of_pieces: usize, bitfield_len: usize) {
+        self.number_of_missing_pieces = number_of_pieces;
+        self.remote_piece_bitfield = vec![0u8; bitfield_len];
+    }
+
     /// Links the peer to a specific `TorrentContext`, initializing the peer's remote bitfield capacity.
     pub fn set_torrent_context(&mut self, tc: Arc<Mutex<TorrentContext>>) {
-        self.tc = Some(tc.clone());
-        let tc_guard = tc.lock().unwrap();
-        self.number_of_missing_pieces = tc_guard.number_of_pieces;
-        self.remote_piece_bitfield = vec![0u8; tc_guard.bitfield.len()];
+        let (num_pieces, bitfield_len) = {
+            let tc_guard = tc.lock().unwrap();
+            (tc_guard.number_of_pieces, tc_guard.bitfield.len())
+        };
+        self.init_bitfield(num_pieces, bitfield_len);
+        self.event_listener = Some(Arc::new(ContextEventListener::new(tc.clone())));
+        #[allow(deprecated)]
+        {
+            self.tc = Some(tc);
+        }
     }
 
     /// Helper to write raw bytes to the peer connection stream.
@@ -353,6 +375,14 @@ impl Peer {
             net.close();
         }
         self.network = None;
+        if let Some(ref listener) = self.event_listener {
+            listener.on_peer_disconnected(&self.ip);
+        }
+        self.event_listener = None;
+        #[allow(deprecated)]
+        {
+            self.tc = None;
+        }
     }
 
     /// Checks if the remote peer's bitfield indicates they have the specified piece.
@@ -499,6 +529,9 @@ impl Peer {
                         .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.peer_choking.reset();
+                if let Some(ref listener) = self.event_listener {
+                    listener.on_peer_choked(&self.ip);
+                }
             }
             PeerMessage::Unchoke => {
                 log_debug!("[peer {}:{}] UNCHOKED by remote", self.ip, self.port);
@@ -507,6 +540,9 @@ impl Peer {
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.peer_choking.set();
+                if let Some(ref listener) = self.event_listener {
+                    listener.on_peer_unchoked(&self.ip);
+                }
             }
             PeerMessage::Interested => {
                 self.peer_interested = true;
@@ -526,6 +562,9 @@ impl Peer {
                 self.set_piece_on_remote_peer(index);
                 if was_new {
                     tc.increment_peer_count(index);
+                }
+                if let Some(ref listener) = self.event_listener {
+                    listener.on_peer_have(&self.ip, index);
                 }
                 if tc.is_super_seeding() {
                     if self.is_seed(tc.number_of_pieces) {
@@ -560,6 +599,9 @@ impl Peer {
             PeerMessage::Bitfield(bitfield) => {
                 self.set_remote_bitfield(bitfield.to_vec());
                 tc.merge_piece_bitfield(self);
+                if let Some(ref listener) = self.event_listener {
+                    listener.on_peer_bitfield(&self.ip, bitfield);
+                }
                 if tc.is_super_seeding() {
                     if self.is_seed(tc.number_of_pieces) {
                         tc.set_super_seeding(false);
@@ -605,6 +647,9 @@ impl Peer {
                 let storage = tc.storage.clone();
                 let piece_complete =
                     tc.process_piece_block(&*storage, index, begin, block, &self.ip)?;
+                if let Some(ref listener) = self.event_listener {
+                    listener.on_block_received(&self.ip, index, begin, block);
+                }
                 // In endgame mode, cancel duplicate requests to other peers for the same block.
                 if piece_complete {
                     self.suggested_pieces.retain(|&p| p != index);
@@ -1233,6 +1278,7 @@ impl Peer {
                         if !is_dead {
                             let tc_arc = {
                                 let p = peer.lock().unwrap();
+                                #[allow(deprecated)]
                                 p.tc.clone()
                             };
                             if let Some(ctx2) = tc_arc {
@@ -1309,6 +1355,7 @@ impl Peer {
                             }
                             let tc_arc = {
                                 let p = peer.lock().unwrap();
+                                #[allow(deprecated)]
                                 p.tc.clone()
                             };
                             if let Some(ctx2) = tc_arc {

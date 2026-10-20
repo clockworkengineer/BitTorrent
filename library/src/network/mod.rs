@@ -19,6 +19,8 @@ pub mod nat;
 pub mod peer;
 pub mod peer_details;
 #[cfg(feature = "std")]
+pub mod peer_event;
+#[cfg(feature = "std")]
 pub mod peer_id;
 pub mod peer_message;
 #[cfg(feature = "std")]
