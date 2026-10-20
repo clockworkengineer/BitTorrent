@@ -1,5 +1,7 @@
 #[cfg(feature = "std")]
 pub mod announcer;
+#[cfg(feature = "std")]
+pub mod announcer_registry;
 #[cfg(all(feature = "std", feature = "dht"))]
 pub mod dht;
 pub mod holepunch;

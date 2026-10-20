@@ -215,62 +215,26 @@ Components across the workspace previously received full `&TorrentContext` when 
 
 ---
 
-### Phase 4: Open/Closed Announcer Protocol Registry (OCP)
+### Phase 4: Open/Closed Announcer Protocol Registry (OCP) [COMPLETED]
 
 #### Problem Statement
-In [`library/src/network/announcer.rs`](file:///c:/Projects/BitTorrent/library/src/network/announcer.rs) (lines 607–637), `AnnouncerFactory::create_announcer` relies on a hardcoded chain of string prefix comparisons (`http://`, `udp://`, `wss://`). Adding new announcer protocols or mock test announcers requires modifying existing library code.
+In [`library/src/network/announcer.rs`](file:///c:/Projects/BitTorrent/library/src/network/announcer.rs), `AnnouncerFactory::create_announcer` relied on a hardcoded chain of string prefix comparisons (`http://`, `udp://`, `wss://`). Adding new announcer protocols or mock test announcers required modifying existing library code.
 
 #### Target Architecture
 Replace the static if-else factory with an extensible `AnnouncerRegistry` supporting open registration of scheme builders.
 
-#### Implementation Specifications
-
-```rust
-// library/src/network/announcer_registry.rs
-
-pub trait AnnouncerBuilder: Send + Sync {
-    fn build(&self, url: &str) -> Result<Box<dyn Announcer>, BitTorrentError>;
-}
-
-pub struct AnnouncerRegistry {
-    builders: Vec<(String, Box<dyn AnnouncerBuilder>)>,
-}
-
-impl AnnouncerRegistry {
-    pub fn new_with_defaults() -> Self {
-        let mut registry = Self { builders: Vec::new() };
-        #[cfg(feature = "http-tracker")]
-        {
-            registry.register("http://", HttpAnnouncerBuilder);
-            registry.register("https://", HttpAnnouncerBuilder);
-        }
-        registry.register("udp://", UdpAnnouncerBuilder);
-        #[cfg(feature = "webrtc")]
-        {
-            registry.register("ws://", WebTorrentAnnouncerBuilder);
-            registry.register("wss://", WebTorrentAnnouncerBuilder);
-        }
-        registry
-    }
-
-    pub fn register(&mut self, prefix: &str, builder: impl AnnouncerBuilder + 'static) {
-        self.builders.push((prefix.to_string(), Box::new(builder)));
-    }
-
-    pub fn create(&self, url: &str) -> Result<Box<dyn Announcer>, BitTorrentError> {
-        for (prefix, builder) in &self.builders {
-            if url.starts_with(prefix) {
-                return builder.build(url);
-            }
-        }
-        Err(BitTorrentError::Parse(format!("Unsupported tracker scheme: {}", url)))
-    }
-}
-```
-
-#### Affected Files to Update
-- Create `library/src/network/announcer_registry.rs`.
-- Update `library/src/network/announcer.rs` to delegate `create_announcer` to default registry.
+#### Completed Implementation Details
+1. **Created `AnnouncerBuilder` & `AnnouncerRegistry` in [`library/src/network/announcer_registry.rs`](file:///c:/Projects/BitTorrent/library/src/network/announcer_registry.rs)**:
+   - Defined `AnnouncerBuilder` trait supporting both trait-object construction (`build_announcer`) and enum-dispatch construction (`build_enum`).
+   - Implemented built-in builders: `HttpAnnouncerBuilder`, `UdpAnnouncerBuilder`, and `WebTorrentAnnouncerBuilder`.
+   - Implemented `AnnouncerRegistry` with prefix registration, scheme overriding (LIFO priority), unregistration, and instantiation methods (`create_announcer`, `create`).
+   - Provided thread-safe global registry accessors: `global_registry()` and `register_global()`.
+2. **Refactored `AnnouncerFactory` in [`library/src/network/announcer.rs`](file:///c:/Projects/BitTorrent/library/src/network/announcer.rs)**:
+   - Delegated `AnnouncerFactory::create_announcer` and `AnnouncerFactory::create` directly to the `global_registry()`, preserving 100% backward compatibility for existing callers.
+   - Added `AnnouncerFactory::register` for global protocol extension without modifying library source.
+3. **Comprehensive Test Suite & Verification**:
+   - Created `library/tests/solid_phase4_tests.rs` with 4 comprehensive tests validating default protocol resolution, custom scheme registration (`mock://`), overriding existing schemes (`http://`), and global registry extensions via `AnnouncerFactory::register`.
+   - Verified 100% test pass rate across `cargo test --workspace` with 0 warnings on `cargo clippy --workspace --all-targets -- -D warnings` and `#![no_std]` core build verification passing.
 
 ---
 

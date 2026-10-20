@@ -112,6 +112,13 @@ pub use core::views::{
 
 #[cfg(feature = "std")]
 pub use network::announcer;
+#[cfg(feature = "std")]
+pub use network::announcer_registry;
+#[cfg(feature = "std")]
+pub use network::announcer_registry::{
+    AnnouncerBuilder, AnnouncerRegistry, HttpAnnouncerBuilder, UdpAnnouncerBuilder,
+    WebTorrentAnnouncerBuilder,
+};
 #[cfg(all(feature = "std", feature = "dht"))]
 pub use network::dht;
 #[cfg(feature = "std")]

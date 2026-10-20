@@ -600,72 +600,28 @@ impl Announcer for AnnouncerEnum {
 }
 
 /// Factory helper to build `Announcer` instances or `AnnouncerEnum` variants based on the tracker URL protocol schema.
+///
+/// Refactored under the Open/Closed Principle (OCP) to delegate to an extensible `AnnouncerRegistry`.
 pub struct AnnouncerFactory;
 
 impl AnnouncerFactory {
-    /// Instantiates the appropriate `Announcer` trait object for a given URL.
+    /// Instantiates the appropriate `Announcer` trait object for a given URL using the open protocol registry.
     pub fn create_announcer(url: &str) -> Result<Box<dyn Announcer>, BitTorrentError> {
-        if url.starts_with("http://") || url.starts_with("https://") {
-            #[cfg(feature = "http-tracker")]
-            {
-                Ok(Box::new(HttpAnnouncer::new()))
-            }
-            #[cfg(not(feature = "http-tracker"))]
-            {
-                Err(BitTorrentError::Parse(
-                    "HTTP tracker support is disabled".into(),
-                ))
-            }
-        } else if url.starts_with("udp://") {
-            Ok(Box::new(UdpAnnouncer::new(url)?))
-        } else if url.starts_with("wss://") || url.starts_with("ws://") {
-            #[cfg(feature = "webrtc")]
-            {
-                Ok(Box::new(crate::network::webrtc::WebTorrentAnnouncer::new(
-                    url,
-                )))
-            }
-            #[cfg(not(feature = "webrtc"))]
-            {
-                Err(BitTorrentError::Parse(
-                    "WebTorrent WebSocket tracker support is disabled".into(),
-                ))
-            }
-        } else {
-            Err(BitTorrentError::Parse("Invalid tracker URL".into()))
-        }
+        let registry = crate::network::announcer_registry::global_registry().read().unwrap();
+        registry.create_announcer(url)
     }
 
-    /// Instantiates the appropriate `AnnouncerEnum` variant for a given URL.
+    /// Instantiates the appropriate `AnnouncerEnum` variant for a given URL using the open protocol registry.
     pub fn create(url: &str) -> Result<AnnouncerEnum, BitTorrentError> {
-        if url.starts_with("http://") || url.starts_with("https://") {
-            #[cfg(feature = "http-tracker")]
-            {
-                Ok(AnnouncerEnum::Http(HttpAnnouncer::new()))
-            }
-            #[cfg(not(feature = "http-tracker"))]
-            {
-                Err(BitTorrentError::Parse(
-                    "HTTP tracker support is disabled".into(),
-                ))
-            }
-        } else if url.starts_with("udp://") {
-            Ok(AnnouncerEnum::Udp(UdpAnnouncer::new(url)?))
-        } else if url.starts_with("wss://") || url.starts_with("ws://") {
-            #[cfg(feature = "webrtc")]
-            {
-                Ok(AnnouncerEnum::WebTorrent(
-                    crate::network::webrtc::WebTorrentAnnouncer::new(url),
-                ))
-            }
-            #[cfg(not(feature = "webrtc"))]
-            {
-                Err(BitTorrentError::Parse(
-                    "WebTorrent WebSocket tracker support is disabled".into(),
-                ))
-            }
-        } else {
-            Err(BitTorrentError::Parse("Invalid tracker URL".into()))
-        }
+        let registry = crate::network::announcer_registry::global_registry().read().unwrap();
+        registry.create(url)
+    }
+
+    /// Registers a custom protocol scheme prefix and builder into the global registry (OCP).
+    pub fn register(
+        prefix: impl Into<alloc::string::String>,
+        builder: impl crate::network::announcer_registry::AnnouncerBuilder + 'static,
+    ) {
+        crate::network::announcer_registry::register_global(prefix, builder);
     }
 }
