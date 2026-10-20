@@ -29,7 +29,7 @@ A comprehensive static analysis across the BitTorrent workspace revealed recurri
 
 ---
 
-### Phase 1: IPC Client & Protocol Transport Consolidation
+### Phase 1: IPC Client & Protocol Transport Consolidation [COMPLETED]
 
 #### Problem Statement
 Both the CLI companion (`clients/bt_daemon/src/bin/bt_cli.rs`, lines 9–47) and the WebUI gateway (`clients/bt_webui/src/main.rs`, lines 27–83) re-implement the exact same IPC client logic:
