@@ -99,11 +99,7 @@ fn main() {
         let resume_path = std::path::Path::new(&args[2]);
         match bittorrent_rs::FastResumeData::load_from_file(resume_path) {
             Ok(data) => {
-                let info_hash_hex = data
-                    .info_hash
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>();
+                let info_hash_hex = bittorrent_rs::util::to_hex(&data.info_hash);
                 println!("Fast Resume Metadata (BEP 47):");
                 println!("  File:             {}", resume_path.display());
                 println!("  Info Hash:        {}", info_hash_hex);
@@ -320,16 +316,16 @@ fn main() {
         }
 
         if let Ok(v1_hash) = metainfo.get_v1_info_hash() {
-            let v1_hex: String = v1_hash.iter().map(|b| format!("{:02x}", b)).collect();
+            let v1_hex = bittorrent_rs::util::to_hex(&v1_hash);
             println!("  v1 Infohash:      {}", v1_hex);
         } else if !is_v2 && let Ok(hash) = metainfo.get_info_hash() {
-            let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+            let hex = bittorrent_rs::util::to_hex(&hash);
             println!("  v1 Infohash:      {}", hex);
         }
 
         if let Ok(v2_hash) = metainfo.get_v2_info_hash() {
-            let v2_hex: String = v2_hash.iter().map(|b| format!("{:02x}", b)).collect();
-            let v2_trunc: String = v2_hash[..20].iter().map(|b| format!("{:02x}", b)).collect();
+            let v2_hex = bittorrent_rs::util::to_hex(&v2_hash);
+            let v2_trunc = bittorrent_rs::util::to_hex(&v2_hash[..20]);
             println!("  v2 Infohash:      {}", v2_hex);
             println!("  v2 Truncated:     {}", v2_trunc);
         }
@@ -432,17 +428,11 @@ fn main() {
             magnet.display_name.as_deref().unwrap_or("Unknown")
         );
 
-        let mut v1_hex = String::with_capacity(40);
-        for b in &magnet.info_hash {
-            v1_hex.push_str(&format!("{:02x}", b));
-        }
+        let v1_hex = bittorrent_rs::util::to_hex(&magnet.info_hash);
         println!("  v1 Infohash:      {}", v1_hex);
 
         if let Some(ref v2) = magnet.v2_info_hash {
-            let mut v2_hex = String::with_capacity(64);
-            for b in v2 {
-                v2_hex.push_str(&format!("{:02x}", b));
-            }
+            let v2_hex = bittorrent_rs::util::to_hex(v2);
             println!("  v2 Infohash:      {}", v2_hex);
         } else {
             println!("  v2 Infohash:      N/A");

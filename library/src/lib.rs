@@ -162,6 +162,7 @@ pub use utils::io_traits;
 #[cfg(feature = "std")]
 pub use utils::manual_reset_event;
 pub use utils::util;
+pub use utils::util::{from_hex, info_hash_to_string, to_hex, to_hex_upper};
 
 pub use core::magnet::{
     MagnetLink, MagnetUriBuilder, format_bep53_select_only, parse_bep53_select_only,

@@ -140,9 +140,45 @@ pub fn format_socket_addr(ip: &str, port: u16) -> String {
     }
 }
 
+/// Encodes an arbitrary byte slice into a lowercase hexadecimal string.
+pub fn to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        use core::fmt::Write;
+        let _ = write!(s, "{:02x}", b);
+    }
+    s
+}
+
+/// Encodes an arbitrary byte slice into an uppercase hexadecimal string.
+pub fn to_hex_upper(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        use core::fmt::Write;
+        let _ = write!(s, "{:02X}", b);
+    }
+    s
+}
+
+/// Decodes a hexadecimal string slice into raw bytes.
+pub fn from_hex(hex: &str) -> Result<alloc::vec::Vec<u8>, crate::error::BitTorrentError> {
+    if hex.len() % 2 != 0 {
+        return Err(crate::error::BitTorrentError::Parse(
+            "Hex string must have an even length".into(),
+        ));
+    }
+    let mut bytes = alloc::vec::Vec::with_capacity(hex.len() / 2);
+    for i in (0..hex.len()).step_by(2) {
+        let byte = u8::from_str_radix(&hex[i..i + 2], 16)
+            .map_err(|e| crate::error::BitTorrentError::Parse(alloc::string::ToString::to_string(&e)))?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
 /// Formats a 20-byte info hash byte slice into its hexadecimal string representation.
 pub fn info_hash_to_string(info_hash: &[u8]) -> String {
-    info_hash.iter().map(|b| format!("{:02x}", b)).collect()
+    to_hex(info_hash)
 }
 
 /// Calculates the byte index and bit mask for a piece in a standard BitTorrent bitfield.

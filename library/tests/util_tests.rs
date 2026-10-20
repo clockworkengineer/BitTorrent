@@ -123,3 +123,32 @@ fn test_host_get_ip() {
         ip_str
     );
 }
+
+#[test]
+fn test_to_hex_and_from_hex() {
+    use bittorrent_rs::util::{from_hex, to_hex, to_hex_upper};
+
+    let original = [0x00u8, 0x1A, 0x2B, 0x3C, 0xDE, 0xFF];
+    let hex_lower = to_hex(&original);
+    assert_eq!(hex_lower, "001a2b3cdeff");
+
+    let hex_upper = to_hex_upper(&original);
+    assert_eq!(hex_upper, "001A2B3CDEFF");
+
+    let decoded = from_hex(&hex_lower).expect("Failed to decode valid hex");
+    assert_eq!(decoded, original);
+
+    let decoded_upper = from_hex(&hex_upper).expect("Failed to decode valid upper hex");
+    assert_eq!(decoded_upper, original);
+
+    // Empty slice
+    assert_eq!(to_hex(&[]), "");
+    assert_eq!(from_hex("").unwrap(), Vec::<u8>::new());
+
+    // Odd length error
+    assert!(from_hex("abc").is_err());
+
+    // Invalid character error
+    assert!(from_hex("001z").is_err());
+}
+

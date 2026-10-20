@@ -57,11 +57,7 @@ impl Engine {
             .iter()
             .map(|s| {
                 let (bitfield_hex, hash_hex) = if let Ok(ctx) = s.session.context().lock() {
-                    let bf = ctx
-                        .bitfield
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<String>();
+                    let bf = bittorrent_rs::util::to_hex(&ctx.bitfield);
                     let ih = bittorrent_rs::util::info_hash_to_string(&ctx.info_hash);
                     (bf, ih)
                 } else {
@@ -153,15 +149,9 @@ impl Engine {
         if let Some(ref hex_str) = bitfield_hex
             && let Ok(mut ctx) = session.context.lock()
         {
-            let mut bytes = Vec::new();
-            for i in (0..hex_str.len()).step_by(2) {
-                if i + 2 <= hex_str.len()
-                    && let Ok(b) = u8::from_str_radix(&hex_str[i..i + 2], 16)
-                {
-                    bytes.push(b);
-                }
-            }
-            if bytes.len() == ctx.bitfield.len() {
+            if let Ok(bytes) = bittorrent_rs::util::from_hex(hex_str)
+                && bytes.len() == ctx.bitfield.len()
+            {
                 ctx.bitfield = bytes.clone();
                 let mut downloaded = 0u64;
                 let mut missing_count = 0;

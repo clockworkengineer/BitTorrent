@@ -166,7 +166,7 @@ impl MerkleTree {
 
     /// Returns the root hash formatted as a 64-character lowercase hexadecimal string.
     pub fn root_hex(&self) -> String {
-        self.root.iter().map(|b| format!("{:02x}", b)).collect()
+        crate::util::to_hex(&self.root)
     }
 
     /// Returns the total file length in bytes.

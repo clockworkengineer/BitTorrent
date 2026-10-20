@@ -273,25 +273,16 @@ impl MagnetLink {
 
         // If hybrid or v1, output v1 xt
         if self.is_v1_only() || self.is_hybrid() {
-            let mut hex_v1 = String::with_capacity(40);
-            for b in &self.info_hash {
-                hex_v1.push_str(&format!("{:02x}", b));
-            }
+            let hex_v1 = crate::util::to_hex(&self.info_hash);
             params.push(format!("xt=urn:btih:{}", hex_v1));
         }
 
         // If v2, output v2 xt
         if let Some(ref v2) = self.v2_info_hash {
-            let mut hex_v2 = String::with_capacity(64);
-            for b in v2 {
-                hex_v2.push_str(&format!("{:02x}", b));
-            }
+            let hex_v2 = crate::util::to_hex(v2);
             params.push(format!("xt=urn:btmh:1220{}", hex_v2));
         } else if !self.is_v1_only() && !self.is_hybrid() {
-            let mut hex_v1 = String::with_capacity(40);
-            for b in &self.info_hash {
-                hex_v1.push_str(&format!("{:02x}", b));
-            }
+            let hex_v1 = crate::util::to_hex(&self.info_hash);
             params.push(format!("xt=urn:btih:{}", hex_v1));
         }
 

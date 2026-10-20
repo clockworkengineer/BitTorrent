@@ -70,7 +70,7 @@ impl SyncManager {
         session.start_download()?;
 
         let info_hash = session.context().lock().unwrap().info_hash.clone();
-        let info_hash_hex: String = info_hash.iter().map(|b| format!("{:02x}", b)).collect();
+        let info_hash_hex = bittorrent_rs::util::to_hex(&info_hash);
         println!("Sync Session Started. Info Hash: {}", info_hash_hex);
 
         self.session = Some(session);

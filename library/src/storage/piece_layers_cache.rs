@@ -166,10 +166,7 @@ impl PieceLayersDiskCache {
 
     /// Computes the destination `.layers` file path for a given root hash.
     pub fn path_for_root(&self, pieces_root: &[u8; 32]) -> PathBuf {
-        let mut hex = String::with_capacity(64);
-        for b in pieces_root {
-            hex.push_str(&format!("{:02x}", b));
-        }
+        let hex = crate::util::to_hex(pieces_root);
         self.cache_dir.join(format!("{}.layers", hex))
     }
 

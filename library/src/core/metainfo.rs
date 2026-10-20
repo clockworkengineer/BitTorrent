@@ -98,8 +98,7 @@ impl FileDetails {
 
     /// Returns the root hash of the file's Merkle tree formatted as hexadecimal.
     pub fn pieces_root_hex(&self) -> Option<String> {
-        self.pieces_root
-            .map(|r| r.iter().map(|b| format!("{:02x}", b)).collect())
+        self.pieces_root.as_ref().map(|r| crate::util::to_hex(r))
     }
 
     /// Returns true if this file is a padding file inserted for v1 piece alignment in hybrid torrents.
