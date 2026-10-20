@@ -1,4 +1,10 @@
-# BitTorrent Rust Library
+# BitTorrent
+
+[![CI](https://github.com/clockworkengineer/BitTorrent/actions/workflows/ci.yml/badge.svg)](https://github.com/clockworkengineer/BitTorrent/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
+[![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-orange.svg)](CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE-MIT)
+[![Buy Me a Coffee](https://img.shields.io/badge/Donate-Buy%20Me%20A%20Coffee-orange.svg)](https://www.buymeacoffee.com/clockworkengineer)
 
 A full-featured BitTorrent client library implemented in Rust with:
 
@@ -62,18 +68,4 @@ Replace `[torrent-file]` with the path to a `.torrent` file and `[download-dir]`
 - [`docs/use-cases.md`](docs/use-cases.md) — potential applications and architectures using the library
 - [`docs/sync-hub.md`](docs/sync-hub.md) — local-first encrypted file-syncing hub user guide
 - [`docs/solid-refactor-plan.md`](docs/solid-refactor-plan.md) — concrete plan to refactor library and clients to adhere strictly to SOLID principles
-
----
-
-## Support
-
-If you find this BitTorrent library or client useful and would like to support ongoing development, consider buying me a coffee!
-
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-orange?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/roberttizz1)
-
-☕ [Buy Me a Coffee](https://buymeacoffee.com/roberttizz1)
-
-
-
-
 
