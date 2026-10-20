@@ -1663,9 +1663,13 @@ impl TorrentContext {
 
     /// Unregisters and drops a peer connection from the swarm by IP address.
     pub fn remove_peer(&mut self, ip: &str) {
-        let peer_opt = self.peer_swarm.write().unwrap().remove(ip);
+        let peer_opt = if let Ok(mut swarm) = self.peer_swarm.try_write() {
+            swarm.remove(ip)
+        } else {
+            None
+        };
         if let Some(peer_arc) = peer_opt {
-            if let Ok(mut peer_guard) = peer_arc.lock() {
+            if let Ok(mut peer_guard) = peer_arc.try_lock() {
                 if peer_guard.peer_choking.wait_one(0) {
                     self.unchoked_peers_count.fetch_sub(1, Ordering::Relaxed);
                 }
@@ -1716,11 +1720,20 @@ impl TorrentContext {
 
     /// Safely terminates connection streams and unregisters all active peers in the swarm.
     pub fn disconnect_all_peers(&self) {
-        let mut swarm = self.peer_swarm.write().unwrap();
-        for peer in swarm.values() {
-            peer.lock().unwrap().close();
+        let peers: Vec<_> = {
+            if let Ok(mut swarm) = self.peer_swarm.write() {
+                let peers = swarm.values().cloned().collect();
+                swarm.clear();
+                peers
+            } else {
+                Vec::new()
+            }
+        };
+        for peer in peers {
+            if let Ok(mut p) = peer.try_lock() {
+                p.close();
+            }
         }
-        swarm.clear();
     }
 
     /// Decrements piece peer counts when a peer disconnects.

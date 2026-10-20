@@ -117,7 +117,7 @@ impl PeerEventListener for ContextEventListener {
     fn on_peer_bitfield(&self, _peer_ip: &str, _bitfield: &[u8]) {}
 
     fn on_peer_disconnected(&self, peer_ip: &str) {
-        if let Ok(mut ctx) = self.context.lock() {
+        if let Ok(mut ctx) = self.context.try_lock() {
             ctx.remove_peer(peer_ip);
         }
     }

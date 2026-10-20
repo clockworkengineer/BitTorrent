@@ -180,6 +180,15 @@ impl eframe::App for TorrentClientApp {
 
     /// Primary UI draw and events update loop called by the egui framework backend.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.viewport().close_requested()) {
+            self.save_state();
+            self.stop_streaming();
+            for state in &mut self.sessions {
+                let _ = state.session.stop();
+            }
+            std::process::exit(0);
+        }
+
         if !self.state_loaded {
             self.state_loaded = true;
             self.load_state();

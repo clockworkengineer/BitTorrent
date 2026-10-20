@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 //! Graphical BitTorrent Client Application
 //!
 //! A desktop application built using `eframe`/`egui` that utilizes the

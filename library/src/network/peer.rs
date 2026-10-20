@@ -375,10 +375,9 @@ impl Peer {
             net.close();
         }
         self.network = None;
-        if let Some(ref listener) = self.event_listener {
+        if let Some(listener) = self.event_listener.take() {
             listener.on_peer_disconnected(&self.ip);
         }
-        self.event_listener = None;
         #[allow(deprecated)]
         {
             self.tc = None;
