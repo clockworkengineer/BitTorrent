@@ -7,7 +7,7 @@ use crate::state::{AppSettings, DetailTab, SidebarFilter, SortColumn, matches_fi
 use eframe::egui;
 use std::sync::mpsc;
 use std::time::Duration;
-use torrent_client_shared::{PendingSession, SessionState, fmt_bytes};
+use torrent_client_shared::{PendingSession, SessionState, find_primary_media_file, fmt_bytes};
 
 /// The main application state container holding UI variables, logs, and active session buffers.
 pub struct TorrentClientApp {
@@ -117,24 +117,11 @@ impl TorrentClientApp {
                     }
                 } else {
                     // Automatically find the largest media file
-                    let mut best = None;
-                    let mut max_len = 0;
-                    for (i, f) in ctx.files_to_download.iter().enumerate() {
-                        if torrent_client_shared::is_media_filename(&f.torrent_path)
-                            && f.length > max_len
-                        {
-                            max_len = f.length;
-                            best = Some(i);
-                        }
-                    }
-                    if best.is_none() {
-                        for (i, f) in ctx.files_to_download.iter().enumerate() {
-                            if f.length > max_len {
-                                max_len = f.length;
-                                best = Some(i);
-                            }
-                        }
-                    }
+                    let best = find_primary_media_file(
+                        ctx.files_to_download
+                            .iter()
+                            .map(|f| (&f.torrent_path, f.length)),
+                    );
                     if let Some(idx) = best {
                         let f = &ctx.files_to_download[idx];
                         (f.torrent_path.clone(), f.length, Some(idx))

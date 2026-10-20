@@ -6,11 +6,13 @@
 
 use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::storage::stream::{StorageBlockReader, TorrentStream};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::BufReader;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use torrent_client_shared::detect_mime_type;
+use torrent_client_shared::{
+    read_http_request, send_cors_preflight_response, send_http_error, serve_http_range_stream,
+};
 
 /// State of an active stream exposed by the server.
 #[derive(Clone)]
@@ -164,146 +166,48 @@ fn handle_stream_connection(
         Err(_) => return,
     });
 
-    let mut request_line = String::new();
-    if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
-        return;
-    }
+    let req = match read_http_request(&mut reader) {
+        Ok(Some(r)) => r,
+        _ => return,
+    };
 
-    let mut range_header = None;
-    let mut header_line = String::new();
-    while reader.read_line(&mut header_line).unwrap_or(0) > 0 {
-        let trimmed = header_line.trim();
-        if trimmed.is_empty() {
-            break;
-        }
-        if trimmed.to_lowercase().starts_with("range:") {
-            range_header = Some(trimmed["range:".len()..].trim().to_string());
-        }
-        header_line.clear();
+    if req.method == "OPTIONS" {
+        let _ = send_cors_preflight_response(&mut socket);
+        return;
     }
 
     let active = match active_stream.lock().unwrap().clone() {
         Some(s) => s,
         None => {
-            let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 17\r\n\r\nNo stream active\n";
-            let _ = socket.write_all(resp.as_bytes());
+            let _ = send_http_error(&mut socket, 404, "Not Found", "No stream active\n");
             return;
         }
     };
 
-    let is_head = request_line.starts_with("HEAD");
+    let is_head = req.method == "HEAD";
 
     let mut torrent_stream = match create_torrent_stream(active.context.clone(), active.file_index)
     {
         Ok(s) => s,
         Err(e) => {
             let msg = format!("Failed to initialize stream: {}", e);
-            let resp = format!(
-                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
-                msg.len(),
-                msg
-            );
-            let _ = socket.write_all(resp.as_bytes());
+            let _ = send_http_error(&mut socket, 500, "Internal Server Error", &msg);
             return;
         }
     };
 
     let total_len = torrent_stream.total_len();
-    if total_len == 0 {
-        let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-        return;
-    }
+    let current_pos = active.current_position.clone();
 
-    let mime_type = detect_mime_type(&active.file_name);
-
-    let mut range_start = 0u64;
-    let mut range_end = total_len - 1;
-    let is_range_request = if let Some(ref r) = range_header {
-        if let Some(spec) = r.strip_prefix("bytes=") {
-            let parts: Vec<&str> = spec.split('-').collect();
-            if parts.len() == 2 {
-                if let Ok(s) = parts[0].parse::<u64>() {
-                    range_start = s;
-                }
-                if !parts[1].is_empty()
-                    && let Ok(e) = parts[1].parse::<u64>()
-                {
-                    range_end = e.min(total_len - 1);
-                }
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    if range_start >= total_len {
-        let response = format!(
-            "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\n\r\n",
-            total_len
-        );
-        let _ = socket.write_all(response.as_bytes());
-        return;
-    }
-
-    let content_len = range_end - range_start + 1;
-    let status_line = if is_range_request {
-        "HTTP/1.1 206 Partial Content"
-    } else {
-        "HTTP/1.1 200 OK"
-    };
-
-    let mut headers = format!(
-        "{}\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n",
-        status_line, mime_type, content_len
+    let _ = serve_http_range_stream(
+        &mut socket,
+        &mut torrent_stream,
+        &active.file_name,
+        total_len,
+        is_head,
+        req.range_header.as_deref(),
+        |offset, _chunk_len| {
+            current_pos.store(offset, Ordering::Relaxed);
+        },
     );
-
-    if is_range_request {
-        headers.push_str(&format!(
-            "Content-Range: bytes {}-{}/{}\r\n",
-            range_start, range_end, total_len
-        ));
-    }
-    headers.push_str("\r\n");
-
-    if socket.write_all(headers.as_bytes()).is_err() {
-        return;
-    }
-
-    if is_head {
-        return;
-    }
-
-    if torrent_stream.seek(SeekFrom::Start(range_start)).is_err() {
-        return;
-    }
-
-    active
-        .current_position
-        .store(range_start, Ordering::Relaxed);
-
-    let mut remaining = content_len;
-    let mut buf = vec![0u8; 64 * 1024];
-
-    while remaining > 0 {
-        let to_read = (buf.len() as u64).min(remaining) as usize;
-        match torrent_stream.read(&mut buf[..to_read]) {
-            Ok(0) => break,
-            Ok(n) => {
-                if socket.write_all(&buf[..n]).is_err() {
-                    break;
-                }
-                let _ = socket.flush();
-                remaining -= n as u64;
-                active
-                    .current_position
-                    .fetch_add(n as u64, Ordering::Relaxed);
-            }
-            Err(_) => break,
-        }
-    }
 }

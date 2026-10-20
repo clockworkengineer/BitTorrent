@@ -5,13 +5,14 @@
 
 use bittorrent_rs::TorrentSession;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use torrent_client_shared::{
-    FileInfo, IpcMessage, IpcReply, SessionState, TorrentStatusInfo, extract_peer_infos,
-    extract_piece_availability,
+    extract_peer_infos, extract_piece_availability, find_primary_media_file, is_media_filename,
+    read_http_request, send_cors_preflight_response, send_http_error, serve_http_range_stream,
+    FileInfo, IpcMessage, IpcReply, SessionState, TorrentStatusInfo,
 };
 
 #[derive(Serialize, Deserialize, Default)]
@@ -273,51 +274,6 @@ impl Engine {
     }
 }
 
-// Media Streaming Server Implementations
-
-pub fn is_media_filename(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.ends_with(".mp4")
-        || lower.ends_with(".mkv")
-        || lower.ends_with(".webm")
-        || lower.ends_with(".avi")
-        || lower.ends_with(".mov")
-        || lower.ends_with(".m4v")
-        || lower.ends_with(".flv")
-        || lower.ends_with(".wmv")
-        || lower.ends_with(".mp3")
-        || lower.ends_with(".flac")
-        || lower.ends_with(".ogg")
-        || lower.ends_with(".wav")
-        || lower.ends_with(".aac")
-        || lower.ends_with(".m4a")
-}
-
-pub fn detect_mime_type(name: &str) -> &'static str {
-    let lower = name.to_lowercase();
-    if lower.ends_with(".mp4") || lower.ends_with(".m4v") {
-        "video/mp4"
-    } else if lower.ends_with(".mkv") {
-        "video/x-matroska"
-    } else if lower.ends_with(".webm") {
-        "video/webm"
-    } else if lower.ends_with(".avi") {
-        "video/x-msvideo"
-    } else if lower.ends_with(".mov") {
-        "video/quicktime"
-    } else if lower.ends_with(".mp3") {
-        "audio/mpeg"
-    } else if lower.ends_with(".flac") {
-        "audio/flac"
-    } else if lower.ends_with(".ogg") {
-        "audio/ogg"
-    } else if lower.ends_with(".wav") {
-        "audio/wav"
-    } else {
-        "video/mp4"
-    }
-}
-
 fn start_stream_server(engine: Arc<Mutex<Engine>>, port: u16) {
     std::thread::spawn(move || {
         let addr = format!("0.0.0.0:{}", port);
@@ -351,51 +307,28 @@ fn handle_stream_client(mut stream: std::net::TcpStream, engine: Arc<Mutex<Engin
         Err(_) => return,
     });
 
-    let mut request_line = String::new();
-    if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
+    let req = match read_http_request(&mut reader) {
+        Ok(Some(r)) => r,
+        _ => return,
+    };
+
+    if req.method == "OPTIONS" {
+        let _ = send_cors_preflight_response(&mut stream);
         return;
     }
 
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 {
+    if req.method != "GET" && req.method != "HEAD" {
+        let _ = send_http_error(&mut stream, 405, "Method Not Allowed", "Method Not Allowed");
         return;
     }
 
-    let method = parts[0];
-    let path = parts[1];
-
-    if method == "OPTIONS" {
-        let response = "HTTP/1.1 204 No Content\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n\
-Access-Control-Allow-Headers: Range, Content-Type, Accept\r\n\
-Access-Control-Max-Age: 86400\r\n\r\n";
-        let _ = stream.write_all(response.as_bytes());
-        return;
-    }
-
-    if method != "GET" && method != "HEAD" {
-        let _ = stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n");
-        return;
-    }
-
-    // Read remaining headers to find Range
-    let mut range_header: Option<String> = None;
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
-            break;
-        }
-        if line.to_lowercase().starts_with("range:") {
-            range_header = Some(line.trim()["range:".len()..].trim().to_string());
-        }
-    }
+    let is_head = req.method == "HEAD";
 
     // Path pattern: /stream/:info_hash or /stream/:info_hash/:file_index or /stream/:info_hash/files
-    let clean_path = path.split('?').next().unwrap_or(path);
+    let clean_path = req.path.split('?').next().unwrap_or(&req.path);
     let segments: Vec<&str> = clean_path.trim_start_matches('/').split('/').collect();
     if segments.is_empty() || segments[0] != "stream" || segments.len() < 2 {
-        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+        let _ = send_http_error(&mut stream, 404, "Not Found", "Not Found");
         return;
     }
 
@@ -410,7 +343,7 @@ Access-Control-Max-Age: 86400\r\n\r\n";
         {
             Some(s) => s,
             None => {
-                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\nTorrent not found");
+                let _ = send_http_error(&mut stream, 404, "Not Found", "Torrent not found");
                 return;
             }
         };
@@ -456,23 +389,11 @@ Content-Length: {}\r\n\r\n{}",
             Some(idx) => Some(idx),
             None => {
                 if let Ok(ctx) = session_state.session.context().lock() {
-                    let mut best_idx = None;
-                    let mut max_len = 0;
-                    for (i, f) in ctx.files_to_download.iter().enumerate() {
-                        if is_media_filename(&f.torrent_path) && f.length > max_len {
-                            max_len = f.length;
-                            best_idx = Some(i);
-                        }
-                    }
-                    if best_idx.is_none() {
-                        for (i, f) in ctx.files_to_download.iter().enumerate() {
-                            if f.length > max_len {
-                                max_len = f.length;
-                                best_idx = Some(i);
-                            }
-                        }
-                    }
-                    best_idx
+                    find_primary_media_file(
+                        ctx.files_to_download
+                            .iter()
+                            .map(|f| (&f.torrent_path, f.length)),
+                    )
                 } else {
                     None
                 }
@@ -504,113 +425,22 @@ Content-Length: {}\r\n\r\n{}",
         Ok(s) => s,
         Err(err) => {
             let msg = format!("Failed to create stream: {}", err);
-            let response = format!(
-                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
-                msg.len(),
-                msg
-            );
-            let _ = stream.write_all(response.as_bytes());
+            let _ = send_http_error(&mut stream, 500, "Internal Server Error", &msg);
             return;
         }
     };
 
     let total_len = torrent_stream.total_len();
-    if total_len == 0 {
-        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-        return;
-    }
 
-    let mime_type = detect_mime_type(&file_name);
-
-    let mut range_start = 0u64;
-    let mut range_end = total_len - 1;
-    let is_range_request = if let Some(ref r) = range_header {
-        if let Some(spec) = r.strip_prefix("bytes=") {
-            let parts: Vec<&str> = spec.split('-').collect();
-            if parts.len() == 2 {
-                if let Ok(s) = parts[0].parse::<u64>() {
-                    range_start = s;
-                }
-                if !parts[1].is_empty()
-                    && let Ok(e) = parts[1].parse::<u64>()
-                {
-                    range_end = e.min(total_len - 1);
-                }
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    if range_start >= total_len {
-        let response = format!(
-            "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nContent-Length: 0\r\n\r\n",
-            total_len
-        );
-        let _ = stream.write_all(response.as_bytes());
-        return;
-    }
-
-    let content_len = range_end.saturating_sub(range_start) + 1;
-
-    let header = if is_range_request {
-        format!(
-            "HTTP/1.1 206 Partial Content\r\n\
-Content-Type: {}\r\n\
-Content-Range: bytes {}-{}/{}\r\n\
-Content-Length: {}\r\n\
-Accept-Ranges: bytes\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length\r\n\
-Connection: keep-alive\r\n\r\n",
-            mime_type, range_start, range_end, total_len, content_len
-        )
-    } else {
-        format!(
-            "HTTP/1.1 200 OK\r\n\
-Content-Type: {}\r\n\
-Content-Length: {}\r\n\
-Accept-Ranges: bytes\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length\r\n\
-Connection: keep-alive\r\n\r\n",
-            mime_type, total_len
-        )
-    };
-
-    if stream.write_all(header.as_bytes()).is_err() {
-        return;
-    }
-
-    if method == "HEAD" {
-        return;
-    }
-
-    if torrent_stream.seek(SeekFrom::Start(range_start)).is_err() {
-        return;
-    }
-
-    let mut remaining = content_len;
-    let mut buf = [0u8; 65536];
-
-    while remaining > 0 {
-        let to_read = (buf.len() as u64).min(remaining) as usize;
-        match torrent_stream.read(&mut buf[..to_read]) {
-            Ok(0) => break,
-            Ok(bytes_read) => {
-                if stream.write_all(&buf[..bytes_read]).is_err() {
-                    break;
-                }
-                remaining -= bytes_read as u64;
-            }
-            Err(_) => break,
-        }
-    }
+    let _ = serve_http_range_stream(
+        &mut stream,
+        &mut torrent_stream,
+        &file_name,
+        total_len,
+        is_head,
+        req.range_header.as_deref(),
+        |_, _| {},
+    );
 }
 
 // IPC Transport Implementations

@@ -5,6 +5,15 @@ use std::sync::mpsc;
 pub mod ipc;
 pub use ipc::IpcClient;
 
+pub mod media;
+pub use media::{detect_mime_type, find_primary_media_file, is_media_filename};
+
+pub mod stream;
+pub use stream::{
+    parse_range_spec, read_http_request, send_cors_preflight_response, send_http_error,
+    serve_http_range_stream, ByteRange, HttpRequest,
+};
+
 pub struct SessionState {
     pub session: TorrentSession,
     pub torrent_path: String,
@@ -291,50 +300,6 @@ pub enum IpcReply {
     Error { reason: String },
 }
 
-/// Returns true if the file name has a common video or audio extension.
-pub fn is_media_filename(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.ends_with(".mp4")
-        || lower.ends_with(".mkv")
-        || lower.ends_with(".webm")
-        || lower.ends_with(".avi")
-        || lower.ends_with(".mov")
-        || lower.ends_with(".m4v")
-        || lower.ends_with(".flv")
-        || lower.ends_with(".wmv")
-        || lower.ends_with(".mp3")
-        || lower.ends_with(".flac")
-        || lower.ends_with(".ogg")
-        || lower.ends_with(".wav")
-        || lower.ends_with(".aac")
-        || lower.ends_with(".m4a")
-}
-
-/// Detects the MIME content type based on the file extension.
-pub fn detect_mime_type(name: &str) -> &'static str {
-    let lower = name.to_lowercase();
-    if lower.ends_with(".mp4") || lower.ends_with(".m4v") {
-        "video/mp4"
-    } else if lower.ends_with(".mkv") {
-        "video/x-matroska"
-    } else if lower.ends_with(".webm") {
-        "video/webm"
-    } else if lower.ends_with(".avi") {
-        "video/x-msvideo"
-    } else if lower.ends_with(".mov") {
-        "video/quicktime"
-    } else if lower.ends_with(".mp3") {
-        "audio/mpeg"
-    } else if lower.ends_with(".flac") {
-        "audio/flac"
-    } else if lower.ends_with(".ogg") {
-        "audio/ogg"
-    } else if lower.ends_with(".wav") {
-        "audio/wav"
-    } else {
-        "video/mp4"
-    }
-}
 
 #[cfg(test)]
 mod tests {
