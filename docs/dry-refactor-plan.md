@@ -437,7 +437,7 @@ impl Peer {
 
 ---
 
-### Phase 8: WebUI REST Response Handler Deduplication
+### Phase 8: WebUI REST Response Handler Deduplication [COMPLETED]
 
 #### Problem Statement
 In `clients/bt_webui/src/main.rs`, 7 REST endpoints repeat a 25-line `match execute_ipc(...)` block that inspects `IpcReply::Success`, `IpcReply::Error`, and converts them into JSON with corresponding HTTP status codes.
