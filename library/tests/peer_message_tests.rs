@@ -115,3 +115,44 @@ fn test_peer_message_decode_errors() {
 
     assert!(PeerMessage::decode(&[17, 0, 0]).is_err());
 }
+
+#[test]
+fn test_peer_message_single_u32_and_hash_control_roundtrip() {
+    let have = PeerMessage::Have(42);
+    let have_bytes = have.encode();
+    assert_eq!(have_bytes.len(), 4 + 1 + 4);
+    assert_eq!(PeerMessage::decode(&have_bytes[4..]).unwrap(), have);
+
+    let suggest = PeerMessage::Suggest(99);
+    let suggest_bytes = suggest.encode();
+    assert_eq!(suggest_bytes.len(), 4 + 1 + 4);
+    assert_eq!(PeerMessage::decode(&suggest_bytes[4..]).unwrap(), suggest);
+
+    let allowed_fast = PeerMessage::AllowedFast(1234);
+    let fast_bytes = allowed_fast.encode();
+    assert_eq!(fast_bytes.len(), 4 + 1 + 4);
+    assert_eq!(PeerMessage::decode(&fast_bytes[4..]).unwrap(), allowed_fast);
+
+    let hash_req = PeerMessage::HashRequest {
+        pieces_root: [7u8; 32],
+        base_layer: 2,
+        index: 5,
+        length: 10,
+        proof_layers: 1,
+    };
+    let hash_req_bytes = hash_req.encode();
+    assert_eq!(hash_req_bytes.len(), 4 + 1 + 32 + 16);
+    assert_eq!(PeerMessage::decode(&hash_req_bytes[4..]).unwrap(), hash_req);
+
+    let hash_reject = PeerMessage::HashReject {
+        pieces_root: [8u8; 32],
+        base_layer: 3,
+        index: 6,
+        length: 12,
+        proof_layers: 2,
+    };
+    let hash_reject_bytes = hash_reject.encode();
+    assert_eq!(hash_reject_bytes.len(), 4 + 1 + 32 + 16);
+    assert_eq!(PeerMessage::decode(&hash_reject_bytes[4..]).unwrap(), hash_reject);
+}
+

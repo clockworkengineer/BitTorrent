@@ -473,6 +473,15 @@ impl Peer {
         }
     }
 
+    #[inline]
+    fn push_super_seed_actions(&self, piece: u32, actions: &mut Vec<PeerAction>) {
+        actions.push(PeerAction::SendHave(piece));
+        if self.supports_fast_extension {
+            actions.push(PeerAction::SendSuggest(piece));
+            actions.push(PeerAction::SendAllowedFast(piece));
+        }
+    }
+
     /// Processes an incoming protocol message from the peer, updating connection states, logging events, and writing pieces to disk.
     pub fn handle_peer_message(
         &mut self,
@@ -505,11 +514,7 @@ impl Peer {
                     if let Some(piece) =
                         tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield)
                     {
-                        actions.push(PeerAction::SendHave(piece));
-                        if self.supports_fast_extension {
-                            actions.push(PeerAction::SendSuggest(piece));
-                            actions.push(PeerAction::SendAllowedFast(piece));
-                        }
+                        self.push_super_seed_actions(piece, &mut actions);
                     }
                 }
             }
@@ -528,11 +533,7 @@ impl Peer {
                     } else {
                         if let Some((target_ip, next_piece)) = tc.on_peer_have(&self.ip, index) {
                             if target_ip == self.ip {
-                                actions.push(PeerAction::SendHave(next_piece));
-                                if self.supports_fast_extension {
-                                    actions.push(PeerAction::SendSuggest(next_piece));
-                                    actions.push(PeerAction::SendAllowedFast(next_piece));
-                                }
+                                self.push_super_seed_actions(next_piece, &mut actions);
                             } else {
                                 actions.push(PeerAction::SendHaveToPeer {
                                     target_ip: target_ip.clone(),
@@ -551,11 +552,7 @@ impl Peer {
                         if let Some(piece) =
                             tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield)
                         {
-                            actions.push(PeerAction::SendHave(piece));
-                            if self.supports_fast_extension {
-                                actions.push(PeerAction::SendSuggest(piece));
-                                actions.push(PeerAction::SendAllowedFast(piece));
-                            }
+                            self.push_super_seed_actions(piece, &mut actions);
                         }
                     }
                 }
@@ -569,11 +566,7 @@ impl Peer {
                     } else if let Some(piece) =
                         tc.offer_super_seed_piece(&self.ip, &self.remote_piece_bitfield)
                     {
-                        actions.push(PeerAction::SendHave(piece));
-                        if self.supports_fast_extension {
-                            actions.push(PeerAction::SendSuggest(piece));
-                            actions.push(PeerAction::SendAllowedFast(piece));
-                        }
+                        self.push_super_seed_actions(piece, &mut actions);
                     }
                 }
             }

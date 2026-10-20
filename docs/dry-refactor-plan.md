@@ -379,7 +379,7 @@ impl TorrentSession {
 
 ---
 
-### Phase 7: Peer Message Wire Encoding & Action Emission Helpers
+### Phase 7: Peer Message Wire Encoding & Action Emission Helpers [COMPLETED]
 
 #### Problem Statement
 1. `PeerMessage::encode` manually formats single-`u32` messages (`Have`, `Suggest`, `AllowedFast`) using repeated vector allocations and byte packing.

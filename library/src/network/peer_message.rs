@@ -80,13 +80,7 @@ impl<'a> PeerMessage<'a> {
             PeerMessage::Unchoke => vec![0, 0, 0, 1, 1],
             PeerMessage::Interested => vec![0, 0, 0, 1, 2],
             PeerMessage::NotInterested => vec![0, 0, 0, 1, 3],
-            PeerMessage::Have(index) => {
-                let mut buffer = Vec::with_capacity(9);
-                buffer.extend_from_slice(&5u32.to_be_bytes());
-                buffer.push(4);
-                buffer.extend_from_slice(&index.to_be_bytes());
-                buffer
-            }
+            PeerMessage::Have(index) => Self::encode_single_u32(4, *index),
             PeerMessage::Bitfield(bitfield) => {
                 let mut buffer = Vec::with_capacity(5 + bitfield.len());
                 buffer.extend_from_slice(&((1 + bitfield.len()) as u32).to_be_bytes());
@@ -132,13 +126,7 @@ impl<'a> PeerMessage<'a> {
                 buffer.extend_from_slice(payload);
                 buffer
             }
-            PeerMessage::Suggest(index) => {
-                let mut buffer = Vec::with_capacity(9);
-                buffer.extend_from_slice(&5u32.to_be_bytes());
-                buffer.push(13);
-                buffer.extend_from_slice(&index.to_be_bytes());
-                buffer
-            }
+            PeerMessage::Suggest(index) => Self::encode_single_u32(13, *index),
             PeerMessage::HaveAll => vec![0, 0, 0, 1, 14],
             PeerMessage::HaveNone => vec![0, 0, 0, 1, 15],
             PeerMessage::Reject {
@@ -146,30 +134,21 @@ impl<'a> PeerMessage<'a> {
                 begin,
                 length,
             } => Self::encode_triple_u32(16, *index, *begin, *length),
-            PeerMessage::AllowedFast(index) => {
-                let mut buffer = Vec::with_capacity(9);
-                buffer.extend_from_slice(&5u32.to_be_bytes());
-                buffer.push(17);
-                buffer.extend_from_slice(&index.to_be_bytes());
-                buffer
-            }
+            PeerMessage::AllowedFast(index) => Self::encode_single_u32(17, *index),
             PeerMessage::HashRequest {
                 pieces_root,
                 base_layer,
                 index,
                 length,
                 proof_layers,
-            } => {
-                let mut buffer = Vec::with_capacity(53);
-                buffer.extend_from_slice(&49u32.to_be_bytes());
-                buffer.push(21);
-                buffer.extend_from_slice(pieces_root);
-                buffer.extend_from_slice(&base_layer.to_be_bytes());
-                buffer.extend_from_slice(&index.to_be_bytes());
-                buffer.extend_from_slice(&length.to_be_bytes());
-                buffer.extend_from_slice(&proof_layers.to_be_bytes());
-                buffer
-            }
+            } => Self::encode_hash_control(
+                21,
+                pieces_root,
+                *base_layer,
+                *index,
+                *length,
+                *proof_layers,
+            ),
             PeerMessage::Hashes {
                 pieces_root,
                 base_layer,
@@ -196,17 +175,14 @@ impl<'a> PeerMessage<'a> {
                 index,
                 length,
                 proof_layers,
-            } => {
-                let mut buffer = Vec::with_capacity(53);
-                buffer.extend_from_slice(&49u32.to_be_bytes());
-                buffer.push(23);
-                buffer.extend_from_slice(pieces_root);
-                buffer.extend_from_slice(&base_layer.to_be_bytes());
-                buffer.extend_from_slice(&index.to_be_bytes());
-                buffer.extend_from_slice(&length.to_be_bytes());
-                buffer.extend_from_slice(&proof_layers.to_be_bytes());
-                buffer
-            }
+            } => Self::encode_hash_control(
+                23,
+                pieces_root,
+                *base_layer,
+                *index,
+                *length,
+                *proof_layers,
+            ),
         }
     }
 
@@ -222,17 +198,7 @@ impl<'a> PeerMessage<'a> {
             1 => Ok(PeerMessage::Unchoke),
             2 => Ok(PeerMessage::Interested),
             3 => Ok(PeerMessage::NotInterested),
-            4 => {
-                if payload.len() != SIZE_OF_U32 {
-                    return Err(BitTorrentError::Parse("Invalid HAVE payload length".into()));
-                }
-                let index = u32::from_be_bytes(
-                    payload
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
-                );
-                Ok(PeerMessage::Have(index))
-            }
+            4 => Ok(PeerMessage::Have(Self::decode_single_u32(payload, "HAVE")?)),
             5 => Ok(PeerMessage::Bitfield(payload)),
             6 => {
                 let (index, begin, length) = Self::decode_triple_u32(payload)?;
@@ -297,19 +263,7 @@ impl<'a> PeerMessage<'a> {
                     payload: ext_payload,
                 })
             }
-            13 => {
-                if payload.len() != SIZE_OF_U32 {
-                    return Err(BitTorrentError::Parse(
-                        "Invalid SUGGEST payload length".into(),
-                    ));
-                }
-                let index = u32::from_be_bytes(
-                    payload
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
-                );
-                Ok(PeerMessage::Suggest(index))
-            }
+            13 => Ok(PeerMessage::Suggest(Self::decode_single_u32(payload, "SUGGEST")?)),
             14 => Ok(PeerMessage::HaveAll),
             15 => Ok(PeerMessage::HaveNone),
             16 => {
@@ -320,47 +274,10 @@ impl<'a> PeerMessage<'a> {
                     length,
                 })
             }
-            17 => {
-                if payload.len() != SIZE_OF_U32 {
-                    return Err(BitTorrentError::Parse(
-                        "Invalid ALLOWED FAST payload length".into(),
-                    ));
-                }
-                let index = u32::from_be_bytes(
-                    payload
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
-                );
-                Ok(PeerMessage::AllowedFast(index))
-            }
+            17 => Ok(PeerMessage::AllowedFast(Self::decode_single_u32(payload, "ALLOWED FAST")?)),
             21 => {
-                if payload.len() != 48 {
-                    return Err(BitTorrentError::Parse(
-                        "Invalid HASH_REQUEST payload length".into(),
-                    ));
-                }
-                let mut pieces_root = [0u8; 32];
-                pieces_root.copy_from_slice(&payload[0..32]);
-                let base_layer = u32::from_be_bytes(
-                    payload[32..36]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?,
-                );
-                let index = u32::from_be_bytes(
-                    payload[36..40]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid index".into()))?,
-                );
-                let length = u32::from_be_bytes(
-                    payload[40..44]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid length".into()))?,
-                );
-                let proof_layers = u32::from_be_bytes(
-                    payload[44..48]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?,
-                );
+                let (pieces_root, base_layer, index, length, proof_layers) =
+                    Self::decode_hash_control(payload, "HASH_REQUEST")?;
                 Ok(PeerMessage::HashRequest {
                     pieces_root,
                     base_layer,
@@ -375,28 +292,8 @@ impl<'a> PeerMessage<'a> {
                         "Invalid HASHES payload length".into(),
                     ));
                 }
-                let mut pieces_root = [0u8; 32];
-                pieces_root.copy_from_slice(&payload[0..32]);
-                let base_layer = u32::from_be_bytes(
-                    payload[32..36]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?,
-                );
-                let index = u32::from_be_bytes(
-                    payload[36..40]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid index".into()))?,
-                );
-                let length = u32::from_be_bytes(
-                    payload[40..44]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid length".into()))?,
-                );
-                let proof_layers = u32::from_be_bytes(
-                    payload[44..48]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?,
-                );
+                let (pieces_root, base_layer, index, length, proof_layers) =
+                    Self::decode_hash_control(&payload[..48], "HASHES")?;
                 let hashes = &payload[48..];
                 Ok(PeerMessage::Hashes {
                     pieces_root,
@@ -408,33 +305,8 @@ impl<'a> PeerMessage<'a> {
                 })
             }
             23 => {
-                if payload.len() != 48 {
-                    return Err(BitTorrentError::Parse(
-                        "Invalid HASH_REJECT payload length".into(),
-                    ));
-                }
-                let mut pieces_root = [0u8; 32];
-                pieces_root.copy_from_slice(&payload[0..32]);
-                let base_layer = u32::from_be_bytes(
-                    payload[32..36]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?,
-                );
-                let index = u32::from_be_bytes(
-                    payload[36..40]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid index".into()))?,
-                );
-                let length = u32::from_be_bytes(
-                    payload[40..44]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid length".into()))?,
-                );
-                let proof_layers = u32::from_be_bytes(
-                    payload[44..48]
-                        .try_into()
-                        .map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?,
-                );
+                let (pieces_root, base_layer, index, length, proof_layers) =
+                    Self::decode_hash_control(payload, "HASH_REJECT")?;
                 Ok(PeerMessage::HashReject {
                     pieces_root,
                     base_layer,
@@ -489,6 +361,87 @@ impl<'a> PeerMessage<'a> {
         let info_hash = buffer[28..48].to_vec();
         let peer_id = buffer[48..68].to_vec();
         Ok((info_hash, peer_id, reserved))
+    }
+
+    #[inline]
+    fn encode_single_u32(message_id: u8, val: u32) -> Vec<u8> {
+        let mut buffer = Vec::with_capacity(SIZE_OF_U32 + 1 + 4);
+        buffer.extend_from_slice(&5u32.to_be_bytes());
+        buffer.push(message_id);
+        buffer.extend_from_slice(&val.to_be_bytes());
+        buffer
+    }
+
+    #[inline]
+    fn decode_single_u32(payload: &[u8], name: &'static str) -> Result<u32, BitTorrentError> {
+        if payload.len() != SIZE_OF_U32 {
+            return Err(BitTorrentError::Parse(alloc::format!(
+                "Invalid {} payload length",
+                name
+            )));
+        }
+        let val = u32::from_be_bytes(
+            payload
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid payload bytes".into()))?,
+        );
+        Ok(val)
+    }
+
+    #[inline]
+    fn encode_hash_control(
+        message_id: u8,
+        root: &[u8; 32],
+        base: u32,
+        index: u32,
+        length: u32,
+        proof_layers: u32,
+    ) -> Vec<u8> {
+        let mut buffer = Vec::with_capacity(53);
+        buffer.extend_from_slice(&49u32.to_be_bytes());
+        buffer.push(message_id);
+        buffer.extend_from_slice(root);
+        buffer.extend_from_slice(&base.to_be_bytes());
+        buffer.extend_from_slice(&index.to_be_bytes());
+        buffer.extend_from_slice(&length.to_be_bytes());
+        buffer.extend_from_slice(&proof_layers.to_be_bytes());
+        buffer
+    }
+
+    #[inline]
+    fn decode_hash_control(
+        payload: &[u8],
+        name: &'static str,
+    ) -> Result<([u8; 32], u32, u32, u32, u32), BitTorrentError> {
+        if payload.len() != 48 {
+            return Err(BitTorrentError::Parse(alloc::format!(
+                "Invalid {} payload length",
+                name
+            )));
+        }
+        let mut pieces_root = [0u8; 32];
+        pieces_root.copy_from_slice(&payload[0..32]);
+        let base_layer = u32::from_be_bytes(
+            payload[32..36]
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid base_layer".into()))?,
+        );
+        let index = u32::from_be_bytes(
+            payload[36..40]
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid index".into()))?,
+        );
+        let length = u32::from_be_bytes(
+            payload[40..44]
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid length".into()))?,
+        );
+        let proof_layers = u32::from_be_bytes(
+            payload[44..48]
+                .try_into()
+                .map_err(|_| BitTorrentError::Parse("Invalid proof_layers".into()))?,
+        );
+        Ok((pieces_root, base_layer, index, length, proof_layers))
     }
 
     fn encode_triple_u32(message_id: u8, v1: u32, v2: u32, v3: u32) -> Vec<u8> {
