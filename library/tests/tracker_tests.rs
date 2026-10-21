@@ -1,7 +1,6 @@
 mod common;
 
 use bittorrent_rs::TorrentStatus;
-use common::sample_file;
 use bittorrent_rs::announcer::Announcer;
 use bittorrent_rs::disk_io::DiskIO;
 use bittorrent_rs::internals::TorrentContext;
@@ -11,6 +10,7 @@ use bittorrent_rs::selector::RarestFirstSelector;
 use bittorrent_rs::session::SessionConfig;
 use bittorrent_rs::tracker::PeerDetails;
 use bittorrent_rs::tracker::Tracker;
+use common::sample_file;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc::channel};
@@ -36,7 +36,6 @@ impl Announcer for FakeAnnouncer {
         Ok(response)
     }
 }
-
 
 #[test]
 fn test_tracker_started_and_peer_list() {

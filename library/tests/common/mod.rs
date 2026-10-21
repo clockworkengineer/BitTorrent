@@ -16,7 +16,8 @@ pub fn sample_file(name: &str) -> PathBuf {
 #[allow(dead_code)]
 pub fn sample_file_bytes(name: &str) -> Vec<u8> {
     let path = sample_file(name);
-    fs::read(&path).unwrap_or_else(|e| panic!("Unable to read sample torrent file {:?}: {}", path, e))
+    fs::read(&path)
+        .unwrap_or_else(|e| panic!("Unable to read sample torrent file {:?}: {}", path, e))
 }
 
 pub mod storage_contract;

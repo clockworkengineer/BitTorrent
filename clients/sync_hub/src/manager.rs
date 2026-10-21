@@ -97,8 +97,7 @@ impl SyncManager {
     /// Creates a new `SyncManager` for the specified synchronization directory.
     pub fn new(sync_dir: PathBuf, listen_port: u16) -> Self {
         let torrent_path = sync_dir.join(".sync.torrent");
-        let controller =
-            SyncSessionController::new(sync_dir.clone(), torrent_path, listen_port);
+        let controller = SyncSessionController::new(sync_dir.clone(), torrent_path, listen_port);
         SyncManager {
             controller,
             sync_dir,

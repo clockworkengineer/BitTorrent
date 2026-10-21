@@ -31,9 +31,9 @@ fn test_standard_tit_for_tat_downloading_mode() {
 
     let swarm = MockSwarmView::new()
         .with_peer(make_peer("10.0.0.1", 6881, true, 100.0, 10.0)) // A
-        .with_peer(make_peer("10.0.0.2", 6881, true, 50.0, 10.0))  // B
+        .with_peer(make_peer("10.0.0.2", 6881, true, 50.0, 10.0)) // B
         .with_peer(make_peer("10.0.0.3", 6881, true, 200.0, 10.0)) // C
-        .with_peer(make_peer("10.0.0.4", 6881, true, 10.0, 10.0))  // D
+        .with_peer(make_peer("10.0.0.4", 6881, true, 10.0, 10.0)) // D
         .with_peer(make_peer("10.0.0.5", 6881, false, 500.0, 10.0)); // E (disinterested)
 
     // With max_upload_slots = 3:
@@ -69,9 +69,9 @@ fn test_standard_tit_for_tat_seeding_mode() {
     let policy = StandardTitForTatPolicy::new();
 
     let swarm = MockSwarmView::new()
-        .with_peer(make_peer("10.0.0.1", 6881, true, 0.0, 10.0))  // A
+        .with_peer(make_peer("10.0.0.1", 6881, true, 0.0, 10.0)) // A
         .with_peer(make_peer("10.0.0.2", 6881, true, 0.0, 100.0)) // B
-        .with_peer(make_peer("10.0.0.3", 6881, true, 0.0, 50.0))  // C
+        .with_peer(make_peer("10.0.0.3", 6881, true, 0.0, 50.0)) // C
         .with_peer(make_peer("10.0.0.4", 6881, true, 0.0, 20.0)); // D
 
     // In seeding mode, ranks peers by upload rate descending
@@ -95,7 +95,7 @@ fn test_standard_tit_for_tat_optimistic_rotation() {
 
     let swarm = MockSwarmView::new()
         .with_peer(make_peer("10.0.0.1", 6881, true, 100.0, 10.0)) // Regular
-        .with_peer(make_peer("10.0.0.2", 6881, true, 20.0, 10.0))  // Candidate 1
+        .with_peer(make_peer("10.0.0.2", 6881, true, 20.0, 10.0)) // Candidate 1
         .with_peer(make_peer("10.0.0.3", 6881, true, 10.0, 10.0)); // Candidate 2
 
     // Round 0 (round % 3 == 0): Initial pick
@@ -159,7 +159,7 @@ fn test_bittyrant_policy_efficiency_ratio() {
     // Peer C: 300 dl / 200 ul = 1.5 (lowest efficiency despite high dl)
     let swarm = MockSwarmView::new()
         .with_peer(make_peer("10.0.0.1", 6881, true, 100.0, 50.0)) // ratio 2.0
-        .with_peer(make_peer("10.0.0.2", 6881, true, 80.0, 10.0))  // ratio 8.0
+        .with_peer(make_peer("10.0.0.2", 6881, true, 80.0, 10.0)) // ratio 8.0
         .with_peer(make_peer("10.0.0.3", 6881, true, 300.0, 200.0)); // ratio 1.5
 
     let decision = policy.evaluate(&swarm, 2, false);
@@ -199,9 +199,9 @@ fn test_session_config_choking_policy_builder() {
     let config = SessionConfig::default().with_choking_policy(tyrant);
     assert_eq!(config.max_connections, 50);
 
-    let strategy = Arc::new(PolicyChokingStrategy::new(Arc::new(
-        RoundRobinPolicy::new(),
-    )));
+    let strategy = Arc::new(PolicyChokingStrategy::new(
+        Arc::new(RoundRobinPolicy::new()),
+    ));
     let config2 = SessionConfig::default().with_choking_strategy(strategy);
     assert_eq!(config2.max_connections, 50);
 }

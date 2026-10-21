@@ -14,5 +14,5 @@ pub use engine::Engine;
 pub use ipc::IpcServer;
 pub use ipc_handler::handle_ipc_message;
 pub use repository::{DaemonState, DaemonStateRepository, SavedTorrent};
-pub use session_pool::{info_hash_hex, TorrentSessionPool};
+pub use session_pool::{TorrentSessionPool, info_hash_hex};
 pub use streaming::{handle_stream_client, start_stream_server};

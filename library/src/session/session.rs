@@ -1251,9 +1251,9 @@ impl super::config::ChokingStrategy for super::config::StandardChoking {
         task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
         manager: Option<Arc<Manager>>,
     ) {
-        let strategy = crate::session::choking_policy::PolicyChokingStrategy::new(
-            Arc::new(crate::session::choking_policy::StandardTitForTatPolicy::default()),
-        );
+        let strategy = crate::session::choking_policy::PolicyChokingStrategy::new(Arc::new(
+            crate::session::choking_policy::StandardTitForTatPolicy::default(),
+        ));
         strategy.spawn_choking_loop(context, task_tx, manager);
     }
 }

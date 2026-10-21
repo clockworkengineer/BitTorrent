@@ -28,11 +28,13 @@ impl TransferMetrics {
     }
 
     pub fn record_download(&self, bytes: u64) {
-        self.total_bytes_downloaded.fetch_add(bytes, Ordering::Relaxed);
+        self.total_bytes_downloaded
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn record_upload(&self, bytes: u64) {
-        self.total_bytes_uploaded.fetch_add(bytes, Ordering::Relaxed);
+        self.total_bytes_uploaded
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn progress_ppm(&self) -> u32 {

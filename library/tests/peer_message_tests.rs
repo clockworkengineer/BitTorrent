@@ -153,6 +153,8 @@ fn test_peer_message_single_u32_and_hash_control_roundtrip() {
     };
     let hash_reject_bytes = hash_reject.encode();
     assert_eq!(hash_reject_bytes.len(), 4 + 1 + 32 + 16);
-    assert_eq!(PeerMessage::decode(&hash_reject_bytes[4..]).unwrap(), hash_reject);
+    assert_eq!(
+        PeerMessage::decode(&hash_reject_bytes[4..]).unwrap(),
+        hash_reject
+    );
 }
-

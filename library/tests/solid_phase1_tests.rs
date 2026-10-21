@@ -1,9 +1,9 @@
-use bittorrent_rs::core::piece_store::PieceStore;
-use bittorrent_rs::core::swarm_topology::SwarmTopology;
-use bittorrent_rs::core::transfer_metrics::TransferMetrics;
 use bittorrent_rs::core::metadata_bootstrap::MetadataBootstrap;
-use bittorrent_rs::core::torrent_context::TorrentContext;
+use bittorrent_rs::core::piece_store::PieceStore;
 use bittorrent_rs::core::selector::RarestFirstSelector;
+use bittorrent_rs::core::swarm_topology::SwarmTopology;
+use bittorrent_rs::core::torrent_context::TorrentContext;
+use bittorrent_rs::core::transfer_metrics::TransferMetrics;
 use bittorrent_rs::session::SessionConfig;
 use std::sync::Arc;
 
@@ -73,7 +73,9 @@ fn test_transfer_metrics_progress_and_speeds() {
 
     metrics.record_upload(123_456);
     assert_eq!(
-        metrics.total_bytes_uploaded.load(std::sync::atomic::Ordering::Relaxed),
+        metrics
+            .total_bytes_uploaded
+            .load(std::sync::atomic::Ordering::Relaxed),
         123_456
     );
 

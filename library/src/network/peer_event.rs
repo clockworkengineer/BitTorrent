@@ -97,7 +97,9 @@ pub struct ContextEventListener {
 
 #[cfg(feature = "std")]
 impl ContextEventListener {
-    pub fn new(context: Arc<std::sync::Mutex<crate::core::torrent_context::TorrentContext>>) -> Self {
+    pub fn new(
+        context: Arc<std::sync::Mutex<crate::core::torrent_context::TorrentContext>>,
+    ) -> Self {
         Self { context }
     }
 }

@@ -32,8 +32,8 @@ impl AppTheme {
         match self {
             Self::ObsidianDark => Color32::from_rgb(88, 166, 255), // GitHub Blue
             Self::CatppuccinMocha => Color32::from_rgb(137, 180, 250), // Catppuccin Blue
-            Self::OledBlack => Color32::from_rgb(0, 229, 255),    // Electric Cyan
-            Self::LightModern => Color32::from_rgb(9, 105, 218),  // Azure
+            Self::OledBlack => Color32::from_rgb(0, 229, 255),     // Electric Cyan
+            Self::LightModern => Color32::from_rgb(9, 105, 218),   // Azure
         }
     }
 

@@ -10,8 +10,8 @@ pub use media::{detect_mime_type, find_primary_media_file, is_media_filename};
 
 pub mod stream;
 pub use stream::{
-    parse_range_spec, read_http_request, send_cors_preflight_response, send_http_error,
-    serve_http_range_stream, ByteRange, HttpRequest,
+    ByteRange, HttpRequest, parse_range_spec, read_http_request, send_cors_preflight_response,
+    send_http_error, serve_http_range_stream,
 };
 
 pub struct SessionState {
@@ -299,7 +299,6 @@ pub enum IpcReply {
     PieceStates { info: PieceAvailabilityInfo },
     Error { reason: String },
 }
-
 
 #[cfg(test)]
 mod tests {

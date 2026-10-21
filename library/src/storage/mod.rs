@@ -3,9 +3,9 @@ pub mod assembler;
 #[cfg(feature = "std")]
 pub mod bitfield_scanner;
 #[cfg(feature = "std")]
-pub mod disk_cache;
-#[cfg(feature = "std")]
 pub mod disk_block_storage;
+#[cfg(feature = "std")]
+pub mod disk_cache;
 #[cfg(feature = "std")]
 pub mod disk_io;
 #[cfg(feature = "std")]

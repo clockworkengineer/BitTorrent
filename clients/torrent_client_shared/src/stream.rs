@@ -249,7 +249,8 @@ mod tests {
 
     #[test]
     fn test_read_http_request() {
-        let raw = b"GET /stream/test.mp4 HTTP/1.1\r\nHost: localhost\r\nRange: bytes=100-200\r\n\r\n";
+        let raw =
+            b"GET /stream/test.mp4 HTTP/1.1\r\nHost: localhost\r\nRange: bytes=100-200\r\n\r\n";
         let mut cursor = Cursor::new(&raw[..]);
         let req = read_http_request(&mut cursor).unwrap().unwrap();
         assert_eq!(req.method, "GET");

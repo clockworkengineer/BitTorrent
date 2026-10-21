@@ -1,3 +1,6 @@
+use bittorrent_rs::SessionConfig;
+use bittorrent_rs::SwarmReadAccess;
+use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::io_traits::{MockSocket, Socket};
 use bittorrent_rs::network::peer_event::{
     ContextEventListener, NullPeerEventListener, PeerEventListener, RecordingPeerEventListener,
@@ -5,9 +8,6 @@ use bittorrent_rs::network::peer_event::{
 use bittorrent_rs::peer::Peer;
 use bittorrent_rs::peer_message::PeerMessage;
 use bittorrent_rs::selector::RarestFirstSelector;
-use bittorrent_rs::internals::TorrentContext;
-use bittorrent_rs::SessionConfig;
-use bittorrent_rs::SwarmReadAccess;
 use std::sync::Arc;
 
 #[test]
@@ -51,7 +51,10 @@ fn test_peer_recording_event_listener_notifications() {
     // 1. Direct event listener calls & verification
     recording.on_peer_have("192.168.1.50", 3);
     assert_eq!(recording.haves.lock().unwrap().len(), 1);
-    assert_eq!(recording.haves.lock().unwrap()[0], ("192.168.1.50".to_string(), 3));
+    assert_eq!(
+        recording.haves.lock().unwrap()[0],
+        ("192.168.1.50".to_string(), 3)
+    );
 
     recording.on_peer_bitfield("192.168.1.50", &[0b1010_0000]);
     assert_eq!(recording.bitfields.lock().unwrap().len(), 1);
@@ -76,7 +79,10 @@ fn test_peer_recording_event_listener_notifications() {
     // 2. Peer close emits on_peer_disconnected
     peer.close();
     assert_eq!(recording.disconnects.lock().unwrap().len(), 1);
-    assert_eq!(recording.disconnects.lock().unwrap()[0], "192.168.1.50".to_string());
+    assert_eq!(
+        recording.disconnects.lock().unwrap()[0],
+        "192.168.1.50".to_string()
+    );
 }
 
 #[test]
@@ -113,7 +119,10 @@ fn test_peer_message_dispatches_to_event_listener() {
     // Dispatch Have message
     let _ = peer.handle_peer_message(PeerMessage::Have(5), &mut ctx);
     assert_eq!(recording.haves.lock().unwrap().len(), 1);
-    assert_eq!(recording.haves.lock().unwrap()[0], ("10.0.0.1".to_string(), 5));
+    assert_eq!(
+        recording.haves.lock().unwrap()[0],
+        ("10.0.0.1".to_string(), 5)
+    );
 
     // Dispatch Bitfield message
     let _ = peer.handle_peer_message(PeerMessage::Bitfield(&[0b1111_0000]), &mut ctx);

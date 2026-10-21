@@ -151,4 +151,3 @@ fn test_to_hex_and_from_hex() {
     // Invalid character error
     assert!(from_hex("001z").is_err());
 }
-

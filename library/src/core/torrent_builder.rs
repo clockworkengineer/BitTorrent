@@ -281,7 +281,8 @@ impl TorrentBuilder {
         let mut v1_files_entries: Vec<BNode> = Vec::new();
         let mut pad_counter = 0;
 
-        let is_single_file = self.files.len() == 1 && !self.is_multi_file && !self.files[0].0.contains('/');
+        let is_single_file =
+            self.files.len() == 1 && !self.is_multi_file && !self.files[0].0.contains('/');
 
         for (rel_path, data) in &self.files {
             let file_len_bytes = leak_bytes(data.len().to_string());
@@ -403,7 +404,8 @@ impl TorrentBuilder {
         }
 
         let mut total_stream = Vec::new();
-        let is_single_file = self.files.len() == 1 && !self.is_multi_file && !self.files[0].0.contains('/');
+        let is_single_file =
+            self.files.len() == 1 && !self.is_multi_file && !self.files[0].0.contains('/');
         let mut v1_files = Vec::new();
 
         for (rel_path, data) in &self.files {

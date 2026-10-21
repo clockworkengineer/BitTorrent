@@ -1,13 +1,13 @@
 mod common;
 
 use bittorrent_rs::announcer::Announcer;
-use common::sample_file;
 use bittorrent_rs::disk_io::DiskIO;
 use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::metainfo::MetaInfoFile;
 use bittorrent_rs::selector::RarestFirstSelector;
 use bittorrent_rs::session::SessionConfig;
 use bittorrent_rs::tracker::{PeerDetails, Tracker};
+use common::sample_file;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -32,7 +32,6 @@ impl Announcer for FakeAnnouncer {
         Ok(response)
     }
 }
-
 
 #[test]
 fn test_meta_info_parsing_and_validation() {

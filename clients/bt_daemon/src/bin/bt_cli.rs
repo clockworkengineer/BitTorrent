@@ -6,7 +6,6 @@
 use std::env;
 use torrent_client_shared::{IpcClient, IpcMessage, IpcReply, TorrentStatusInfo, fmt_bytes};
 
-
 fn print_usage() {
     println!("BitTorrent CLI Companion Tool (bt-cli)\n");
     println!("Usage:");

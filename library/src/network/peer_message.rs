@@ -263,7 +263,9 @@ impl<'a> PeerMessage<'a> {
                     payload: ext_payload,
                 })
             }
-            13 => Ok(PeerMessage::Suggest(Self::decode_single_u32(payload, "SUGGEST")?)),
+            13 => Ok(PeerMessage::Suggest(Self::decode_single_u32(
+                payload, "SUGGEST",
+            )?)),
             14 => Ok(PeerMessage::HaveAll),
             15 => Ok(PeerMessage::HaveNone),
             16 => {
@@ -274,7 +276,10 @@ impl<'a> PeerMessage<'a> {
                     length,
                 })
             }
-            17 => Ok(PeerMessage::AllowedFast(Self::decode_single_u32(payload, "ALLOWED FAST")?)),
+            17 => Ok(PeerMessage::AllowedFast(Self::decode_single_u32(
+                payload,
+                "ALLOWED FAST",
+            )?)),
             21 => {
                 let (pieces_root, base_layer, index, length, proof_layers) =
                     Self::decode_hash_control(payload, "HASH_REQUEST")?;

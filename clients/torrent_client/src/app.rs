@@ -480,8 +480,7 @@ impl eframe::App for TorrentClientApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
-                        egui::RichText::new("✔ Online")
-                            .color(self.settings.theme.success_color()),
+                        egui::RichText::new("✔ Online").color(self.settings.theme.success_color()),
                     );
                 });
             });

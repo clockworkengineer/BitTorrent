@@ -1,4 +1,4 @@
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use bt_daemon::engine::Engine;
 use bt_daemon::ipc_handler::handle_ipc_message;
@@ -65,8 +65,14 @@ fn test_torrent_session_pool_empty_and_queries() {
     assert!(!pool.contains_path("/nonexistent.torrent"));
 
     // Queries on unknown hash
-    assert!(pool.find_by_hash("00112233445566778899aabbccddeeff00112233").is_none());
-    assert!(pool.find_by_hash_mut("00112233445566778899aabbccddeeff00112233").is_none());
+    assert!(
+        pool.find_by_hash("00112233445566778899aabbccddeeff00112233")
+            .is_none()
+    );
+    assert!(
+        pool.find_by_hash_mut("00112233445566778899aabbccddeeff00112233")
+            .is_none()
+    );
 
     // Pause/resume/remove on unknown hash return clean error
     let pause_err = pool.pause("00112233445566778899aabbccddeeff00112233");

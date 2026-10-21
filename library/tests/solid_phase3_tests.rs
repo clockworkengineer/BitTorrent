@@ -1,3 +1,4 @@
+use bittorrent_rs::SessionConfig;
 use bittorrent_rs::internals::TorrentContext;
 use bittorrent_rs::io_traits::{MockSocket, Socket};
 use bittorrent_rs::peer::Peer;
@@ -8,9 +9,8 @@ use bittorrent_rs::views::{
     MockPieceAvailabilityView, PeerSnapshot, PieceAvailabilityView, RemotePeerPieceView, SwarmView,
     TransferStatsView,
 };
-use bittorrent_rs::SessionConfig;
-use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 
 #[test]
 fn test_sequential_selector_with_mock_view_and_raw_bitfield() {

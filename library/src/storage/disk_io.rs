@@ -55,7 +55,10 @@ impl DiskIO {
     ///
     /// Delegates directly to [`FileAllocationManager`] (SRP).
     pub fn create_local_torrent_structure(&self) -> Result<(), BitTorrentError> {
-        FileAllocationManager::allocate_torrent_structure(&self.download_path, &self.files_to_download)
+        FileAllocationManager::allocate_torrent_structure(
+            &self.download_path,
+            &self.files_to_download,
+        )
     }
 
     /// Scans the local files to build and initialize the torrent session's bitfield based on what is already on disk.

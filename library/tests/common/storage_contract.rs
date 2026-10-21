@@ -17,18 +17,18 @@ pub fn verify_block_storage_contract<S: BlockStorage>(storage: &S, capacity: u64
     // 1. Zero-length I/O safety
     let mut empty_buf = [0u8; 0];
     assert_eq!(
-        storage.read_block(0, &mut empty_buf).expect("0-byte read succeeds"),
+        storage
+            .read_block(0, &mut empty_buf)
+            .expect("0-byte read succeeds"),
         0
     );
-    storage
-        .write_block(0, &[])
-        .expect("0-byte write succeeds");
+    storage.write_block(0, &[]).expect("0-byte write succeeds");
 
     // 2. In-bounds read / write roundtrip
     if capacity >= 16 {
         let test_pattern: [u8; 16] = [
-            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+            0x07, 0x08,
         ];
         storage
             .write_block(0, &test_pattern)
@@ -76,7 +76,9 @@ pub fn verify_block_storage_contract<S: BlockStorage>(storage: &S, capacity: u64
         let straddle_offset = capacity - 1;
         let mut straddle_buf = [0u8; 2];
         assert!(
-            storage.read_block(straddle_offset, &mut straddle_buf).is_err(),
+            storage
+                .read_block(straddle_offset, &mut straddle_buf)
+                .is_err(),
             "read straddling capacity boundary must fail"
         );
         let write_res = storage.write_block(straddle_offset, &[0xFF, 0xEE]);
@@ -91,7 +93,9 @@ pub fn verify_block_storage_contract<S: BlockStorage>(storage: &S, capacity: u64
     let overflow_offset = u64::MAX - 5;
     let mut overflow_buf = [0u8; 10];
     assert!(
-        storage.read_block(overflow_offset, &mut overflow_buf).is_err(),
+        storage
+            .read_block(overflow_offset, &mut overflow_buf)
+            .is_err(),
         "overflowing read offset must fail safely without panicking"
     );
     let write_res = storage.write_block(overflow_offset, &[1; 10]);
@@ -105,7 +109,10 @@ pub fn verify_block_storage_contract<S: BlockStorage>(storage: &S, capacity: u64
     // Discard any lingering dirty out-of-bounds blocks so clean flushing can be tested
     storage.discard_range(0, u64::MAX);
     for _ in 0..3 {
-        assert!(storage.flush().is_ok(), "multiple flush calls must be idempotent");
+        assert!(
+            storage.flush().is_ok(),
+            "multiple flush calls must be idempotent"
+        );
     }
 
     // 6. Safe discard range

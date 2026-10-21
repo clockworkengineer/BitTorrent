@@ -1,13 +1,11 @@
 use bittorrent_rs::announcer::{Announcer, AnnouncerEnum, AnnouncerFactory};
-use bittorrent_rs::announcer_registry::{
-    AnnouncerBuilder, AnnouncerRegistry,
-};
+use bittorrent_rs::announcer_registry::{AnnouncerBuilder, AnnouncerRegistry};
 use bittorrent_rs::error::BitTorrentError;
 use bittorrent_rs::tracker::{
     AnnounceResponse, ScrapeResponse, TrackerAnnounceContext, TrackerEvent,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Mock announcer implementing the Announcer trait for custom schemes.
 #[derive(Debug, Clone, Default)]
@@ -82,8 +80,16 @@ fn test_announcer_registry_default_protocols() {
     // 1. HTTP/HTTPS support
     #[cfg(feature = "http-tracker")]
     {
-        assert!(registry.create_announcer("http://tracker.example.com/announce").is_ok());
-        assert!(registry.create_announcer("https://tracker.example.com/announce").is_ok());
+        assert!(
+            registry
+                .create_announcer("http://tracker.example.com/announce")
+                .is_ok()
+        );
+        assert!(
+            registry
+                .create_announcer("https://tracker.example.com/announce")
+                .is_ok()
+        );
         assert!(matches!(
             registry.create("http://tracker.example.com/announce"),
             Ok(AnnouncerEnum::Http(_))
@@ -91,7 +97,11 @@ fn test_announcer_registry_default_protocols() {
     }
 
     // 2. UDP support
-    assert!(registry.create_announcer("udp://tracker.openbittorrent.com:6969/announce").is_ok());
+    assert!(
+        registry
+            .create_announcer("udp://tracker.openbittorrent.com:6969/announce")
+            .is_ok()
+    );
     assert!(matches!(
         registry.create("udp://tracker.openbittorrent.com:6969/announce"),
         Ok(AnnouncerEnum::Udp(_))
@@ -100,8 +110,16 @@ fn test_announcer_registry_default_protocols() {
     // 3. WebTorrent WebSocket support
     #[cfg(feature = "webrtc")]
     {
-        assert!(registry.create_announcer("ws://tracker.btorrent.xyz").is_ok());
-        assert!(registry.create_announcer("wss://tracker.openwebtorrent.com").is_ok());
+        assert!(
+            registry
+                .create_announcer("ws://tracker.btorrent.xyz")
+                .is_ok()
+        );
+        assert!(
+            registry
+                .create_announcer("wss://tracker.openwebtorrent.com")
+                .is_ok()
+        );
         assert!(matches!(
             registry.create("wss://tracker.openwebtorrent.com"),
             Ok(AnnouncerEnum::WebTorrent(_))

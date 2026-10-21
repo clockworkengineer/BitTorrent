@@ -239,15 +239,24 @@ impl PieceAvailabilityView for MockPieceAvailabilityView {
     }
 
     fn is_piece_local(&self, piece: u32) -> bool {
-        self.local_pieces.get(piece as usize).copied().unwrap_or(false)
+        self.local_pieces
+            .get(piece as usize)
+            .copied()
+            .unwrap_or(false)
     }
 
     fn is_piece_wanted(&self, piece: u32) -> bool {
-        self.wanted_pieces.get(piece as usize).copied().unwrap_or(false)
+        self.wanted_pieces
+            .get(piece as usize)
+            .copied()
+            .unwrap_or(false)
     }
 
     fn is_piece_verifying(&self, piece: u32) -> bool {
-        self.verifying_pieces.get(piece as usize).copied().unwrap_or(false)
+        self.verifying_pieces
+            .get(piece as usize)
+            .copied()
+            .unwrap_or(false)
     }
 
     fn peer_count_for_piece(&self, piece: u32) -> usize {
@@ -291,4 +300,3 @@ impl SwarmView for MockSwarmView {
         }
     }
 }
-

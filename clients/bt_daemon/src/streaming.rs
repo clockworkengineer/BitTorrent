@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use torrent_client_shared::{
-    find_primary_media_file, is_media_filename, read_http_request, send_cors_preflight_response,
-    send_http_error, serve_http_range_stream, FileInfo,
+    FileInfo, find_primary_media_file, is_media_filename, read_http_request,
+    send_cors_preflight_response, send_http_error, serve_http_range_stream,
 };
 
 use crate::engine::Engine;

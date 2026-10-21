@@ -254,6 +254,10 @@ pub use core::torrent_upgrader::{TorrentExportFormat, TorrentUpgradeReport, Torr
 pub use network::dht::Dht;
 #[cfg(feature = "std")]
 pub use network::latency_profiler::{PeerLatencyProfile, PeerLatencySummary, SwarmLatencyProfiler};
+#[cfg(feature = "std")]
+pub use network::peer_event::{
+    ContextEventListener, NullPeerEventListener, PeerEventListener, RecordingPeerEventListener,
+};
 #[cfg(all(feature = "std", feature = "mse"))]
 pub use network::peer_network::EncryptedSocket;
 #[cfg(all(feature = "std", feature = "utp"))]
@@ -270,10 +274,6 @@ pub use network::webrtc::{
     WebTorrentAnnouncer, WebTorrentAnswer, WebTorrentBridge, WebTorrentBridgeStats,
     WebTorrentIncomingMessage, WebTorrentOffer, WebTorrentScrapeFile, WebTorrentScrapeRequest,
     WebTorrentScrapeResponse, create_webtorrent_answer, create_webtorrent_offer,
-};
-#[cfg(feature = "std")]
-pub use network::peer_event::{
-    ContextEventListener, NullPeerEventListener, PeerEventListener, RecordingPeerEventListener,
 };
 #[cfg(feature = "std")]
 pub use session::choking_policy::{

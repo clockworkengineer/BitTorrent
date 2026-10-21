@@ -169,8 +169,9 @@ pub fn from_hex(hex: &str) -> Result<alloc::vec::Vec<u8>, crate::error::BitTorre
     }
     let mut bytes = alloc::vec::Vec::with_capacity(hex.len() / 2);
     for i in (0..hex.len()).step_by(2) {
-        let byte = u8::from_str_radix(&hex[i..i + 2], 16)
-            .map_err(|e| crate::error::BitTorrentError::Parse(alloc::string::ToString::to_string(&e)))?;
+        let byte = u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| {
+            crate::error::BitTorrentError::Parse(alloc::string::ToString::to_string(&e))
+        })?;
         bytes.push(byte);
     }
     Ok(bytes)

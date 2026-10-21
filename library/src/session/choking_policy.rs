@@ -301,9 +301,7 @@ impl ChokingStrategy for PolicyChokingStrategy {
     fn spawn_choking_loop(
         &self,
         context: Arc<std::sync::Mutex<TorrentContext>>,
-        task_tx: std::sync::mpsc::Sender<
-            Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
-        >,
+        task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
         manager: Option<Arc<Manager>>,
     ) {
         let policy = self.policy.clone();
@@ -347,8 +345,7 @@ impl ChokingStrategy for PolicyChokingStrategy {
                                 p.bytes_downloaded_in_interval = 0;
 
                                 let ul_rate = p.bytes_uploaded_in_interval as f64 / 10.0;
-                                p.rolling_upload_rate =
-                                    p.rolling_upload_rate * 0.8 + ul_rate * 0.2;
+                                p.rolling_upload_rate = p.rolling_upload_rate * 0.8 + ul_rate * 0.2;
                                 p.bytes_uploaded_in_interval = 0;
                             }
                         }
@@ -371,17 +368,12 @@ impl ChokingStrategy for PolicyChokingStrategy {
                                 if unchoke_set.contains(ip.as_str()) {
                                     if p.am_choking {
                                         p.am_choking = false;
-                                        peers_to_action.push((
-                                            peer_arc.clone(),
-                                            PeerAction::SendUnchoke,
-                                        ));
+                                        peers_to_action
+                                            .push((peer_arc.clone(), PeerAction::SendUnchoke));
                                     }
                                 } else if !p.am_choking {
                                     p.am_choking = true;
-                                    peers_to_action.push((
-                                        peer_arc.clone(),
-                                        PeerAction::SendChoke,
-                                    ));
+                                    peers_to_action.push((peer_arc.clone(), PeerAction::SendChoke));
                                 }
                             }
                         }

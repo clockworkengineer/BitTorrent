@@ -2,9 +2,9 @@ pub mod constants;
 pub mod magnet;
 #[cfg(feature = "v2")]
 pub mod merkle;
-pub mod metainfo;
 #[cfg(feature = "std")]
 pub mod metadata_bootstrap;
+pub mod metainfo;
 #[cfg(feature = "std")]
 pub mod piece_store;
 #[cfg(feature = "std")]
@@ -21,4 +21,3 @@ pub mod torrent_upgrader;
 pub mod transfer_metrics;
 #[cfg(feature = "std")]
 pub mod views;
-

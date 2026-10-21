@@ -464,14 +464,7 @@ impl TorrentClientApp {
         download_dir: String,
         bitfield_hex: Option<String>,
     ) {
-        self.add_session_with_options(
-            torrent_path,
-            download_dir,
-            bitfield_hex,
-            None,
-            false,
-            true,
-        );
+        self.add_session_with_options(torrent_path, download_dir, bitfield_hex, None, false, true);
     }
 
     /// Spawns a background thread to asynchronously resolve metadata, verify disk space, and establish tracker connections.

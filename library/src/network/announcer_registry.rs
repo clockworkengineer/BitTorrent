@@ -156,7 +156,11 @@ impl AnnouncerRegistry {
     ///
     /// New registrations take precedence over older registrations with matching prefixes,
     /// enabling users to override default protocol handlers.
-    pub fn register(&mut self, prefix: impl Into<String>, builder: impl AnnouncerBuilder + 'static) {
+    pub fn register(
+        &mut self,
+        prefix: impl Into<String>,
+        builder: impl AnnouncerBuilder + 'static,
+    ) {
         self.builders.insert(0, (prefix.into(), Box::new(builder)));
     }
 

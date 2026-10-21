@@ -6,8 +6,8 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use torrent_client_shared::{
-    extract_peer_infos, extract_piece_availability, is_media_filename, FileInfo, IpcMessage,
-    IpcReply,
+    FileInfo, IpcMessage, IpcReply, extract_peer_infos, extract_piece_availability,
+    is_media_filename,
 };
 
 use crate::engine::Engine;
@@ -29,7 +29,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             if let Some(dir) = download_dir {
@@ -48,7 +48,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             IpcReply::StatusList {
@@ -61,7 +61,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             match e.pause_session(&info_hash) {
@@ -77,7 +77,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             match e.resume_session(&info_hash) {
@@ -96,7 +96,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             match e.remove_session(&info_hash, delete_data) {
@@ -118,7 +118,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             let files = if let Some(s) = e
@@ -153,7 +153,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             let peers = if let Some(s) = e
@@ -178,7 +178,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             if let Some(s) = e
@@ -211,7 +211,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             if let Some(s) = e
@@ -223,11 +223,7 @@ pub fn handle_ipc_message(
                 let prio = bittorrent_rs::FilePriority::from_str_loose(&priority);
                 match s.session.set_file_priority(file_index, prio) {
                     Ok(()) => IpcReply::Success {
-                        message: format!(
-                            "Set file {} priority to {}",
-                            file_index,
-                            prio.as_str()
-                        ),
+                        message: format!("Set file {} priority to {}", file_index, prio.as_str()),
                     },
                     Err(err) => IpcReply::Error {
                         reason: err.to_string(),
@@ -245,7 +241,7 @@ pub fn handle_ipc_message(
                 Err(_) => {
                     return IpcReply::Error {
                         reason: "Lock poisoned".to_string(),
-                    }
+                    };
                 }
             };
             if let Some(s) = e
@@ -256,10 +252,7 @@ pub fn handle_ipc_message(
             {
                 s.session.set_super_seeding(enabled);
                 IpcReply::Success {
-                    message: format!(
-                        "Super-seeding set to {} for {}",
-                        enabled, info_hash
-                    ),
+                    message: format!("Super-seeding set to {} for {}", enabled, info_hash),
                 }
             } else {
                 IpcReply::Error {

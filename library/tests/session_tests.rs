@@ -24,7 +24,6 @@ impl HttpClient for DummyHttpClient {
     }
 }
 
-
 fn cleanup_download_path(download_path: &PathBuf) {
     let _ = fs::remove_dir_all(download_path);
 }

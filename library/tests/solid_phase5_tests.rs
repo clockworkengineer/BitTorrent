@@ -24,7 +24,11 @@ fn unique_test_dir(name: &str) -> PathBuf {
 fn make_test_file(path: &std::path::Path, length: u64, offset: u64) -> FileDetails {
     FileDetails {
         name: path.to_string_lossy().to_string(),
-        torrent_path: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+        torrent_path: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
         length,
         offset,
         md5sum: None,
@@ -162,7 +166,9 @@ fn test_bitfield_scanner_isolated() {
     // Write piece 0 and piece 1 to disk
     let disk_storage = DiskBlockStorage::new(files.clone());
     disk_storage.write_block(0, &piece0).unwrap();
-    disk_storage.write_block(piece_length as u64, &piece1).unwrap();
+    disk_storage
+        .write_block(piece_length as u64, &piece1)
+        .unwrap();
 
     let disk_scan = BitfieldScanner::scan_local_files(&files, piece_length, &expected_hashes)
         .expect("disk scan succeeds");

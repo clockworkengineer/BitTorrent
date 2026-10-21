@@ -696,7 +696,9 @@ impl TorrentClientApp {
 
                             // Name with icon and click selection
                             let icon = get_file_icon(&s.last_file_name);
-                            let name_label = egui::RichText::new(format!("{} {}", icon, s.last_file_name)).strong();
+                            let name_label =
+                                egui::RichText::new(format!("{} {}", icon, s.last_file_name))
+                                    .strong();
                             let name_resp = if is_selected {
                                 ui.selectable_label(true, name_label)
                             } else {
@@ -735,8 +737,14 @@ impl TorrentClientApp {
 
                                 if ui.button("📋 Copy Magnet URL").clicked() {
                                     if let Ok(ctx) = s.session.context.lock() {
-                                        let hex = bittorrent_rs::util::info_hash_to_string(&ctx.info_hash);
-                                        let mag = format!("magnet:?xt=urn:btih:{}&dn={}", hex, urlencoding_simple(&ctx.file_name));
+                                        let hex = bittorrent_rs::util::info_hash_to_string(
+                                            &ctx.info_hash,
+                                        );
+                                        let mag = format!(
+                                            "magnet:?xt=urn:btih:{}&dn={}",
+                                            hex,
+                                            urlencoding_simple(&ctx.file_name)
+                                        );
                                         ui.output_mut(|o| o.copied_text = mag);
                                     }
                                     ui.close_menu();
@@ -744,7 +752,13 @@ impl TorrentClientApp {
 
                                 ui.separator();
 
-                                if ui.button(egui::RichText::new("🗑 Delete Torrent").color(self.settings.theme.error_color())).clicked() {
+                                if ui
+                                    .button(
+                                        egui::RichText::new("🗑 Delete Torrent")
+                                            .color(self.settings.theme.error_color()),
+                                    )
+                                    .clicked()
+                                {
                                     delete_target_idx = Some(session_idx);
                                     ui.close_menu();
                                 }
@@ -769,7 +783,9 @@ impl TorrentClientApp {
 
                             // Status badge
                             let (badge_color, status_text) = match s.last_status.as_str() {
-                                "Downloading" => (self.settings.theme.accent_color(), "Downloading"),
+                                "Downloading" => {
+                                    (self.settings.theme.accent_color(), "Downloading")
+                                }
                                 "Seeding" => (self.settings.theme.success_color(), "Seeding"),
                                 "Paused" => (self.settings.theme.warning_color(), "Paused"),
                                 "Ended" => (self.settings.theme.success_color(), "Completed"),
@@ -779,13 +795,19 @@ impl TorrentClientApp {
 
                             // Speeds
                             if s.last_bps > 0 {
-                                ui.colored_label(self.settings.theme.success_color(), format!("↓ {}/s", fmt_bytes(s.last_bps)));
+                                ui.colored_label(
+                                    self.settings.theme.success_color(),
+                                    format!("↓ {}/s", fmt_bytes(s.last_bps)),
+                                );
                             } else {
                                 ui.label("-");
                             }
 
                             if s.last_upload_bps > 0 {
-                                ui.colored_label(self.settings.theme.upload_color(), format!("↑ {}/s", fmt_bytes(s.last_upload_bps)));
+                                ui.colored_label(
+                                    self.settings.theme.upload_color(),
+                                    format!("↑ {}/s", fmt_bytes(s.last_upload_bps)),
+                                );
                             } else {
                                 ui.label("-");
                             }
@@ -901,23 +923,43 @@ impl TorrentClientApp {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(icon).size(22.0));
 
-                                let name_text = egui::RichText::new(&s.last_file_name).strong().size(14.0);
+                                let name_text =
+                                    egui::RichText::new(&s.last_file_name).strong().size(14.0);
                                 let name_resp = ui.selectable_label(is_selected, name_text);
                                 if name_resp.clicked() {
                                     select_idx = Some(session_idx);
                                 }
                                 name_resp.on_hover_text(&s.last_file_name);
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let (badge_color, status_text) = match s.last_status.as_str() {
-                                        "Downloading" => (self.settings.theme.accent_color(), "Downloading"),
-                                        "Seeding" => (self.settings.theme.success_color(), "Seeding"),
-                                        "Paused" => (self.settings.theme.warning_color(), "Paused"),
-                                        "Ended" => (self.settings.theme.success_color(), "Completed"),
-                                        _ => (ui.visuals().text_color(), s.last_status.as_str()),
-                                    };
-                                    ui.colored_label(badge_color, egui::RichText::new(status_text).strong());
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let (badge_color, status_text) = match s
+                                            .last_status
+                                            .as_str()
+                                        {
+                                            "Downloading" => {
+                                                (self.settings.theme.accent_color(), "Downloading")
+                                            }
+                                            "Seeding" => {
+                                                (self.settings.theme.success_color(), "Seeding")
+                                            }
+                                            "Paused" => {
+                                                (self.settings.theme.warning_color(), "Paused")
+                                            }
+                                            "Ended" => {
+                                                (self.settings.theme.success_color(), "Completed")
+                                            }
+                                            _ => {
+                                                (ui.visuals().text_color(), s.last_status.as_str())
+                                            }
+                                        };
+                                        ui.colored_label(
+                                            badge_color,
+                                            egui::RichText::new(status_text).strong(),
+                                        );
+                                    },
+                                );
                             });
 
                             ui.add_space(5.0);
@@ -972,38 +1014,42 @@ impl TorrentClientApp {
                                 ui.label(format!("📦 {}", fmt_bytes(s.last_total)));
 
                                 // Right-aligned actions
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("🗑 Delete").clicked() {
-                                        delete_target_idx = Some(session_idx);
-                                    }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.button("🗑 Delete").clicked() {
+                                            delete_target_idx = Some(session_idx);
+                                        }
 
-                                    if ui.button("📁 Folder").clicked()
-                                        && let Ok(ctx) = s.session.context.lock()
-                                    {
-                                        explore_target = Some(ctx.download_path.clone());
-                                    }
+                                        if ui.button("📁 Folder").clicked()
+                                            && let Ok(ctx) = s.session.context.lock()
+                                        {
+                                            explore_target = Some(ctx.download_path.clone());
+                                        }
 
-                                    if torrent_client_shared::is_media_filename(&s.last_file_name)
-                                        && ui
+                                        if torrent_client_shared::is_media_filename(
+                                            &s.last_file_name,
+                                        ) && ui
                                             .button(
                                                 egui::RichText::new("🎬 Stream")
                                                     .color(self.settings.theme.stream_color()),
                                             )
                                             .clicked()
-                                    {
-                                        stream_target = Some(session_idx);
-                                    }
+                                        {
+                                            stream_target = Some(session_idx);
+                                        }
 
-                                    if s.last_status == "Paused" {
-                                        if ui.button("▶ Resume").clicked() {
+                                        if s.last_status == "Paused" {
+                                            if ui.button("▶ Resume").clicked() {
+                                                toggle_pause_idx = Some(session_idx);
+                                            }
+                                        } else if s.last_status != "Ended"
+                                            && ui.button("⏸ Pause").clicked()
+                                        {
                                             toggle_pause_idx = Some(session_idx);
                                         }
-                                    } else if s.last_status != "Ended"
-                                        && ui.button("⏸ Pause").clicked()
-                                    {
-                                        toggle_pause_idx = Some(session_idx);
-                                    }
-                                });
+                                    },
+                                );
                             });
                         });
                 }
@@ -1040,7 +1086,11 @@ impl TorrentClientApp {
         let rect = response.rect;
 
         // Background box
-        painter.rect_filled(rect, Rounding::same(3.0), self.settings.theme.surface_color());
+        painter.rect_filled(
+            rect,
+            Rounding::same(3.0),
+            self.settings.theme.surface_color(),
+        );
 
         let samples = &self.rolling_metrics.samples;
         if samples.len() < 2 {
@@ -1431,20 +1481,17 @@ impl TorrentClientApp {
             // Legend
             ui.horizontal(|ui| {
                 ui.label("Legend:");
-                let (rect, _) =
-                    ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
                 ui.painter()
                     .rect_filled(rect, 2.0, self.settings.theme.success_color());
                 ui.label("Downloaded");
 
-                let (rect, _) =
-                    ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
                 ui.painter()
                     .rect_filled(rect, 2.0, self.settings.theme.accent_color());
                 ui.label("In Swarm");
 
-                let (rect, _) =
-                    ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), egui::Sense::hover());
                 ui.painter()
                     .rect_filled(rect, 2.0, self.settings.theme.surface_color());
                 ui.label("Missing");
@@ -1701,10 +1748,26 @@ impl TorrentClientApp {
                         egui::ComboBox::from_id_source("settings_theme_dropdown")
                             .selected_text(selected_theme.name())
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut selected_theme, AppTheme::ObsidianDark, AppTheme::ObsidianDark.name());
-                                ui.selectable_value(&mut selected_theme, AppTheme::CatppuccinMocha, AppTheme::CatppuccinMocha.name());
-                                ui.selectable_value(&mut selected_theme, AppTheme::OledBlack, AppTheme::OledBlack.name());
-                                ui.selectable_value(&mut selected_theme, AppTheme::LightModern, AppTheme::LightModern.name());
+                                ui.selectable_value(
+                                    &mut selected_theme,
+                                    AppTheme::ObsidianDark,
+                                    AppTheme::ObsidianDark.name(),
+                                );
+                                ui.selectable_value(
+                                    &mut selected_theme,
+                                    AppTheme::CatppuccinMocha,
+                                    AppTheme::CatppuccinMocha.name(),
+                                );
+                                ui.selectable_value(
+                                    &mut selected_theme,
+                                    AppTheme::OledBlack,
+                                    AppTheme::OledBlack.name(),
+                                );
+                                ui.selectable_value(
+                                    &mut selected_theme,
+                                    AppTheme::LightModern,
+                                    AppTheme::LightModern.name(),
+                                );
                             });
                         if selected_theme != self.settings.theme {
                             self.settings.theme = selected_theme;
@@ -1714,8 +1777,16 @@ impl TorrentClientApp {
 
                     ui.horizontal(|ui| {
                         ui.label("Default View Mode:");
-                        ui.selectable_value(&mut self.settings.view_mode, LibraryViewMode::Table, "☵ Table");
-                        ui.selectable_value(&mut self.settings.view_mode, LibraryViewMode::Cards, "⊞ Cards");
+                        ui.selectable_value(
+                            &mut self.settings.view_mode,
+                            LibraryViewMode::Table,
+                            "☵ Table",
+                        );
+                        ui.selectable_value(
+                            &mut self.settings.view_mode,
+                            LibraryViewMode::Cards,
+                            "⊞ Cards",
+                        );
                     });
                 });
 
@@ -1753,11 +1824,17 @@ impl TorrentClientApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label("Download Cap (KiB/s):");
-                        ui.add(egui::DragValue::new(&mut self.settings.turtle_download_kib).range(16..=102400));
+                        ui.add(
+                            egui::DragValue::new(&mut self.settings.turtle_download_kib)
+                                .range(16..=102400),
+                        );
                     });
                     ui.horizontal(|ui| {
                         ui.label("Upload Cap (KiB/s):");
-                        ui.add(egui::DragValue::new(&mut self.settings.turtle_upload_kib).range(16..=102400));
+                        ui.add(
+                            egui::DragValue::new(&mut self.settings.turtle_upload_kib)
+                                .range(16..=102400),
+                        );
                     });
                 });
 

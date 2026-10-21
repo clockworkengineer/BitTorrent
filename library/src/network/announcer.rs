@@ -607,13 +607,17 @@ pub struct AnnouncerFactory;
 impl AnnouncerFactory {
     /// Instantiates the appropriate `Announcer` trait object for a given URL using the open protocol registry.
     pub fn create_announcer(url: &str) -> Result<Box<dyn Announcer>, BitTorrentError> {
-        let registry = crate::network::announcer_registry::global_registry().read().unwrap();
+        let registry = crate::network::announcer_registry::global_registry()
+            .read()
+            .unwrap();
         registry.create_announcer(url)
     }
 
     /// Instantiates the appropriate `AnnouncerEnum` variant for a given URL using the open protocol registry.
     pub fn create(url: &str) -> Result<AnnouncerEnum, BitTorrentError> {
-        let registry = crate::network::announcer_registry::global_registry().read().unwrap();
+        let registry = crate::network::announcer_registry::global_registry()
+            .read()
+            .unwrap();
         registry.create(url)
     }
 

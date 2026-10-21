@@ -20,10 +20,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+pub use crate::core::metadata_bootstrap::MetadataBootstrap;
 pub use crate::core::piece_store::{PieceInfo, PieceRarity, PieceStore};
 pub use crate::core::swarm_topology::SwarmTopology;
 pub use crate::core::transfer_metrics::TransferMetrics;
-pub use crate::core::metadata_bootstrap::MetadataBootstrap;
 
 /// Placeholder structure representing a tracker client.
 #[derive(Debug, Clone)]
@@ -2279,7 +2279,8 @@ impl TorrentContext {
                 guard.remove(&piece_number);
             }
         }
-        self.piece_store.set_piece_verifying(piece_number, verifying);
+        self.piece_store
+            .set_piece_verifying(piece_number, verifying);
     }
 
     /// Applies a completed background piece verification result.
@@ -3022,4 +3023,3 @@ impl crate::core::views::TransferStatsView for TorrentContext {
         self.progress_percent()
     }
 }
-

@@ -5,7 +5,7 @@
 
 use crate::error::BitTorrentError;
 use crate::metainfo::FileDetails;
-use std::fs::{create_dir_all, File};
+use std::fs::{File, create_dir_all};
 use std::path::Path;
 
 /// Responsible exclusively for filesystem directory tree creation and file pre-allocation.

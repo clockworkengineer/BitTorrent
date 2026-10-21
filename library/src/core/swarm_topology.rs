@@ -42,7 +42,10 @@ impl SwarmTopology {
     }
 
     pub fn contains_peer(&self, ip: &str) -> bool {
-        self.peers.read().map(|s| s.contains_key(ip)).unwrap_or(false)
+        self.peers
+            .read()
+            .map(|s| s.contains_key(ip))
+            .unwrap_or(false)
     }
 
     pub fn insert_peer(&self, ip: String, peer: Arc<Mutex<Peer>>) {
