@@ -9,26 +9,12 @@
 mod app;
 mod state;
 mod stream_server;
+pub mod theme;
 mod ui;
 
 use app::TorrentClientApp;
 use eframe::egui;
 use std::env;
-
-/// Configures visual styling and dark mode options for egui widgets.
-fn configure_visuals(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.window_rounding = 8.0.into();
-    visuals.menu_rounding = 6.0.into();
-    visuals.widgets.noninteractive.rounding = 6.0.into();
-    visuals.widgets.inactive.rounding = 4.0.into();
-    visuals.widgets.hovered.rounding = 4.0.into();
-    visuals.widgets.active.rounding = 4.0.into();
-    visuals.widgets.open.rounding = 4.0.into();
-    // Modern accent blue
-    visuals.selection.bg_fill = egui::Color32::from_rgb(41, 128, 185);
-    ctx.set_visuals(visuals);
-}
 
 /// The main entry point for the desktop GUI client application.
 fn main() {
@@ -52,11 +38,11 @@ fn main() {
             .with_icon(icon),
         ..Default::default()
     };
-    eframe::run_native(
+    let _ = eframe::run_native(
         "BitTorrent Desktop Client",
         options,
         Box::new(move |cc| {
-            configure_visuals(&cc.egui_ctx);
+            theme::AppTheme::default().apply(&cc.egui_ctx);
             let mut app = TorrentClientApp::new(log_rx, log_tx);
             if let (Some(torrent_path), Some(download_dir)) =
                 (initial_torrent_path, initial_download_dir)
@@ -66,6 +52,6 @@ fn main() {
             }
             Ok(Box::new(app))
         }),
-    )
-    .unwrap();
+    );
+    std::process::exit(0);
 }

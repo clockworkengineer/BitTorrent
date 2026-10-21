@@ -3,15 +3,17 @@
 //! Defines client-side state representations, settings storage structures,
 //! sidebar status filtering, config loading/saving, and asynchronous torrent session creation.
 
+use crate::theme::AppTheme;
 use bittorrent_rs::TorrentSession;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use torrent_client_shared::{PendingSession, SessionState};
 
 /// Sidebar filters for sorting active torrent sessions by status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum SidebarFilter {
     /// Show all torrents.
+    #[default]
     All,
     /// Show torrents actively downloading.
     Downloading,
@@ -24,14 +26,25 @@ pub enum SidebarFilter {
 }
 
 /// Active selected tabs in the details panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DetailTab {
+    #[default]
     Overview,
     Files,
     Peers,
     Pieces,
     Trackers,
     Logs,
+}
+
+/// Library presentation mode for the active torrent list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum LibraryViewMode {
+    /// Pro high-density data table with sortable columns.
+    #[default]
+    Table,
+    /// Media-rich card tiles with progress rings and instant streaming.
+    Cards,
 }
 
 /// Sorting criteria for torrent sessions in the main list.
@@ -60,6 +73,23 @@ pub struct AppSettings {
     pub max_download_speed_kib: u64,
     pub max_upload_speed_kib: u64,
     pub dark_mode: bool,
+    #[serde(default)]
+    pub theme: AppTheme,
+    #[serde(default)]
+    pub view_mode: LibraryViewMode,
+    #[serde(default)]
+    pub turtle_mode: bool,
+    #[serde(default = "default_turtle_down")]
+    pub turtle_download_kib: u64,
+    #[serde(default = "default_turtle_up")]
+    pub turtle_upload_kib: u64,
+}
+
+fn default_turtle_down() -> u64 {
+    256
+}
+fn default_turtle_up() -> u64 {
+    128
 }
 
 impl Default for AppSettings {
@@ -75,8 +105,206 @@ impl Default for AppSettings {
             max_download_speed_kib: 0,
             max_upload_speed_kib: 0,
             dark_mode: true,
+            theme: AppTheme::ObsidianDark,
+            view_mode: LibraryViewMode::Table,
+            turtle_mode: false,
+            turtle_download_kib: 256,
+            turtle_upload_kib: 128,
         }
     }
+}
+
+/// File metadata entry for the Add Torrent inspector dialog.
+#[derive(Debug, Clone)]
+pub struct AddTorrentFileItem {
+    pub index: usize,
+    pub path: String,
+    pub length: u64,
+    pub selected: bool,
+    pub priority: bittorrent_rs::FilePriority,
+}
+
+/// State representation for the interactive Add Torrent inspector dialog.
+#[derive(Debug, Clone)]
+pub struct AddTorrentModalState {
+    pub source_path: String,
+    pub name: String,
+    pub download_dir: String,
+    pub total_bytes: u64,
+    pub piece_length: u32,
+    pub pieces_count: usize,
+    pub files: Vec<AddTorrentFileItem>,
+    pub is_magnet: bool,
+    pub sequential_download: bool,
+    pub start_immediately: bool,
+    pub available_disk_space: Option<u64>,
+    pub error_message: Option<String>,
+}
+
+impl AddTorrentModalState {
+    /// Computes the sum of bytes for all files marked as selected.
+    pub fn selected_bytes(&self) -> u64 {
+        if self.files.is_empty() {
+            self.total_bytes
+        } else {
+            self.files
+                .iter()
+                .filter(|f| f.selected)
+                .map(|f| f.length)
+                .sum()
+        }
+    }
+}
+
+/// Rolling metrics ring buffer for the last 60 seconds of network activity.
+#[derive(Debug, Clone, Default)]
+pub struct RollingMetrics {
+    pub samples: std::collections::VecDeque<(std::time::Instant, u64, u64)>,
+}
+
+impl RollingMetrics {
+    /// Appends a new speed measurement (down_bps, up_bps) and trims samples older than 60 seconds.
+    pub fn push(&mut self, down_bps: u64, up_bps: u64) {
+        let now = std::time::Instant::now();
+        self.samples.push_back((now, down_bps, up_bps));
+        while let Some(front) = self.samples.front() {
+            if now.duration_since(front.0) > std::time::Duration::from_secs(60) {
+                self.samples.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+/// Queries available free disk space on the given path.
+#[cfg(windows)]
+pub fn get_available_disk_space(path: &std::path::Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let check_path = if path.exists() {
+        path.to_path_buf()
+    } else if let Some(parent) = path.parent() {
+        if parent.exists() {
+            parent.to_path_buf()
+        } else {
+            path.to_path_buf()
+        }
+    } else {
+        path.to_path_buf()
+    };
+    let mut wide: Vec<u16> = check_path.as_os_str().encode_wide().collect();
+    wide.push(0);
+    let mut free_bytes_available: u64 = 0;
+    let mut total_number_of_bytes: u64 = 0;
+    let mut total_number_of_free_bytes: u64 = 0;
+    unsafe extern "system" {
+        fn GetDiskFreeSpaceExW(
+            lpDirectoryName: *const u16,
+            lpFreeBytesAvailableToCaller: *mut u64,
+            lpTotalNumberOfBytes: *mut u64,
+            lpTotalNumberOfFreeBytes: *mut u64,
+        ) -> i32;
+    }
+    unsafe {
+        let res = GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_bytes_available,
+            &mut total_number_of_bytes,
+            &mut total_number_of_free_bytes,
+        );
+        if res != 0 {
+            Some(free_bytes_available)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_available_disk_space(_path: &std::path::Path) -> Option<u64> {
+    None
+}
+
+/// Prepares an `AddTorrentModalState` by inspecting the provided torrent path or magnet link.
+pub fn inspect_torrent_for_modal(source: &str, default_download_dir: &str) -> AddTorrentModalState {
+    let source_trimmed = source.trim();
+    let is_mag = source_trimmed.starts_with("magnet:?");
+    let dir = if default_download_dir.is_empty() {
+        dirs::download_dir()
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string())
+    } else {
+        default_download_dir.to_string()
+    };
+
+    let mut modal = AddTorrentModalState {
+        source_path: source_trimmed.to_string(),
+        name: String::new(),
+        download_dir: dir.clone(),
+        total_bytes: 0,
+        piece_length: 0,
+        pieces_count: 0,
+        files: Vec::new(),
+        is_magnet: is_mag,
+        sequential_download: false,
+        start_immediately: true,
+        available_disk_space: get_available_disk_space(std::path::Path::new(&dir)),
+        error_message: None,
+    };
+
+    if is_mag {
+        if let Ok(mag) = bittorrent_rs::MagnetLink::parse(source_trimmed) {
+            modal.name = mag
+                .display_name
+                .unwrap_or_else(|| bittorrent_rs::util::info_hash_to_string(&mag.info_hash));
+        } else {
+            modal.name = "Magnet Link".to_string();
+        }
+    } else {
+        let path = std::path::Path::new(source_trimmed);
+        modal.name = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| source_trimmed.to_string());
+
+        match bittorrent_rs::metainfo::MetaInfoFile::new(path) {
+            Ok(mut meta) => {
+                if let Err(e) = meta.parse() {
+                    modal.error_message = Some(format!("Failed to parse torrent metainfo: {}", e));
+                } else {
+                    if let Ok(name) = meta.get_name() {
+                        modal.name = name;
+                    }
+                    if let Ok(piece_len) = meta.get_piece_length() {
+                        modal.piece_length = piece_len;
+                    }
+                    if let Ok(pieces) = meta.get_pieces_info_hash() {
+                        modal.pieces_count = pieces.len() / 20;
+                    }
+                    if let Ok((total, files)) = meta.local_files_to_download_list(&dir) {
+                        modal.total_bytes = total;
+                        modal.files = files
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, f)| AddTorrentFileItem {
+                                index: idx,
+                                path: f.torrent_path,
+                                length: f.length,
+                                selected: true,
+                                priority: bittorrent_rs::FilePriority::Normal,
+                            })
+                            .collect();
+                    } else if let Ok(size) = meta.get_total_size() {
+                        modal.total_bytes = size;
+                    }
+                }
+            }
+            Err(e) => {
+                modal.error_message = Some(format!("Failed to read torrent file: {}", e));
+            }
+        }
+    }
+    modal
 }
 
 /// Structure representing a saved torrent session details on disk.
@@ -185,16 +413,26 @@ impl TorrentClientApp {
                     self.download_dir = self.settings.default_download_dir.clone();
                 }
                 for t in state.torrents {
-                    self.add_session_by_path(
+                    self.add_session_with_options(
                         t.torrent_path,
                         self.download_dir.clone(),
                         Some(t.bitfield_hex),
+                        None,
+                        false,
+                        true,
                     );
                 }
             } else if let Ok(legacy) = serde_json::from_str::<LegacyClientState>(&content) {
                 self.download_dir = legacy.download_dir;
                 for path in legacy.torrents {
-                    self.add_session_by_path(path, self.download_dir.clone(), None);
+                    self.add_session_with_options(
+                        path,
+                        self.download_dir.clone(),
+                        None,
+                        None,
+                        false,
+                        true,
+                    );
                 }
             } else {
                 let mut lines = content.lines();
@@ -204,43 +442,47 @@ impl TorrentClientApp {
                 for line in lines {
                     let path = line.trim().to_string();
                     if !path.is_empty() {
-                        self.add_session_by_path(path, self.download_dir.clone(), None);
+                        self.add_session_with_options(
+                            path,
+                            self.download_dir.clone(),
+                            None,
+                            None,
+                            false,
+                            true,
+                        );
                     }
                 }
             }
         }
     }
 
-    /// Creates and launches a new torrent download session from the path and destination directory provided in the UI inputs.
-    pub fn create_session(&mut self) {
-        let torrent_path = self.torrent_path.trim().to_string();
-        let download_dir = self.download_dir.trim().to_string();
-        if torrent_path.is_empty() || download_dir.is_empty() {
-            self.messages
-                .push("Please provide both torrent file and download directory.".into());
-            return;
-        }
-
-        if self.sessions.iter().any(|s| s.torrent_path == torrent_path)
-            || self
-                .pending_sessions
-                .iter()
-                .any(|s| s.torrent_path == torrent_path)
-        {
-            self.messages
-                .push(format!("Torrent is already added: {}", torrent_path));
-            return;
-        }
-
-        self.add_session_by_path(torrent_path, download_dir, None);
-    }
-
-    /// Spawns a background thread to asynchronously resolve metadata, verify disk space, and establish tracker connections for a torrent session.
+    /// Convenient helper to add a session by path using default options.
+    #[allow(dead_code)]
     pub fn add_session_by_path(
         &mut self,
         torrent_path: String,
         download_dir: String,
         bitfield_hex: Option<String>,
+    ) {
+        self.add_session_with_options(
+            torrent_path,
+            download_dir,
+            bitfield_hex,
+            None,
+            false,
+            true,
+        );
+    }
+
+    /// Spawns a background thread to asynchronously resolve metadata, verify disk space, and establish tracker connections.
+    pub fn add_session_with_options(
+        &mut self,
+        torrent_path: String,
+        download_dir: String,
+        bitfield_hex: Option<String>,
+        file_priorities: Option<Vec<(usize, bittorrent_rs::FilePriority)>>,
+        sequential: bool,
+        start_immediately: bool,
     ) {
         let (session_tx, session_rx) = mpsc::channel::<Result<TorrentSession, String>>();
         let msg_tx = self.log_tx.clone();
@@ -285,15 +527,21 @@ impl TorrentClientApp {
                 config.skip_hash_check = true;
             }
 
+            let selector: Arc<dyn bittorrent_rs::PieceSelector> = if sequential {
+                Arc::new(bittorrent_rs::SequentialSelector)
+            } else {
+                Arc::new(bittorrent_rs::RarestFirstSelector)
+            };
+
             let session_res = if torrent_path.starts_with("magnet:?") {
                 TorrentSession::from_magnet(&torrent_path, &download_dir_buf)
                     .config(config)
-                    .selector(Arc::new(bittorrent_rs::RarestFirstSelector))
+                    .selector(selector)
                     .build()
             } else {
                 TorrentSession::builder(&torrent_path_buf, &download_dir_buf)
                     .config(config)
-                    .selector(Arc::new(bittorrent_rs::RarestFirstSelector))
+                    .selector(selector)
                     .build()
             };
 
@@ -306,6 +554,15 @@ impl TorrentClientApp {
                     return;
                 }
             };
+
+            // Apply custom file priorities if specified
+            if let Some(prio_list) = file_priorities
+                && let Ok(mut ctx) = session.context.lock()
+            {
+                for (idx, prio) in prio_list {
+                    let _ = ctx.set_file_priority(idx, prio);
+                }
+            }
 
             // Restore bitfield from cached state if present
             if let Some(ref hex_str) = bitfield_hex_clone
@@ -341,6 +598,10 @@ impl TorrentClientApp {
                 log_err(err_str.clone());
                 let _ = session_tx.send(Err(err_str));
                 return;
+            }
+
+            if !start_immediately {
+                let _ = session.pause();
             }
 
             // Send TorrentSession to the UI thread immediately so the client displays it instantly

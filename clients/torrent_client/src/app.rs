@@ -3,8 +3,12 @@
 //! Orchestrates app startup, window repaint loop timing, sidebar selection updates,
 //! status metrics tracking, and mapping background messages to the main UI logger.
 
-use crate::state::{AppSettings, DetailTab, SidebarFilter, SortColumn, matches_filter};
+use crate::state::{
+    AddTorrentModalState, AppSettings, DetailTab, LibraryViewMode, RollingMetrics, SidebarFilter,
+    SortColumn, matches_filter,
+};
 use eframe::egui;
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::time::Duration;
 use torrent_client_shared::{PendingSession, SessionState, find_primary_media_file, fmt_bytes};
@@ -53,6 +57,23 @@ pub struct TorrentClientApp {
     pub stream_server: Option<std::sync::Arc<crate::stream_server::StreamServer>>,
     /// Whether initial persistent state has been restored on the first render frame.
     pub state_loaded: bool,
+
+    // Advanced & Interactive UI State
+    /// Active state of the Add Torrent inspector modal.
+    pub add_torrent_modal: Option<AddTorrentModalState>,
+    /// Visibility state of the Magnet Link input prompt modal.
+    pub show_magnet_dialog: bool,
+    /// Text input buffer for the Magnet Link modal.
+    pub magnet_input_text: String,
+    /// Search query string for filtering the active torrent library in real-time.
+    pub search_filter_query: String,
+    /// Ring buffer tracking rolling download and upload speeds for the live sparkline graph.
+    pub rolling_metrics: RollingMetrics,
+    /// Set of selected torrent indices for multi-selection.
+    #[allow(dead_code)]
+    pub selected_torrent_indices: HashSet<usize>,
+    /// Prevents repeated execution of shutdown routines across exit hooks.
+    pub shutting_down: bool,
 }
 
 impl TorrentClientApp {
@@ -82,6 +103,13 @@ impl TorrentClientApp {
             settings: AppSettings::default(),
             stream_server,
             state_loaded: false,
+            add_torrent_modal: None,
+            show_magnet_dialog: false,
+            magnet_input_text: String::new(),
+            search_filter_query: String::new(),
+            rolling_metrics: RollingMetrics::default(),
+            selected_torrent_indices: HashSet::new(),
+            shutting_down: false,
         }
     }
 
@@ -91,6 +119,43 @@ impl TorrentClientApp {
             .iter()
             .filter(|s| matches_filter(s, filter))
             .count()
+    }
+
+    /// Opens the interactive Add Torrent modal dialog for a given file path or magnet link.
+    pub fn open_add_torrent_modal(&mut self, source_path: &str) {
+        let download_dir = if !self.download_dir.is_empty() {
+            &self.download_dir
+        } else {
+            &self.settings.default_download_dir
+        };
+        self.add_torrent_modal = Some(crate::state::inspect_torrent_for_modal(
+            source_path,
+            download_dir,
+        ));
+    }
+
+    /// Pauses all active downloading or seeding torrent sessions.
+    pub fn pause_all(&mut self) {
+        for s in &mut self.sessions {
+            if s.last_status != "Ended" && s.last_status != "Paused" {
+                let _ = s.session.pause();
+            }
+        }
+    }
+
+    /// Resumes all currently paused torrent sessions.
+    pub fn resume_all(&mut self) {
+        for s in &mut self.sessions {
+            if s.last_status == "Paused" {
+                let _ = s.session.resume();
+            }
+        }
+    }
+
+    /// Toggles turtle speed throttle mode.
+    pub fn toggle_turtle_mode(&mut self) {
+        self.settings.turtle_mode = !self.settings.turtle_mode;
+        self.save_state();
     }
 
     /// Starts streaming the selected torrent session or a specific file within it.
@@ -116,7 +181,6 @@ impl TorrentClientApp {
                         )
                     }
                 } else {
-                    // Automatically find the largest media file
                     let best = find_primary_media_file(
                         ctx.files_to_download
                             .iter()
@@ -159,49 +223,66 @@ impl TorrentClientApp {
             server.stop_active_stream();
         }
     }
+
+    /// Gracefully flushes state, terminates stream servers, and stops all active torrent sessions once.
+    pub fn shutdown(&mut self) {
+        if self.shutting_down {
+            return;
+        }
+        self.shutting_down = true;
+        self.save_state();
+        self.stop_streaming();
+        for state in &mut self.sessions {
+            let _ = state.session.stop();
+        }
+    }
 }
 
 impl eframe::App for TorrentClientApp {
     /// Callback executed when the desktop window is closed.
-    /// Saves the current configuration state and halts all active torrent worker threads.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // Save final state before stopping sessions to capture the exact downloaded bitfields
-        self.save_state();
-
-        self.stop_streaming();
-
-        // Stop all active sessions so background threads don't outlive the process.
-        for state in &mut self.sessions {
-            let _ = state.session.stop();
-        }
-
-        std::process::exit(0);
+        self.shutdown();
     }
 
     /// Primary UI draw and events update loop called by the egui framework backend.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if ctx.input(|i| i.viewport().close_requested()) {
-            self.save_state();
-            self.stop_streaming();
-            for state in &mut self.sessions {
-                let _ = state.session.stop();
-            }
-            std::process::exit(0);
+            self.shutdown();
+            return;
         }
 
         if !self.state_loaded {
             self.state_loaded = true;
             self.load_state();
-            if !self.torrent_path.is_empty() && !self.download_dir.is_empty() {
-                self.create_session();
+            self.settings.theme.apply(ctx);
+            if !self.torrent_path.is_empty() {
+                self.open_add_torrent_modal(&self.torrent_path.clone());
             }
         }
 
         // Repaint every 500 ms so progress updates live
         ctx.request_repaint_after(Duration::from_millis(500));
 
+        // Detect dropped files (drag-and-drop ingestion)
+        let mut dropped_to_open = None;
+        ctx.input(|i| {
+            for dropped in &i.raw.dropped_files {
+                if let Some(path) = &dropped.path {
+                    let path_str = path.to_string_lossy().to_string();
+                    if path_str.ends_with(".torrent") || path_str.starts_with("magnet:?") {
+                        dropped_to_open = Some(path_str);
+                        break;
+                    }
+                }
+            }
+        });
+        if let Some(path) = dropped_to_open {
+            self.open_add_torrent_modal(&path);
+        }
+
         // Global keyboard shortcuts
         let mut trigger_browse = false;
+        let mut trigger_magnet = false;
         let mut toggle_pause = false;
         let mut trigger_delete = false;
 
@@ -209,6 +290,9 @@ impl eframe::App for TorrentClientApp {
         ctx.input(|i| {
             if i.modifiers.command && i.key_pressed(egui::Key::O) {
                 trigger_browse = true;
+            }
+            if i.modifiers.command && i.key_pressed(egui::Key::M) {
+                trigger_magnet = true;
             }
             if i.modifiers.command && i.key_pressed(egui::Key::Comma) {
                 self.show_settings_dialog = true;
@@ -228,7 +312,12 @@ impl eframe::App for TorrentClientApp {
                 .add_filter("Torrent Files", &["torrent"])
                 .pick_file()
         {
-            self.torrent_path = path.to_string_lossy().to_string();
+            self.open_add_torrent_modal(&path.to_string_lossy());
+        }
+
+        if trigger_magnet {
+            self.show_magnet_dialog = true;
+            self.magnet_input_text.clear();
         }
 
         if trigger_delete
@@ -287,32 +376,8 @@ impl eframe::App for TorrentClientApp {
             self.save_state();
         }
 
-        // Top Toolbar
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.heading(egui::RichText::new("📥 BitTorrent Client").strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut is_dark = ctx.style().visuals.dark_mode;
-                    if ui.checkbox(&mut is_dark, "Dark Mode").changed() {
-                        ctx.set_visuals(if is_dark {
-                            egui::Visuals::dark()
-                        } else {
-                            egui::Visuals::light()
-                        });
-                    }
-                    ui.add_space(8.0);
-                    if ui.button("ℹ About").clicked() {
-                        self.show_about_dialog = true;
-                    }
-                    ui.add_space(6.0);
-                    if ui.button("⚙ Settings").clicked() {
-                        self.show_settings_dialog = true;
-                    }
-                });
-            });
-            ui.add_space(8.0);
-        });
+        // Top Command Toolbar
+        self.draw_command_toolbar(ctx);
 
         // Active Streaming Banner
         if let Some(server) = &self.stream_server
@@ -324,7 +389,7 @@ impl eframe::App for TorrentClientApp {
                     ui.label(
                         egui::RichText::new("🎬 Streaming:")
                             .strong()
-                            .color(egui::Color32::from_rgb(52, 152, 219)),
+                            .color(self.settings.theme.stream_color()),
                     );
                     let stream_title = if active.file_name != active.torrent_name {
                         format!("{}: {}", active.torrent_name, active.file_name)
@@ -364,33 +429,47 @@ impl eframe::App for TorrentClientApp {
             });
         }
 
+        // Drag & Drop Hover Overlay
+        self.draw_drag_and_drop_overlay(ctx);
+
         // Modal Dialog Windows
+        self.draw_add_torrent_dialog(ctx);
+        self.draw_magnet_input_dialog(ctx);
         self.draw_about_dialog(ctx);
         self.draw_settings_dialog(ctx);
         self.draw_delete_confirm_dialog(ctx);
 
-        // Bottom Status Bar
+        // Bottom Status Bar with Live Speed Metrics & Sparkline
+        let mut total_down_bps = 0u64;
+        let mut total_up_bps = 0u64;
+        let mut active_count = 0;
+        for s in &self.sessions {
+            if s.last_status == "Downloading" || s.last_status == "Seeding" {
+                active_count += 1;
+            }
+            total_down_bps += s.last_bps;
+            total_up_bps += s.last_upload_bps;
+        }
+        self.rolling_metrics.push(total_down_bps, total_up_bps);
+
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let mut total_down_bps = 0u64;
-                let mut total_up_bps = 0u64;
-                let mut active_count = 0;
-                for s in &self.sessions {
-                    if s.last_status == "Downloading" || s.last_status == "Seeding" {
-                        active_count += 1;
-                    }
-                    total_down_bps += s.last_bps;
-                    total_up_bps += s.last_upload_bps;
-                }
-
                 ui.label(format!("Active Torrents: {}", active_count));
                 ui.separator();
-                ui.label(format!(
-                    "Total Speed: ↓ {}/s  ↑ {}/s",
-                    fmt_bytes(total_down_bps),
-                    fmt_bytes(total_up_bps)
-                ));
+                ui.colored_label(
+                    self.settings.theme.success_color(),
+                    format!("↓ {}/s", fmt_bytes(total_down_bps)),
+                );
+                ui.colored_label(
+                    self.settings.theme.upload_color(),
+                    format!("↑ {}/s", fmt_bytes(total_up_bps)),
+                );
                 ui.separator();
+
+                // Live Activity Sparkline Canvas
+                self.draw_sparkline(ui, 100.0, 16.0);
+                ui.separator();
+
                 ui.label(format!(
                     "Total Peers: {}",
                     self.sessions
@@ -402,7 +481,7 @@ impl eframe::App for TorrentClientApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new("✔ Online")
-                            .color(egui::Color32::from_rgb(46, 204, 113)),
+                            .color(self.settings.theme.success_color()),
                     );
                 });
             });
@@ -453,279 +532,115 @@ impl eframe::App for TorrentClientApp {
                 });
         }
 
-        // Central Panel (Input details + active Torrent grid list)
+        // Central Panel (Active Library Grid/Table)
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Torrent File / Magnet:");
-                    ui.add_sized(
-                        [300.0, 20.0],
-                        egui::TextEdit::singleline(&mut self.torrent_path),
-                    );
-                    if ui.button("📂 Browse File").clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Torrent Files", &["torrent"])
-                            .pick_file()
-                    {
-                        self.torrent_path = path.to_string_lossy().to_string();
-                    }
-                });
+            // Display pending/loading sessions with a spinner or error state
+            let mut delete_pending_indices = vec![];
+            for (p_idx, pending) in self.pending_sessions.iter().enumerate() {
+                let name = std::path::Path::new(&pending.torrent_path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| pending.torrent_path.clone());
 
-                ui.add_space(4.0);
-
-                ui.horizontal(|ui| {
-                    ui.label("Download Directory:");
-                    ui.add_sized(
-                        [300.0, 20.0],
-                        egui::TextEdit::singleline(&mut self.download_dir),
-                    );
-                    if ui.button("📂 Browse Directory").clicked()
-                        && let Some(path) = rfd::FileDialog::new().pick_folder()
-                    {
-                        self.download_dir = path.to_string_lossy().to_string();
-                        self.save_state();
-                    }
-                    ui.add_space(10.0);
-                    if ui
-                        .button(egui::RichText::new("➕ Add Torrent").strong())
-                        .clicked()
-                    {
-                        self.create_session();
-                    }
-                });
-            });
-
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(4.0);
-
-            // Sorting bar
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Sort by:").strong().size(12.0));
-                let mut sort_btn = |ui: &mut egui::Ui, col: SortColumn, name: &str| {
-                    let arrow = if self.sort_column == col {
-                        if self.sort_ascending { " ⬆" } else { " ⬇" }
-                    } else {
-                        ""
-                    };
-                    let is_active = self.sort_column == col;
-                    let text = format!("{}{}", name, arrow);
-                    let resp = if is_active {
-                        ui.button(egui::RichText::new(text).strong())
-                    } else {
-                        ui.button(text)
-                    };
-                    if resp.clicked() {
-                        if self.sort_column == col {
-                            self.sort_ascending = !self.sort_ascending;
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        let title_color = if pending.error.is_some() {
+                            self.settings.theme.error_color()
                         } else {
-                            self.sort_column = col;
-                            self.sort_ascending = true;
-                        }
-                    }
-                };
-                sort_btn(ui, SortColumn::Name, "Name");
-                sort_btn(ui, SortColumn::Progress, "Progress");
-                sort_btn(ui, SortColumn::Size, "Size");
-                sort_btn(ui, SortColumn::Status, "Status");
-                sort_btn(ui, SortColumn::DownSpeed, "↓ Speed");
-                sort_btn(ui, SortColumn::UpSpeed, "↑ Speed");
-                sort_btn(ui, SortColumn::Peers, "Peers");
-            });
-
-            ui.add_space(6.0);
-
-            egui::ScrollArea::vertical()
-                .id_source("sessions_scroll")
-                .show(ui, |ui| {
-                    let mut select_idx = None;
-                    let mut stream_torrent_idx = None;
-
-                    let mut delete_pending_indices = vec![];
-
-                    // Display pending/loading sessions with a spinner or error state and delete button
-                    for (p_idx, pending) in self.pending_sessions.iter().enumerate() {
-                        let name = std::path::Path::new(&pending.torrent_path)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| pending.torrent_path.clone());
-
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                let title_color = if pending.error.is_some() {
-                                    egui::Color32::from_rgb(231, 76, 60)
-                                } else {
-                                    egui::Color32::from_rgb(230, 126, 34)
-                                };
-                                ui.label(egui::RichText::new(&name).strong().color(title_color));
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.button("🗑 Delete").clicked() {
-                                            delete_pending_indices.push(p_idx);
-                                        }
-                                        ui.add_space(6.0);
-                                        if pending.error.is_some() {
-                                            ui.label(
-                                                egui::RichText::new("Failed")
-                                                    .color(egui::Color32::from_rgb(231, 76, 60))
-                                                    .strong(),
-                                            );
-                                        } else {
-                                            ui.add(egui::Spinner::new());
-                                            ui.label("Loading... ");
-                                        }
-                                    },
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                if let Some(ref err) = pending.error {
-                                    ui.label(
-                                        egui::RichText::new(format!("⚠ {}", err))
-                                            .color(egui::Color32::from_rgb(231, 76, 60)),
-                                    );
-                                } else {
-                                    ui.label("Verifying local storage and resolving metadata...");
-                                }
-                            });
-                        });
-                        ui.add_space(6.0);
-                    }
-
-                    if !delete_pending_indices.is_empty() {
-                        for idx in delete_pending_indices.into_iter().rev() {
-                            self.pending_sessions.remove(idx);
-                        }
-                        self.save_state();
-                    }
-
-                    let mut should_save_progress = false;
-                    for session_state in &mut self.sessions {
-                        let context_arc = session_state.session.context.clone();
-                        if let Ok(ctx_guard) = context_arc.try_lock() {
-                            let old_progress = session_state.last_progress;
-                            session_state.update_fields(&ctx_guard);
-                            if session_state.last_progress != old_progress {
-                                should_save_progress = true;
-                            }
-                        }
-                    }
-
-                    let mut visible_indices: Vec<usize> = self
-                        .sessions
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, s)| matches_filter(s, self.active_filter))
-                        .map(|(idx, _)| idx)
-                        .collect();
-
-                    visible_indices.sort_by(|&a, &b| {
-                        let sa = &self.sessions[a];
-                        let sb = &self.sessions[b];
-                        let ord = match self.sort_column {
-                            SortColumn::Name => sa
-                                .last_file_name
-                                .to_lowercase()
-                                .cmp(&sb.last_file_name.to_lowercase()),
-                            SortColumn::Size => sa.last_total.cmp(&sb.last_total),
-                            SortColumn::Progress => sa.last_progress.total_cmp(&sb.last_progress),
-                            SortColumn::DownSpeed => sa.last_bps.cmp(&sb.last_bps),
-                            SortColumn::UpSpeed => sa.last_upload_bps.cmp(&sb.last_upload_bps),
-                            SortColumn::Peers => {
-                                sa.last_peers_connected.cmp(&sb.last_peers_connected)
-                            }
-                            SortColumn::Status => sa.last_status.cmp(&sb.last_status),
+                            self.settings.theme.warning_color()
                         };
-                        if self.sort_ascending {
-                            ord
+                        ui.label(egui::RichText::new(&name).strong().color(title_color));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("🗑 Cancel").clicked() {
+                                delete_pending_indices.push(p_idx);
+                            }
+                            ui.add_space(6.0);
+                            if pending.error.is_some() {
+                                ui.colored_label(self.settings.theme.error_color(), "Failed");
+                            } else {
+                                ui.add(egui::Spinner::new());
+                                ui.label("Loading... ");
+                            }
+                        });
+                    });
+                    ui.horizontal(|ui| {
+                        if let Some(ref err) = pending.error {
+                            ui.colored_label(
+                                self.settings.theme.error_color(),
+                                format!("⚠ {}", err),
+                            );
                         } else {
-                            ord.reverse()
+                            ui.label("Connecting to swarm and verifying storage...");
                         }
                     });
-
-                    for &i in &visible_indices {
-                        let session_state = &mut self.sessions[i];
-                        let is_selected = self.selected_session_index == Some(i);
-
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                let name =
-                                    egui::RichText::new(&session_state.last_file_name).strong();
-                                let label_response = if is_selected {
-                                    ui.label(name.color(ui.visuals().selection.bg_fill))
-                                } else {
-                                    ui.label(name)
-                                };
-
-                                // Make only name label clickable to select the torrent
-                                let label_click = label_response.interact(egui::Sense::click());
-                                if label_click.clicked() {
-                                    select_idx = Some(i);
-                                }
-
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.button("🗑 Delete").clicked() {
-                                            self.delete_confirm_idx = Some(i);
-                                            self.delete_files_checked = false;
-                                        }
-                                        ui.add_space(6.0);
-                                        if session_state.last_status == "Paused" {
-                                            if ui.button("▶ Resume").clicked() {
-                                                let _ = session_state.session.resume();
-                                            }
-                                        } else if session_state.last_status != "Ended"
-                                            && ui.button("⏸ Pause").clicked()
-                                        {
-                                            let _ = session_state.session.pause();
-                                        }
-                                        ui.add_space(6.0);
-                                        if session_state.last_status != "Ended"
-                                            && ui.button("▶ Stream").clicked()
-                                        {
-                                            stream_torrent_idx = Some(i);
-                                        }
-                                    },
-                                );
-                            });
-
-                            ui.horizontal(|ui| {
-                                let progress = session_state.last_progress;
-                                let bar = egui::ProgressBar::new(progress)
-                                    .text(format!("{:.1}%", progress * 100.0))
-                                    .animate(
-                                        progress < 1.0
-                                            && session_state.last_status == "Downloading",
-                                    );
-                                ui.add_sized([180.0, 16.0], bar);
-
-                                ui.separator();
-                                ui.label(format!("Size: {}", fmt_bytes(session_state.last_total)));
-                                ui.separator();
-                                ui.label(format!("Status: {}", session_state.last_status));
-                                ui.separator();
-                                ui.label(format!("↓ {}/s", fmt_bytes(session_state.last_bps)));
-                                ui.separator();
-                                ui.label(format!("Peers: {}", session_state.last_peers_connected));
-                            });
-                        });
-
-                        ui.add_space(6.0);
-                    }
-
-                    if let Some(idx) = select_idx {
-                        self.selected_session_index = Some(idx);
-                    }
-
-                    if let Some(idx) = stream_torrent_idx {
-                        self.start_streaming(idx, None);
-                    }
-
-                    if should_save_progress {
-                        self.save_state();
-                    }
                 });
+                ui.add_space(4.0);
+            }
+
+            if !delete_pending_indices.is_empty() {
+                for idx in delete_pending_indices.into_iter().rev() {
+                    self.pending_sessions.remove(idx);
+                }
+                self.save_state();
+            }
+
+            // Synchronize active torrent context fields
+            let mut should_save_progress = false;
+            for session_state in &mut self.sessions {
+                let context_arc = session_state.session.context.clone();
+                if let Ok(ctx_guard) = context_arc.try_lock() {
+                    let old_progress = session_state.last_progress;
+                    session_state.update_fields(&ctx_guard);
+                    if session_state.last_progress != old_progress {
+                        should_save_progress = true;
+                    }
+                }
+            }
+            if should_save_progress {
+                self.save_state();
+            }
+
+            // Filter by sidebar category AND quick search query
+            let query = self.search_filter_query.to_lowercase();
+            let mut visible_indices: Vec<usize> = self
+                .sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    matches_filter(s, self.active_filter)
+                        && (query.is_empty() || s.last_file_name.to_lowercase().contains(&query))
+                })
+                .map(|(idx, _)| idx)
+                .collect();
+
+            // Sort visible torrents
+            visible_indices.sort_by(|&a, &b| {
+                let sa = &self.sessions[a];
+                let sb = &self.sessions[b];
+                let ord = match self.sort_column {
+                    SortColumn::Name => sa
+                        .last_file_name
+                        .to_lowercase()
+                        .cmp(&sb.last_file_name.to_lowercase()),
+                    SortColumn::Size => sa.last_total.cmp(&sb.last_total),
+                    SortColumn::Progress => sa.last_progress.total_cmp(&sb.last_progress),
+                    SortColumn::DownSpeed => sa.last_bps.cmp(&sb.last_bps),
+                    SortColumn::UpSpeed => sa.last_upload_bps.cmp(&sb.last_upload_bps),
+                    SortColumn::Peers => sa.last_peers_connected.cmp(&sb.last_peers_connected),
+                    SortColumn::Status => sa.last_status.cmp(&sb.last_status),
+                };
+                if self.sort_ascending {
+                    ord
+                } else {
+                    ord.reverse()
+                }
+            });
+
+            // Render active view mode
+            match self.settings.view_mode {
+                LibraryViewMode::Table => self.draw_pro_table_view(ui, &visible_indices),
+                LibraryViewMode::Cards => self.draw_cards_view(ui, &visible_indices),
+            }
         });
     }
 }
