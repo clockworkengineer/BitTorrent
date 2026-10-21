@@ -20,7 +20,7 @@ All notable changes to this project will be documented in this file.
 - **Project Governance & Legal Assets**:
   - Dual open-source licensing: `LICENSE-MIT` and `LICENSE-APACHE`.
   - Added `SECURITY.md` vulnerability reporting guidelines, `CONTRIBUTING.md` developer workflow, and `CODE_OF_CONDUCT.md` Contributor Covenant v2.1.
-  - Created comprehensive `docs/user-guide.md` covering CLI, daemon, web dashboard, and desktop GUI client.
+  - Created comprehensive `docs/USER-GUIDE.md` covering CLI, daemon, web dashboard, and desktop GUI client.
 - **Code Hygiene & #![no_std] Hardening**:
   - Extracted `PeerDetails` into dedicated `library/src/network/peer_details.rs` module, resolving all `#![no_std]` compilation errors.
   - Standardized workspace clippy lints in root `Cargo.toml` and fixed all clippy warnings across all 14 crates in the workspace.
@@ -53,7 +53,7 @@ All notable changes to this project will be documented in this file.
 - Added CLI companion commands `bt-cli upgrade <input.torrent> <data-dir>` and `bt-cli v2-info <torrent-path>` for inspecting and upgrading torrent files offline.
 - Implemented full WebTorrent WebSocket tracker signaling (`wss://`/`ws://`) and cross-swarm bridge mode (`WebTorrentBridge`) connecting desktop BitTorrent swarms with browser WebRTC Data Channels.
 - Added Holepunch Extension (BEP 55: `ut_holepunch`) for peer-to-peer NAT traversal via intermediate rendezvous relay peers.
-- Created `docs/api-stability.md` to document the stable public API versus internal API surfaces.
+- Created `docs/API-STABILITY.md` to document the stable public API versus internal API surfaces.
 - Comprehensive inline Rustdoc comments across `TorrentSession`, `TorrentSessionBuilder`, `TorrentContext`, and `Tracker`, including `# Examples`, `# Errors`, and `# Panics` sections.
 
 ### Refactored

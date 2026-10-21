@@ -11,7 +11,7 @@
 //! 4. All subsequent bytes (including the BitTorrent handshake) are encrypted.
 //!
 //! MSE is opt-in via [`SessionConfig::mse_enabled`](crate::session::SessionConfig::mse_enabled).
-//! See [docs/encryption.md](https://github.com/clockworkengineer/BitTorrent/blob/main/docs/encryption.md)
+//! See [docs/ENCRYPTION.md](https://github.com/clockworkengineer/BitTorrent/blob/main/docs/ENCRYPTION.md)
 //! for the full protocol walkthrough.
 
 /// A pure-Rust implementation of the RC4 (Rivest Cipher 4) stream cipher.

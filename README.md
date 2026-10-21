@@ -117,24 +117,24 @@ cargo run -p bt_daemon --bin bt-cli -- upgrade input.torrent ./downloads --forma
 
 | Document | Purpose |
 | :--- | :--- |
-| [`docs/bep-compliance.md`](docs/bep-compliance.md) | **BEP Compliance Matrix**: Full breakdown of all 24 supported BitTorrent specifications. |
-| [`docs/architecture.md`](docs/architecture.md) | **System Architecture**: High-level subsystems, concurrency model, data flow, and IPC layout. |
-| [`docs/api-reference.md`](docs/api-reference.md) | **Public API Reference**: `TorrentSession`, builder patterns, configuration, and data structures. |
-| [`docs/user-guide.md`](docs/user-guide.md) | **End-User Guide**: Instructions for GUI client, daemon, Web UI, and settings. |
-| [`docs/cli-reference.md`](docs/cli-reference.md) | **CLI Reference**: Complete manual for the `bt-cli` command-line tool. |
-| [`docs/daemon-and-webui.md`](docs/daemon-and-webui.md) | **Daemon & Web UI**: Headless server installation, REST endpoints, and systemd deployment. |
-| [`docs/streaming.md`](docs/streaming.md) | **Media Streaming Guide**: Seekable `TorrentStream`, HTTP 206 range server, and player integration. |
-| [`docs/v2-merkle.md`](docs/v2-merkle.md) | **BitTorrent v2 Guide**: SHA-256 Merkle trees, piece layers, pad files, and upgrader tooling. |
-| [`docs/webtorrent-bridge.md`](docs/webtorrent-bridge.md) | **WebTorrent Guide**: WebRTC Data Channels, WebSocket signaling, and browser cross-swarming. |
-| [`docs/utp.md`](docs/utp.md) | **uTP Transport**: Packet framing, LEDBAT congestion control, and SACK loss recovery. |
-| [`docs/nat-pmp.md`](docs/nat-pmp.md) | **Port Forwarding**: UPnP (SSDP/IGD SOAP) and NAT-PMP automated mapping protocols. |
-| [`docs/encryption.md`](docs/encryption.md) | **Encryption**: Message Stream Encryption (MSE / PE) handshake and RC4 ciphers. |
-| [`docs/dht.md`](docs/dht.md) | **Kademlia DHT**: Distributed Hash Table, IPv6 DHT, and trackerless discovery. |
-| [`docs/sync-hub.md`](docs/sync-hub.md) | **Sync Hub**: Local-first encrypted folder synchronization guide. |
-| [`docs/packaging-and-distribution.md`](docs/packaging-and-distribution.md) | **Packaging Guide**: Inno Setup installer compilation, icon assets, and portable packaging. |
-| [`docs/performance.md`](docs/performance.md) | **Performance**: Zero-copy slice parsing, buffer pooling, and integer math optimizations. |
-| [`docs/portability.md`](docs/portability.md) | **Portability**: `#![no_std]` bare-metal support, hardware traits, and mock testing. |
-| [`docs/roadmap.md`](docs/roadmap.md) | **Milestone Roadmap**: Detailed chronological record of all 44 development phases. |
+| [`docs/BEP-COMPLIANCE.md`](docs/BEP-COMPLIANCE.md) | **BEP Compliance Matrix**: Full breakdown of all 24 supported BitTorrent specifications. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | **System Architecture**: High-level subsystems, concurrency model, data flow, and IPC layout. |
+| [`docs/API-REFERENCE.md`](docs/API-REFERENCE.md) | **Public API Reference**: `TorrentSession`, builder patterns, configuration, and data structures. |
+| [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) | **End-User Guide**: Instructions for GUI client, daemon, Web UI, and settings. |
+| [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md) | **CLI Reference**: Complete manual for the `bt-cli` command-line tool. |
+| [`docs/DAEMON-AND-WEBUI.md`](docs/DAEMON-AND-WEBUI.md) | **Daemon & Web UI**: Headless server installation, REST endpoints, and systemd deployment. |
+| [`docs/STREAMING.md`](docs/STREAMING.md) | **Media Streaming Guide**: Seekable `TorrentStream`, HTTP 206 range server, and player integration. |
+| [`docs/V2-MERKLE.md`](docs/V2-MERKLE.md) | **BitTorrent v2 Guide**: SHA-256 Merkle trees, piece layers, pad files, and upgrader tooling. |
+| [`docs/WEBTORRENT-BRIDGE.md`](docs/WEBTORRENT-BRIDGE.md) | **WebTorrent Guide**: WebRTC Data Channels, WebSocket signaling, and browser cross-swarming. |
+| [`docs/UTP.md`](docs/UTP.md) | **uTP Transport**: Packet framing, LEDBAT congestion control, and SACK loss recovery. |
+| [`docs/NAT-PMP.md`](docs/NAT-PMP.md) | **Port Forwarding**: UPnP (SSDP/IGD SOAP) and NAT-PMP automated mapping protocols. |
+| [`docs/ENCRYPTION.md`](docs/ENCRYPTION.md) | **Encryption**: Message Stream Encryption (MSE / PE) handshake and RC4 ciphers. |
+| [`docs/DHT.md`](docs/DHT.md) | **Kademlia DHT**: Distributed Hash Table, IPv6 DHT, and trackerless discovery. |
+| [`docs/SYNC-HUB.md`](docs/SYNC-HUB.md) | **Sync Hub**: Local-first encrypted folder synchronization guide. |
+| [`docs/PACKAGING-AND-DISTRIBUTION.md`](docs/PACKAGING-AND-DISTRIBUTION.md) | **Packaging Guide**: Inno Setup installer compilation, icon assets, and portable packaging. |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | **Performance**: Zero-copy slice parsing, buffer pooling, and integer math optimizations. |
+| [`docs/PORTABILITY.md`](docs/PORTABILITY.md) | **Portability**: `#![no_std]` bare-metal support, hardware traits, and mock testing. |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Milestone Roadmap**: Detailed chronological record of all 44 development phases. |
 
 ---
 
