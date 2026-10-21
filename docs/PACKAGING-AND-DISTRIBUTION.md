@@ -10,8 +10,8 @@ The project generates two official distribution formats for Windows 64-bit syste
 
 | Distribution Artifact | File Path | Description |
 | :--- | :--- | :--- |
-| **Windows Setup Installer** | [`dist/BitTorrent-Setup-v0.1.1.exe`](file:///c:/Projects/BitTorrent/dist/BitTorrent-Setup-v0.1.1.exe) | Professional Inno Setup 6 installer with start menu shortcuts, uninstaller, and `.torrent` / `magnet:` protocol associations. |
-| **Portable ZIP Release** | [`dist/BitTorrent-v0.1.1-windows-x86_64-portable.zip`](file:///c:/Projects/BitTorrent/dist/BitTorrent-v0.1.1-windows-x86_64-portable.zip) | Standalone portable archive containing all release binaries, documentation, and icons (zero installation required). |
+| **Windows Setup Installer** | [`dist/BitTorrent-Setup-v0.2.0.exe`](file:///c:/Projects/BitTorrent/dist/BitTorrent-Setup-v0.2.0.exe) | Professional Inno Setup 6 installer with start menu shortcuts, uninstaller, and `.torrent` / `magnet:` protocol associations. |
+| **Portable ZIP Release** | [`dist/BitTorrent-v0.2.0-windows-x86_64-portable.zip`](file:///c:/Projects/BitTorrent/dist/BitTorrent-v0.2.0-windows-x86_64-portable.zip) | Standalone portable archive containing all release binaries, documentation, and icons (zero installation required). |
 
 Both artifacts package all 5 compiled workspace binaries:
 - `torrent_client.exe` (Desktop GUI)
@@ -28,9 +28,9 @@ The automated PowerShell packaging script is located at [`packaging/windows/pack
 
 ### 2.1 Execution Steps
 1. **Compilation**: Invokes `cargo build --release` across all targets.
-2. **Staging**: Gathers binaries, licenses, README, and multi-resolution icon assets into `dist/BitTorrent-v0.1.1-windows-x86_64`.
-3. **Portable ZIP Creation**: Compresses the staged payload into `dist/BitTorrent-v0.1.1-windows-x86_64-portable.zip`.
-4. **Installer Compilation**: Discovers `ISCC.exe` (Inno Setup 6) on the system PATH or standard install paths (`C:\Program Files (x86)\Inno Setup 6` or `C:\Users\<User>\AppData\Local\Programs\Inno Setup 6`) and compiles `dist/BitTorrent-Setup-v0.1.1.exe`.
+2. **Staging**: Gathers binaries, licenses, README, and multi-resolution icon assets into `dist/BitTorrent-v0.2.0-windows-x86_64`.
+3. **Portable ZIP Creation**: Compresses the staged payload into `dist/BitTorrent-v0.2.0-windows-x86_64-portable.zip`.
+4. **Installer Compilation**: Discovers `ISCC.exe` (Inno Setup 6) on the system PATH or standard install paths (`C:\Program Files (x86)\Inno Setup 6` or `C:\Users\<User>\AppData\Local\Programs\Inno Setup 6`) and compiles `dist/BitTorrent-Setup-v0.2.0.exe`.
 
 ### 2.2 Running the Packaging Script
 ```powershell

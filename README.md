@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/clockworkengineer/BitTorrent/actions/workflows/ci.yml/badge.svg)](https://github.com/clockworkengineer/BitTorrent/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
-[![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-blue.svg)](CHANGELOG.md)
+[![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE-MIT)
-[![Windows Setup](https://img.shields.io/badge/Windows-Installer%20v0.1.1-blueviolet.svg)](dist/BitTorrent-Setup-v0.1.1.exe)
+[![Windows Setup](https://img.shields.io/badge/Windows-Installer%20v0.2.0-blueviolet.svg)](dist/BitTorrent-Setup-v0.2.0.exe)
 [![Buy Me a Coffee](https://img.shields.io/badge/Donate-Buy%20Me%20A%20Coffee-orange.svg)](https://www.buymeacoffee.com/clockworkengineer)
 
 An enterprise-grade, `#![no_std]`-capable BitTorrent client, daemon, Web UI, and protocol library implemented in modern Rust. Features comprehensive support for 24 BitTorrent Enhancement Proposals (BEPs), BitTorrent v2 (BEP 52) SHA-256 Merkle trees, WebTorrent WebRTC browser bridging, uTP LEDBAT congestion control with SACK loss recovery, seekable progressive media streaming, and high-throughput disk write coalescing.
@@ -47,8 +47,8 @@ The workspace includes a complete suite of desktop, server, and command-line cli
 
 Pre-compiled Windows release artifacts are available directly in the repository:
 
-- **Windows Setup Installer**: [`dist/BitTorrent-Setup-v0.1.1.exe`](dist/BitTorrent-Setup-v0.1.1.exe) (Compiled with Inno Setup 6, featuring file associations for `.torrent` and `magnet:`, Start Menu shortcuts, and clean uninstaller).
-- **Portable ZIP Package**: [`dist/BitTorrent-v0.1.1-windows-x86_64-portable.zip`](dist/BitTorrent-v0.1.1-windows-x86_64-portable.zip) (Zero-install standalone archive containing all binaries, icons, and licenses).
+- **Windows Setup Installer**: [`dist/BitTorrent-Setup-v0.2.0.exe`](dist/BitTorrent-Setup-v0.2.0.exe) (Compiled with Inno Setup 6, featuring file associations for `.torrent` and `magnet:`, Start Menu shortcuts, and clean uninstaller).
+- **Portable ZIP Package**: [`dist/BitTorrent-v0.2.0-windows-x86_64-portable.zip`](dist/BitTorrent-v0.2.0-windows-x86_64-portable.zip) (Zero-install standalone archive containing all binaries, icons, and licenses).
 
 To build the installer and release package from source on Windows:
 ```powershell

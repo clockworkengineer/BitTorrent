@@ -596,7 +596,7 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "bittorrent-rs"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "crypto-bigint",
  "futures",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "bt_daemon"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
  "ctrlc",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "bt_webui"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "axum",
  "serde",
@@ -2365,7 +2365,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "magnet_dht_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
 ]
@@ -3043,7 +3043,7 @@ checksum = "22686f4785f02a4fcc856d3b3bb19bf6c8160d103f7a99cc258bddd0251dc7f2"
 
 [[package]]
 name = "port_mapping_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
 ]
@@ -3438,7 +3438,7 @@ dependencies = [
 
 [[package]]
 name = "selective_download_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
 ]
@@ -3784,7 +3784,7 @@ dependencies = [
 
 [[package]]
 name = "sync_hub"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
  "futures",
@@ -4005,7 +4005,7 @@ dependencies = [
 
 [[package]]
 name = "torrent_client"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
  "dirs",
@@ -4021,7 +4021,7 @@ dependencies = [
 
 [[package]]
 name = "torrent_client_shared"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
  "serde",
@@ -4030,7 +4030,7 @@ dependencies = [
 
 [[package]]
 name = "torrent_creator_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
  "urlencoding",
@@ -4038,28 +4038,28 @@ dependencies = [
 
 [[package]]
 name = "torrent_fast_resume_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
 ]
 
 [[package]]
 name = "torrent_info_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
 ]
 
 [[package]]
 name = "torrent_session_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
 ]
 
 [[package]]
 name = "torrent_stream_example"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bittorrent-rs",
 ]
