@@ -587,7 +587,9 @@ impl eframe::App for TorrentClientApp {
             let mut should_save_progress = false;
             for session_state in &mut self.sessions {
                 let context_arc = session_state.session.context.clone();
-                if let Ok(ctx_guard) = context_arc.try_lock() {
+                if let Ok(mut ctx_guard) = context_arc.try_lock() {
+                    let storage = ctx_guard.storage.clone();
+                    ctx_guard.drain_verification_results(&*storage);
                     let old_progress = session_state.last_progress;
                     session_state.update_fields(&ctx_guard);
                     if session_state.last_progress != old_progress {

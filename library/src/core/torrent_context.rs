@@ -1548,7 +1548,10 @@ impl TorrentContext {
                 self.clear_piece_requests(piece_number);
                 return Ok(true);
             } else {
-                crate::log_debug!("[piece] {} failed hash verification", piece_number);
+                crate::log_debug!(
+                    "[corruption-warning] Piece {} failed hash verification (SHA-1 mismatch) - discarded corrupted blocks and blamed contributing peers",
+                    piece_number
+                );
                 self.clear_piece_requests(piece_number);
 
                 // Discard failed piece dirty blocks from cache so corrupt data never touches disk
@@ -1561,6 +1564,8 @@ impl TorrentContext {
                         self.report_bad_peer(&ip);
                     }
                 }
+
+                self.mark_piece_missing(piece_number, true);
 
                 return Err(crate::error::BitTorrentError::Protocol(
                     "Piece failed hash verification".to_string(),
@@ -2319,7 +2324,7 @@ impl TorrentContext {
             true
         } else {
             crate::log_debug!(
-                "[piece] {} failed async hash verification ({:?})",
+                "[corruption-warning] Piece {} failed async hash verification ({:?}) - discarded corrupted blocks and scheduled for re-download",
                 piece_number,
                 result.error
             );

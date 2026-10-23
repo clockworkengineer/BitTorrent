@@ -142,6 +142,22 @@ impl TorrentClientApp {
                     self.pause_all();
                 }
 
+                if let Some(selected_idx) = self.selected_session_index {
+                    if ui
+                        .button("🔍 Recheck")
+                        .on_hover_text("Re-verify piece hashes on disk for selected torrent")
+                        .clicked()
+                    {
+                        if let Some(s) = self.sessions.get_mut(selected_idx) {
+                            let _ = s.session.recheck_pieces();
+                            self.messages.push(format!(
+                                "[recheck] Initiated file hash verification for '{}'",
+                                s.last_file_name
+                            ));
+                        }
+                    }
+                }
+
                 ui.separator();
 
                 // Turtle Mode Speed Limiter Toggle
@@ -648,6 +664,7 @@ impl TorrentClientApp {
         let mut select_idx = None;
         let mut stream_target = None;
         let mut toggle_pause_idx = None;
+        let mut recheck_target = None;
         let mut delete_target_idx = None;
         let mut explore_target: Option<std::path::PathBuf> = None;
 
@@ -723,6 +740,11 @@ impl TorrentClientApp {
 
                                 if ui.button("▶ Stream Media").clicked() {
                                     stream_target = Some(session_idx);
+                                    ui.close_menu();
+                                }
+
+                                if ui.button("🔍 Force Recheck").clicked() {
+                                    recheck_target = Some(session_idx);
                                     ui.close_menu();
                                 }
 
@@ -833,6 +855,10 @@ impl TorrentClientApp {
                                     stream_target = Some(session_idx);
                                 }
 
+                                if ui.button("🔍").on_hover_text("Force Recheck").clicked() {
+                                    recheck_target = Some(session_idx);
+                                }
+
                                 if ui.button("🗑").on_hover_text("Delete").clicked() {
                                     delete_target_idx = Some(session_idx);
                                 }
@@ -857,6 +883,15 @@ impl TorrentClientApp {
             } else if s.last_status != "Ended" {
                 let _ = s.session.pause();
             }
+        }
+        if let Some(idx) = recheck_target
+            && let Some(s) = self.sessions.get_mut(idx)
+        {
+            let _ = s.session.recheck_pieces();
+            self.messages.push(format!(
+                "[recheck] Initiated file hash verification for '{}'",
+                s.last_file_name
+            ));
         }
         if let Some(idx) = delete_target_idx {
             self.delete_confirm_idx = Some(idx);
@@ -885,6 +920,7 @@ impl TorrentClientApp {
         let mut select_idx = None;
         let mut stream_target = None;
         let mut toggle_pause_idx = None;
+        let mut recheck_target = None;
         let mut delete_target_idx = None;
         let mut explore_target: Option<std::path::PathBuf> = None;
 
@@ -1048,6 +1084,14 @@ impl TorrentClientApp {
                                         {
                                             toggle_pause_idx = Some(session_idx);
                                         }
+
+                                        if ui
+                                            .button("🔍 Recheck")
+                                            .on_hover_text("Force piece hash verification")
+                                            .clicked()
+                                        {
+                                            recheck_target = Some(session_idx);
+                                        }
                                     },
                                 );
                             });
@@ -1069,6 +1113,15 @@ impl TorrentClientApp {
             } else if s.last_status != "Ended" {
                 let _ = s.session.pause();
             }
+        }
+        if let Some(idx) = recheck_target
+            && let Some(s) = self.sessions.get_mut(idx)
+        {
+            let _ = s.session.recheck_pieces();
+            self.messages.push(format!(
+                "[recheck] Initiated file hash verification for '{}'",
+                s.last_file_name
+            ));
         }
         if let Some(idx) = delete_target_idx {
             self.delete_confirm_idx = Some(idx);
@@ -1179,6 +1232,21 @@ impl TorrentClientApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("❌ Close Details").clicked() {
                     self.selected_session_index = None;
+                }
+                if ui
+                    .button("🔍 Force Recheck")
+                    .on_hover_text(
+                        "Recheck all piece hashes on disk to detect and repair corrupted data",
+                    )
+                    .clicked()
+                {
+                    if let Some(s) = self.sessions.get_mut(selected_idx) {
+                        let _ = s.session.recheck_pieces();
+                        self.messages.push(format!(
+                            "[recheck] Initiated file hash verification for '{}'",
+                            s.last_file_name
+                        ));
+                    }
                 }
             });
         });
