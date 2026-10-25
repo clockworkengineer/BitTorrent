@@ -69,6 +69,16 @@ pub struct TorrentClientApp {
     pub search_filter_query: String,
     /// Ring buffer tracking rolling download and upload speeds for the live sparkline graph.
     pub rolling_metrics: RollingMetrics,
+    /// Last recorded inner window width.
+    pub window_width: Option<f32>,
+    /// Last recorded inner window height.
+    pub window_height: Option<f32>,
+    /// Last recorded window screen X coordinate.
+    pub window_x: Option<f32>,
+    /// Last recorded window screen Y coordinate.
+    pub window_y: Option<f32>,
+    /// Whether the window was maximized.
+    pub window_maximized: Option<bool>,
     /// Set of selected torrent indices for multi-selection.
     #[allow(dead_code)]
     pub selected_torrent_indices: HashSet<usize>,
@@ -109,6 +119,11 @@ impl TorrentClientApp {
             search_filter_query: String::new(),
             rolling_metrics: RollingMetrics::default(),
             selected_torrent_indices: HashSet::new(),
+            window_width: None,
+            window_height: None,
+            window_x: None,
+            window_y: None,
+            window_maximized: None,
             shutting_down: false,
         }
     }
@@ -246,6 +261,25 @@ impl eframe::App for TorrentClientApp {
 
     /// Primary UI draw and events update loop called by the egui framework backend.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Track live window geometry and placement
+        ctx.input(|i| {
+            let vp = i.viewport();
+            let is_max = vp.maximized.unwrap_or(false);
+            self.window_maximized = vp.maximized;
+            if !is_max {
+                if let Some(inner) = vp.inner_rect {
+                    if inner.width() >= 400.0 && inner.height() >= 300.0 {
+                        self.window_width = Some(inner.width());
+                        self.window_height = Some(inner.height());
+                    }
+                }
+                if let Some(outer) = vp.outer_rect {
+                    self.window_x = Some(outer.min.x);
+                    self.window_y = Some(outer.min.y);
+                }
+            }
+        });
+
         if ctx.input(|i| i.viewport().close_requested()) {
             self.shutdown();
             return;

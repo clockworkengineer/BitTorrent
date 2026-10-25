@@ -31,11 +31,30 @@ fn main() {
         height: 32,
     });
 
+    let saved_window = state::load_saved_window_state();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([960.0, 620.0])
+        .with_title("BitTorrent Desktop Client")
+        .with_icon(icon);
+
+    if let Some(ref win) = saved_window {
+        if let (Some(w), Some(h)) = (win.width, win.height) {
+            if w >= 400.0 && h >= 300.0 {
+                viewport = viewport.with_inner_size([w, h]);
+            }
+        }
+        if let (Some(x), Some(y)) = (win.x, win.y) {
+            if x >= -5000.0 && y >= -5000.0 && x <= 20000.0 && y <= 20000.0 {
+                viewport = viewport.with_position([x, y]);
+            }
+        }
+        if win.maximized == Some(true) {
+            viewport = viewport.with_maximized(true);
+        }
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 620.0])
-            .with_title("BitTorrent Desktop Client")
-            .with_icon(icon),
+        viewport,
         ..Default::default()
     };
     let _ = eframe::run_native(

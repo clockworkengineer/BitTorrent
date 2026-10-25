@@ -314,6 +314,21 @@ pub struct SavedTorrent {
     pub bitfield_hex: String,
 }
 
+/// Persistent window placement and geometry configuration.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct WindowState {
+    #[serde(default)]
+    pub width: Option<f32>,
+    #[serde(default)]
+    pub height: Option<f32>,
+    #[serde(default)]
+    pub x: Option<f32>,
+    #[serde(default)]
+    pub y: Option<f32>,
+    #[serde(default)]
+    pub maximized: Option<bool>,
+}
+
 /// Config schema representing serialized client application options.
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct ClientState {
@@ -321,6 +336,8 @@ pub struct ClientState {
     pub torrents: Vec<SavedTorrent>,
     #[serde(default)]
     pub settings: AppSettings,
+    #[serde(default)]
+    pub window: Option<WindowState>,
 }
 
 /// Legacy client state layout for backward compatibility support.
@@ -342,6 +359,19 @@ pub fn get_config_path() -> std::path::PathBuf {
     }
 }
 
+/// Loads the saved window geometry and placement from local storage, if present.
+pub fn load_saved_window_state() -> Option<WindowState> {
+    let state_path = get_config_path();
+    let content = if state_path.exists() {
+        std::fs::read_to_string(state_path).ok()
+    } else {
+        std::fs::read_to_string("torrent_client_state.json").ok()
+    }?;
+    serde_json::from_str::<ClientState>(&content)
+        .ok()
+        .and_then(|s| s.window)
+}
+
 /// Returns true if a given session matches the selected status filter.
 pub fn matches_filter(session: &SessionState, filter: SidebarFilter) -> bool {
     match filter {
@@ -358,7 +388,7 @@ pub fn matches_filter(session: &SessionState, filter: SidebarFilter) -> bool {
 use crate::app::TorrentClientApp;
 
 impl TorrentClientApp {
-    /// Saves the current client state (active download directory and torrent file paths with bitfields) to disk.
+    /// Saves the current client state (active download directory, torrents, and window placement) to disk.
     pub fn save_state(&self) {
         let torrents = self
             .sessions
@@ -385,10 +415,26 @@ impl TorrentClientApp {
             )
             .collect::<Vec<_>>();
 
+        let window = if self.window_width.is_some()
+            || self.window_x.is_some()
+            || self.window_maximized.is_some()
+        {
+            Some(WindowState {
+                width: self.window_width,
+                height: self.window_height,
+                x: self.window_x,
+                y: self.window_y,
+                maximized: self.window_maximized,
+            })
+        } else {
+            None
+        };
+
         let state = ClientState {
             download_dir: self.download_dir.clone(),
             torrents,
             settings: self.settings.clone(),
+            window,
         };
         let state_path = get_config_path();
         if let Ok(content) = serde_json::to_string_pretty(&state) {
@@ -409,6 +455,13 @@ impl TorrentClientApp {
             if let Ok(state) = serde_json::from_str::<ClientState>(&content) {
                 self.download_dir = state.download_dir;
                 self.settings = state.settings;
+                if let Some(ref win) = state.window {
+                    self.window_width = win.width;
+                    self.window_height = win.height;
+                    self.window_x = win.x;
+                    self.window_y = win.y;
+                    self.window_maximized = win.maximized;
+                }
                 if self.download_dir.is_empty() && !self.settings.default_download_dir.is_empty() {
                     self.download_dir = self.settings.default_download_dir.clone();
                 }
