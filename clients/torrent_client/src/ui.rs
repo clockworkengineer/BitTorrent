@@ -126,28 +126,50 @@ impl TorrentClientApp {
 
                 ui.separator();
 
+                let has_paused = self.sessions.iter().any(|s| s.last_status == "Paused");
                 if ui
-                    .button("▶ Resume All")
-                    .on_hover_text("Resume all paused torrents")
+                    .add_enabled(has_paused, egui::Button::new("▶ Resume All"))
+                    .on_hover_text(if has_paused {
+                        "Resume all paused torrents"
+                    } else {
+                        "No paused torrents to resume"
+                    })
                     .clicked()
                 {
                     self.resume_all();
                 }
 
+                let has_active = self
+                    .sessions
+                    .iter()
+                    .any(|s| s.last_status == "Downloading" || s.last_status == "Seeding");
                 if ui
-                    .button("⏸ Pause All")
-                    .on_hover_text("Pause all actively downloading or seeding torrents")
+                    .add_enabled(has_active, egui::Button::new("⏸ Pause All"))
+                    .on_hover_text(if has_active {
+                        "Pause all actively downloading or seeding torrents"
+                    } else {
+                        "No active torrents to pause"
+                    })
                     .clicked()
                 {
                     self.pause_all();
                 }
 
-                if let Some(selected_idx) = self.selected_session_index {
-                    if ui
-                        .button("🔍 Recheck")
-                        .on_hover_text("Re-verify piece hashes on disk for selected torrent")
-                        .clicked()
-                    {
+                let can_recheck_selected = self
+                    .selected_session_index
+                    .and_then(|idx| self.sessions.get(idx))
+                    .map(|s| s.last_status != "Ended")
+                    .unwrap_or(false);
+                if ui
+                    .add_enabled(can_recheck_selected, egui::Button::new("🔍 Recheck"))
+                    .on_hover_text(if can_recheck_selected {
+                        "Re-verify piece hashes on disk for selected torrent"
+                    } else {
+                        "Select an active torrent to recheck"
+                    })
+                    .clicked()
+                {
+                    if let Some(selected_idx) = self.selected_session_index {
                         if let Some(s) = self.sessions.get_mut(selected_idx) {
                             let _ = s.session.recheck_pieces();
                             self.messages.push(format!(
@@ -404,14 +426,32 @@ impl TorrentClientApp {
                         ));
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Deselect All").clicked() {
+                            let can_deselect = sel_count > 0;
+                            if ui
+                                .add_enabled(can_deselect, egui::Button::new("Deselect All"))
+                                .on_hover_text(if can_deselect {
+                                    "Deselect all files"
+                                } else {
+                                    "All files already deselected"
+                                })
+                                .clicked()
+                            {
                                 for f in &mut modal.files {
                                     f.selected = false;
                                     f.priority = bittorrent_rs::FilePriority::Skip;
                                 }
                             }
                             ui.add_space(4.0);
-                            if ui.button("Select All").clicked() {
+                            let can_select_all = sel_count < modal.files.len();
+                            if ui
+                                .add_enabled(can_select_all, egui::Button::new("Select All"))
+                                .on_hover_text(if can_select_all {
+                                    "Select all files"
+                                } else {
+                                    "All files already selected"
+                                })
+                                .clicked()
+                            {
                                 for f in &mut modal.files {
                                     f.selected = true;
                                     f.priority = bittorrent_rs::FilePriority::Normal;
@@ -525,12 +565,22 @@ impl TorrentClientApp {
 
                 // Modal Footer Actions
                 ui.horizontal(|ui| {
+                    let can_start = !modal.source_path.trim().is_empty()
+                        && (modal.files.is_empty() || modal.files.iter().any(|f| f.selected));
                     if ui
-                        .button(
-                            egui::RichText::new("🚀 Start Download")
-                                .strong()
-                                .color(self.settings.theme.accent_color()),
+                        .add_enabled(
+                            can_start,
+                            egui::Button::new(
+                                egui::RichText::new("🚀 Start Download")
+                                    .strong()
+                                    .color(self.settings.theme.accent_color()),
+                            ),
                         )
+                        .on_hover_text(if can_start {
+                            "Begin downloading this torrent"
+                        } else {
+                            "Please select at least one file to download"
+                        })
                         .clicked()
                     {
                         add_confirmed = true;
@@ -728,29 +778,70 @@ impl TorrentClientApp {
 
                             // Context menu on row
                             name_resp.context_menu(|ui| {
-                                if s.last_status == "Paused" {
-                                    if ui.button("▶ Resume").clicked() {
+                                let is_paused = s.last_status == "Paused";
+                                let is_ended = s.last_status == "Ended";
+                                if is_paused {
+                                    if ui
+                                        .add_enabled(!is_ended, egui::Button::new("▶ Resume"))
+                                        .clicked()
+                                    {
                                         toggle_pause_idx = Some(session_idx);
                                         ui.close_menu();
                                     }
-                                } else if ui.button("⏸ Pause").clicked() {
+                                } else if ui
+                                    .add_enabled(!is_ended, egui::Button::new("⏸ Pause"))
+                                    .clicked()
+                                {
                                     toggle_pause_idx = Some(session_idx);
                                     ui.close_menu();
                                 }
 
-                                if ui.button("▶ Stream Media").clicked() {
+                                let can_stream =
+                                    torrent_client_shared::is_media_filename(&s.last_file_name);
+                                if ui
+                                    .add_enabled(can_stream, egui::Button::new("▶ Stream Media"))
+                                    .on_hover_text(if can_stream {
+                                        "Stream media content"
+                                    } else {
+                                        "Not a playable media file"
+                                    })
+                                    .clicked()
+                                {
                                     stream_target = Some(session_idx);
                                     ui.close_menu();
                                 }
 
-                                if ui.button("🔍 Force Recheck").clicked() {
+                                let can_recheck = s.last_status != "Ended";
+                                if ui
+                                    .add_enabled(can_recheck, egui::Button::new("🔍 Force Recheck"))
+                                    .on_hover_text(if can_recheck {
+                                        "Verify piece hashes on disk"
+                                    } else {
+                                        "Torrent ended"
+                                    })
+                                    .clicked()
+                                {
                                     recheck_target = Some(session_idx);
                                     ui.close_menu();
                                 }
 
                                 ui.separator();
 
-                                if ui.button("📁 Open Folder").clicked() {
+                                let folder_exists = s
+                                    .session
+                                    .context
+                                    .lock()
+                                    .map(|ctx| ctx.download_path.exists())
+                                    .unwrap_or(false);
+                                if ui
+                                    .add_enabled(folder_exists, egui::Button::new("📁 Open Folder"))
+                                    .on_hover_text(if folder_exists {
+                                        "Open containing folder"
+                                    } else {
+                                        "Download folder not found"
+                                    })
+                                    .clicked()
+                                {
                                     if let Ok(ctx) = s.session.context.lock() {
                                         explore_target = Some(ctx.download_path.clone());
                                     }
@@ -839,23 +930,49 @@ impl TorrentClientApp {
 
                             // Action buttons
                             ui.horizontal(|ui| {
-                                if s.last_status == "Paused" {
-                                    if ui.button("▶").on_hover_text("Resume").clicked() {
-                                        toggle_pause_idx = Some(session_idx);
-                                    }
-                                } else if s.last_status != "Ended"
-                                    && ui.button("⏸").on_hover_text("Pause").clicked()
+                                let is_paused = s.last_status == "Paused";
+                                let is_ended = s.last_status == "Ended";
+                                let can_toggle_pause = !is_ended;
+                                let pause_icon = if is_paused { "▶" } else { "⏸" };
+                                let pause_tip = if is_ended {
+                                    "Session ended"
+                                } else if is_paused {
+                                    "Resume"
+                                } else {
+                                    "Pause"
+                                };
+                                if ui
+                                    .add_enabled(can_toggle_pause, egui::Button::new(pause_icon))
+                                    .on_hover_text(pause_tip)
+                                    .clicked()
                                 {
                                     toggle_pause_idx = Some(session_idx);
                                 }
 
-                                if torrent_client_shared::is_media_filename(&s.last_file_name)
-                                    && ui.button("🎬").on_hover_text("Stream media").clicked()
+                                let can_stream =
+                                    torrent_client_shared::is_media_filename(&s.last_file_name);
+                                if ui
+                                    .add_enabled(can_stream, egui::Button::new("🎬"))
+                                    .on_hover_text(if can_stream {
+                                        "Stream media"
+                                    } else {
+                                        "Not a media file"
+                                    })
+                                    .clicked()
                                 {
                                     stream_target = Some(session_idx);
                                 }
 
-                                if ui.button("🔍").on_hover_text("Force Recheck").clicked() {
+                                let can_recheck = s.last_status != "Ended";
+                                if ui
+                                    .add_enabled(can_recheck, egui::Button::new("🔍"))
+                                    .on_hover_text(if can_recheck {
+                                        "Force Recheck"
+                                    } else {
+                                        "Session ended"
+                                    })
+                                    .clicked()
+                                {
                                     recheck_target = Some(session_idx);
                                 }
 
@@ -1057,37 +1174,83 @@ impl TorrentClientApp {
                                             delete_target_idx = Some(session_idx);
                                         }
 
-                                        if ui.button("📁 Folder").clicked()
+                                        let folder_exists = s
+                                            .session
+                                            .context
+                                            .lock()
+                                            .map(|ctx| ctx.download_path.exists())
+                                            .unwrap_or(false);
+                                        if ui
+                                            .add_enabled(
+                                                folder_exists,
+                                                egui::Button::new("📁 Folder"),
+                                            )
+                                            .on_hover_text(if folder_exists {
+                                                "Open containing folder"
+                                            } else {
+                                                "Folder not created yet"
+                                            })
+                                            .clicked()
                                             && let Ok(ctx) = s.session.context.lock()
                                         {
                                             explore_target = Some(ctx.download_path.clone());
                                         }
 
-                                        if torrent_client_shared::is_media_filename(
+                                        let can_stream = torrent_client_shared::is_media_filename(
                                             &s.last_file_name,
-                                        ) && ui
-                                            .button(
-                                                egui::RichText::new("🎬 Stream")
-                                                    .color(self.settings.theme.stream_color()),
+                                        );
+                                        if ui
+                                            .add_enabled(
+                                                can_stream,
+                                                egui::Button::new(
+                                                    egui::RichText::new("🎬 Stream")
+                                                        .color(self.settings.theme.stream_color()),
+                                                ),
                                             )
+                                            .on_hover_text(if can_stream {
+                                                "Stream media"
+                                            } else {
+                                                "Not a media file"
+                                            })
                                             .clicked()
                                         {
                                             stream_target = Some(session_idx);
                                         }
 
-                                        if s.last_status == "Paused" {
-                                            if ui.button("▶ Resume").clicked() {
-                                                toggle_pause_idx = Some(session_idx);
-                                            }
-                                        } else if s.last_status != "Ended"
-                                            && ui.button("⏸ Pause").clicked()
+                                        let is_paused = s.last_status == "Paused";
+                                        let is_ended = s.last_status == "Ended";
+                                        let can_toggle = !is_ended;
+                                        let toggle_label =
+                                            if is_paused { "▶ Resume" } else { "⏸ Pause" };
+                                        let toggle_tip = if is_ended {
+                                            "Session ended"
+                                        } else if is_paused {
+                                            "Resume download"
+                                        } else {
+                                            "Pause download"
+                                        };
+                                        if ui
+                                            .add_enabled(
+                                                can_toggle,
+                                                egui::Button::new(toggle_label),
+                                            )
+                                            .on_hover_text(toggle_tip)
+                                            .clicked()
                                         {
                                             toggle_pause_idx = Some(session_idx);
                                         }
 
+                                        let can_recheck = s.last_status != "Ended";
                                         if ui
-                                            .button("🔍 Recheck")
-                                            .on_hover_text("Force piece hash verification")
+                                            .add_enabled(
+                                                can_recheck,
+                                                egui::Button::new("🔍 Recheck"),
+                                            )
+                                            .on_hover_text(if can_recheck {
+                                                "Force piece hash verification"
+                                            } else {
+                                                "Session ended"
+                                            })
                                             .clicked()
                                         {
                                             recheck_target = Some(session_idx);
@@ -1233,11 +1396,18 @@ impl TorrentClientApp {
                 if ui.button("❌ Close Details").clicked() {
                     self.selected_session_index = None;
                 }
+                let can_recheck = self
+                    .sessions
+                    .get(selected_idx)
+                    .map(|s| s.last_status != "Ended")
+                    .unwrap_or(false);
                 if ui
-                    .button("🔍 Force Recheck")
-                    .on_hover_text(
-                        "Recheck all piece hashes on disk to detect and repair corrupted data",
-                    )
+                    .add_enabled(can_recheck, egui::Button::new("🔍 Force Recheck"))
+                    .on_hover_text(if can_recheck {
+                        "Recheck all piece hashes on disk to detect and repair corrupted data"
+                    } else {
+                        "Session ended"
+                    })
                     .clicked()
                 {
                     if let Some(s) = self.sessions.get_mut(selected_idx) {
@@ -1413,12 +1583,21 @@ impl TorrentClientApp {
                             priority_changes.push((idx, current_priority));
                         }
 
-                        if torrent_client_shared::is_media_filename(&file.torrent_path) {
-                            if ui.button("▶ Stream").clicked() {
-                                stream_target = Some(idx);
-                            }
-                        } else {
-                            ui.label("-");
+                        let is_media = torrent_client_shared::is_media_filename(&file.torrent_path);
+                        let not_skipped = file.priority != bittorrent_rs::FilePriority::Skip;
+                        let can_stream = is_media && not_skipped;
+                        if ui
+                            .add_enabled(can_stream, egui::Button::new("▶ Stream"))
+                            .on_hover_text(if !is_media {
+                                "Not a playable media file"
+                            } else if !not_skipped {
+                                "File is set to Skip"
+                            } else {
+                                "Stream this file"
+                            })
+                            .clicked()
+                        {
+                            stream_target = Some(idx);
                         }
                         ui.end_row();
                     }
@@ -1684,7 +1863,16 @@ impl TorrentClientApp {
         ui.horizontal(|ui| {
             ui.label("Search:");
             ui.text_edit_singleline(&mut self.log_search_query);
-            if ui.button("Clear Logs").clicked() {
+            let has_logs = !self.messages.is_empty();
+            if ui
+                .add_enabled(has_logs, egui::Button::new("Clear Logs"))
+                .on_hover_text(if has_logs {
+                    "Clear all logged messages"
+                } else {
+                    "Log buffer is empty"
+                })
+                .clicked()
+            {
                 self.messages.clear();
             }
         });

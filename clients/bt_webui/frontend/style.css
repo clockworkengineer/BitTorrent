@@ -146,6 +146,14 @@ button {
     outline: none;
 }
 
+button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
 .primary-btn {
     background: var(--primary);
     color: #ffffff;

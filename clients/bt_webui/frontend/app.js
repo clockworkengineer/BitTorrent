@@ -77,17 +77,32 @@ function renderTorrents(torrents) {
         const peersText = `${t.peers_active} (${t.peers_connected})`;
 
         // Determine which action button to show
-        const isPaused = t.status.toLowerCase() === 'paused';
-        const actionBtn = isPaused 
-            ? `<button class="secondary-btn" onclick="resumeTorrent('${t.info_hash}')">Resume</button>`
-            : `<button class="secondary-btn" onclick="pauseTorrent('${t.info_hash}')">Pause</button>`;
+        const statusLower = t.status.toLowerCase();
+        const isEnded = statusLower === 'ended';
+        const isPaused = statusLower === 'paused';
+        let actionBtn = '';
+        if (isEnded) {
+            actionBtn = `<button class="secondary-btn" disabled title="Torrent has ended">Ended</button>`;
+        } else if (isPaused) {
+            actionBtn = `<button class="secondary-btn" onclick="resumeTorrent('${t.info_hash}')" title="Resume torrent">Resume</button>`;
+        } else {
+            actionBtn = `<button class="secondary-btn" onclick="pauseTorrent('${t.info_hash}')" title="Pause torrent">Pause</button>`;
+        }
 
         const ssBadge = t.is_super_seeding
             ? `<span class="status-pill" style="background: rgba(139, 92, 246, 0.2); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4); margin-left: 4px;">Super-Seed</span>`
             : '';
+        const canSuperSeed = t.is_super_seeding || (t.progress >= 1.0 || statusLower === 'seeding');
         const ssBtn = t.is_super_seeding
             ? `<button class="secondary-btn" style="color: #a78bfa; border-color: rgba(139, 92, 246, 0.4);" onclick="toggleSuperSeed('${t.info_hash}', false)" title="Disable Super-Seeding">⚡ SS On</button>`
-            : `<button class="secondary-btn" onclick="toggleSuperSeed('${t.info_hash}', true)" title="Enable Super-Seeding (BEP 16)">⚡ SS Off</button>`;
+            : (canSuperSeed
+                ? `<button class="secondary-btn" onclick="toggleSuperSeed('${t.info_hash}', true)" title="Enable Super-Seeding (BEP 16)">⚡ SS Off</button>`
+                : `<button class="secondary-btn" disabled title="Super-seeding requires 100% completion (Seeding state)">⚡ SS Off</button>`);
+
+        const isMedia = hasMediaExtension(t.name);
+        const streamBtn = isMedia
+            ? `<button class="stream-btn" onclick="openStreamModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Stream')}')" title="Stream media content">▶ Stream</button>`
+            : `<button class="stream-btn" disabled title="Not a playable media file">▶ Stream</button>`;
 
         html += `
             <tr>
@@ -107,7 +122,7 @@ function renderTorrents(torrents) {
                 <td class="dir-cell" title="${t.download_dir}"><small>${t.download_dir}</small></td>
                 <td>
                     <div class="actions-cell">
-                        <button class="stream-btn" onclick="openStreamModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Stream')}')">▶ Stream</button>
+                        ${streamBtn}
                         <button class="secondary-btn" onclick="openFilesModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Files')}')">📁 Files</button>
                         <button class="secondary-btn" onclick="openSwarmModal('${t.info_hash}', '${escapeHtml(t.name || 'Torrent Swarm')}')">👥 Swarm</button>
                         ${ssBtn}
@@ -178,6 +193,18 @@ window.toggleSuperSeed = async (hash, enabled) => {
     }
 };
 
+function hasMediaExtension(name) {
+    if (!name) return false;
+    const mediaExts = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.mp3', '.flac', '.wav', '.aac', '.m4a', '.ogg'];
+    return mediaExts.some(ext => name.toLowerCase().endsWith(ext));
+}
+
+function updateAddBtnState() {
+    addBtn.disabled = !magnetInput.value.trim();
+}
+magnetInput.addEventListener('input', updateAddBtnState);
+updateAddBtnState();
+
 addBtn.addEventListener('click', async () => {
     const torrent_path = magnetInput.value.trim();
     const download_dir = dirInput.value.trim() || null;
@@ -185,6 +212,10 @@ addBtn.addEventListener('click', async () => {
         showToast("Please enter a torrent file path or magnet link", true);
         return;
     }
+
+    addBtn.disabled = true;
+    const originalText = addBtn.textContent;
+    addBtn.textContent = "Adding...";
 
     try {
         const res = await fetch('/api/torrents/add', {
@@ -202,6 +233,9 @@ addBtn.addEventListener('click', async () => {
         }
     } catch (e) {
         showToast("Error adding torrent", true);
+    } finally {
+        addBtn.textContent = originalText;
+        updateAddBtnState();
     }
 });
 
