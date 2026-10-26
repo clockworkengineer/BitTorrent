@@ -29,22 +29,7 @@ pub use crate::core::transfer_metrics::TransferMetrics;
 #[derive(Debug, Clone)]
 pub struct Tracker;
 
-/// Tracks the super-seeding (initial seeding / BEP 16) distribution state.
-#[derive(Debug, Clone, Default)]
-pub struct SuperSeedingState {
-    /// Whether super-seeding mode is actively enabled.
-    pub enabled: bool,
-    /// Maps piece index to the peer IP it was exclusively offered to.
-    pub piece_offered_to: HashMap<u32, String>,
-    /// Maps each peer IP to the piece index currently offered to them pending swarm validation.
-    pub peer_pending_piece: HashMap<String, u32>,
-    /// Counts how many times each piece has been witnessed in the swarm (from peers other than the one it was offered to).
-    pub piece_swarm_count: HashMap<u32, usize>,
-    /// Cumulative count of pieces offered/suggested in super-seeding mode.
-    pub total_pieces_offered: usize,
-    /// Cumulative count of pieces verified as propagated across the swarm.
-    pub total_pieces_propagated: usize,
-}
+pub use crate::core::super_seeding::SuperSeedingState;
 
 // Removed AssemblerData definition (now in assembler.rs)
 
@@ -2083,6 +2068,18 @@ impl TorrentContext {
     /// Estimates the current upload transfer rate in bytes per second with EMA smoothing.
     pub fn upload_bytes_per_second(&self) -> i64 {
         self.transfer_metrics.upload_bytes_per_second()
+    }
+
+    /// Returns the most recently computed download bytes per second without lock contention.
+    #[inline]
+    pub fn current_download_bps(&self) -> i64 {
+        self.transfer_metrics.current_download_bps()
+    }
+
+    /// Returns the most recently computed upload bytes per second without lock contention.
+    #[inline]
+    pub fn current_upload_bps(&self) -> i64 {
+        self.transfer_metrics.current_upload_bps()
     }
 
     /// Checks if a peer is in the active connection swarm map.

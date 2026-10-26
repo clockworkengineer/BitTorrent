@@ -44,17 +44,20 @@ impl LsdListener {
                             let mut infohash_found = false;
                             for line in msg.lines() {
                                 let line_trimmed = line.trim();
-                                if line_trimmed.to_uppercase().starts_with("PORT:") {
+                                if line_trimmed.len() >= 5
+                                    && line_trimmed[..5].eq_ignore_ascii_case("port:")
+                                {
                                     if let Some(p_str) = line_trimmed.split(':').nth(1) {
                                         if let Ok(p) = p_str.trim().parse::<u16>() {
                                             port = Some(p);
                                         }
                                     }
                                 }
-                                if line_trimmed.to_uppercase().starts_with("INFOHASH:") {
+                                if line_trimmed.len() >= 9
+                                    && line_trimmed[..9].eq_ignore_ascii_case("infohash:")
+                                {
                                     if let Some(h_str) = line_trimmed.split(':').nth(1) {
-                                        if h_str.trim().to_lowercase()
-                                            == expected_infohash_hex.to_lowercase()
+                                        if h_str.trim().eq_ignore_ascii_case(&expected_infohash_hex)
                                         {
                                             infohash_found = true;
                                         }

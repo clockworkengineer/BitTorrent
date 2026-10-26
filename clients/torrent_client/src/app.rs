@@ -655,8 +655,9 @@ impl eframe::App for TorrentClientApp {
                 let ord = match self.sort_column {
                     SortColumn::Name => sa
                         .last_file_name
-                        .to_lowercase()
-                        .cmp(&sb.last_file_name.to_lowercase()),
+                        .chars()
+                        .map(|c| c.to_ascii_lowercase())
+                        .cmp(sb.last_file_name.chars().map(|c| c.to_ascii_lowercase())),
                     SortColumn::Size => sa.last_total.cmp(&sb.last_total),
                     SortColumn::Progress => sa.last_progress.total_cmp(&sb.last_progress),
                     SortColumn::DownSpeed => sa.last_bps.cmp(&sb.last_bps),

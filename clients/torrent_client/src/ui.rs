@@ -13,44 +13,50 @@ use torrent_client_shared::fmt_bytes;
 
 /// Returns an appropriate emoji icon based on filename extension.
 pub fn get_file_icon(path: &str) -> &'static str {
-    let lower = path.to_lowercase();
-    if lower.ends_with(".mp4")
-        || lower.ends_with(".mkv")
-        || lower.ends_with(".avi")
-        || lower.ends_with(".mov")
-        || lower.ends_with(".webm")
-        || lower.ends_with(".flv")
+    let Some(dot_idx) = path.rfind('.') else {
+        return "📄";
+    };
+    let ext = &path[dot_idx + 1..];
+    if ext.eq_ignore_ascii_case("mp4")
+        || ext.eq_ignore_ascii_case("mkv")
+        || ext.eq_ignore_ascii_case("avi")
+        || ext.eq_ignore_ascii_case("mov")
+        || ext.eq_ignore_ascii_case("webm")
+        || ext.eq_ignore_ascii_case("flv")
     {
         "🎬"
-    } else if lower.ends_with(".mp3")
-        || lower.ends_with(".flac")
-        || lower.ends_with(".wav")
-        || lower.ends_with(".ogg")
-        || lower.ends_with(".m4a")
-        || lower.ends_with(".aac")
+    } else if ext.eq_ignore_ascii_case("mp3")
+        || ext.eq_ignore_ascii_case("flac")
+        || ext.eq_ignore_ascii_case("wav")
+        || ext.eq_ignore_ascii_case("ogg")
+        || ext.eq_ignore_ascii_case("m4a")
+        || ext.eq_ignore_ascii_case("aac")
     {
         "🎵"
-    } else if lower.ends_with(".iso") || lower.ends_with(".img") || lower.ends_with(".dmg") {
+    } else if ext.eq_ignore_ascii_case("iso")
+        || ext.eq_ignore_ascii_case("img")
+        || ext.eq_ignore_ascii_case("dmg")
+    {
         "💿"
-    } else if lower.ends_with(".zip")
-        || lower.ends_with(".tar")
-        || lower.ends_with(".gz")
-        || lower.ends_with(".7z")
-        || lower.ends_with(".rar")
-        || lower.ends_with(".bz2")
+    } else if ext.eq_ignore_ascii_case("zip")
+        || ext.eq_ignore_ascii_case("tar")
+        || ext.eq_ignore_ascii_case("gz")
+        || ext.eq_ignore_ascii_case("7z")
+        || ext.eq_ignore_ascii_case("rar")
+        || ext.eq_ignore_ascii_case("bz2")
     {
         "📦"
-    } else if lower.ends_with(".pdf")
-        || lower.ends_with(".epub")
-        || lower.ends_with(".txt")
-        || lower.ends_with(".doc")
-        || lower.ends_with(".docx")
+    } else if ext.eq_ignore_ascii_case("pdf")
+        || ext.eq_ignore_ascii_case("epub")
+        || ext.eq_ignore_ascii_case("txt")
+        || ext.eq_ignore_ascii_case("doc")
+        || ext.eq_ignore_ascii_case("docx")
     {
         "📄"
-    } else if lower.ends_with(".exe")
-        || lower.ends_with(".msi")
-        || lower.ends_with(".deb")
-        || lower.ends_with(".rpm")
+    } else if ext.eq_ignore_ascii_case("exe")
+        || ext.eq_ignore_ascii_case("msi")
+        || ext.eq_ignore_ascii_case("deb")
+        || ext.eq_ignore_ascii_case("rpm")
     {
         "⚙"
     } else {
@@ -1879,16 +1885,20 @@ impl TorrentClientApp {
 
         ui.add_space(4.0);
 
+        let search_query = if self.log_search_query.trim().is_empty() {
+            None
+        } else {
+            Some(self.log_search_query.trim().to_lowercase())
+        };
+
         egui::ScrollArea::vertical()
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 for message in &self.messages {
-                    if !self.log_search_query.is_empty()
-                        && !message
-                            .to_lowercase()
-                            .contains(&self.log_search_query.to_lowercase())
-                    {
-                        continue;
+                    if let Some(ref q) = search_query {
+                        if !message.to_lowercase().contains(q) {
+                            continue;
+                        }
                     }
 
                     let color = if message.contains("Failed")
@@ -2237,14 +2247,17 @@ impl TorrentClientApp {
     }
 }
 
-/// Simple helper to URL encode a string for magnet display name.
+/// Simple helper to URL encode a string for magnet display name without allocating formatting strings.
 fn urlencoding_simple(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{:02X}", b));
+            out.push('%');
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0xF) as usize] as char);
         }
     }
     out

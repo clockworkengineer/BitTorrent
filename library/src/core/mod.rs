@@ -10,6 +10,8 @@ pub mod piece_store;
 #[cfg(feature = "std")]
 pub mod selector;
 #[cfg(feature = "std")]
+pub mod super_seeding;
+#[cfg(feature = "std")]
 pub mod swarm_topology;
 #[cfg(all(feature = "std", feature = "v2"))]
 pub mod torrent_builder;

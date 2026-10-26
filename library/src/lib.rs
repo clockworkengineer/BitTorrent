@@ -204,7 +204,7 @@ pub use network::metadata_fetcher::{
     MetadataRangeFetcher, PartialFileInfo, PartialMetadataManifest,
 };
 #[cfg(feature = "std")]
-pub use network::peer::{Peer, PeerAction};
+pub use network::peer::{ConnectionType, Peer, PeerAction};
 pub use network::peer_details::PeerDetails;
 #[cfg(feature = "std")]
 pub use network::peer_id::get as get_peer_id;
@@ -244,6 +244,8 @@ pub use utils::io_traits::{HttpClient, UreqHttpClient};
 
 #[cfg(feature = "v2")]
 pub use core::merkle::{BLOCK_SIZE as V2_BLOCK_SIZE, MerkleProof, MerkleTree};
+#[cfg(feature = "std")]
+pub use core::super_seeding::SuperSeedingState;
 #[cfg(all(feature = "std", feature = "v2"))]
 pub use core::torrent_builder::TorrentBuilder;
 #[cfg(feature = "std")]

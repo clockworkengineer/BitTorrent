@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Tracks downloaded/uploaded byte counters and moving average speeds.
@@ -13,6 +13,8 @@ pub struct TransferMetrics {
     pub total_bytes_uploaded: Arc<AtomicU64>,
     pub download_speed_tracker: Mutex<(Instant, u64, i64)>,
     pub upload_speed_tracker: Mutex<(Instant, u64, i64)>,
+    pub cached_download_bps: AtomicI64,
+    pub cached_upload_bps: AtomicI64,
 }
 
 impl TransferMetrics {
@@ -24,6 +26,8 @@ impl TransferMetrics {
             total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
             download_speed_tracker: Mutex::new((Instant::now(), 0, 0)),
             upload_speed_tracker: Mutex::new((Instant::now(), 0, 0)),
+            cached_download_bps: AtomicI64::new(0),
+            cached_upload_bps: AtomicI64::new(0),
         }
     }
 
@@ -61,29 +65,16 @@ impl TransferMetrics {
     }
 
     pub fn bytes_per_second(&self) -> i64 {
-        let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
-            if let Ok(guard) = self.download_speed_tracker.lock() {
-                let now = Instant::now();
-                let elapsed = now.duration_since(guard.0);
-                let current_bytes = self.total_bytes_downloaded.load(Ordering::Relaxed);
-                if elapsed.as_millis() >= 500 {
-                    (
-                        elapsed,
-                        current_bytes.saturating_sub(guard.1),
-                        true,
-                        now,
-                        current_bytes,
-                        guard.2,
-                    )
-                } else {
-                    (elapsed, 0, false, now, current_bytes, guard.2)
-                }
-            } else {
-                return 0;
-            }
+        let Ok(mut guard) = self.download_speed_tracker.lock() else {
+            return self.cached_download_bps.load(Ordering::Relaxed);
         };
 
-        if needs_update {
+        let now = Instant::now();
+        let elapsed = now.duration_since(guard.0);
+        if elapsed.as_millis() >= 500 {
+            let current_bytes = self.total_bytes_downloaded.load(Ordering::Relaxed);
+            let delta_bytes = current_bytes.saturating_sub(guard.1);
+            let old_bps = guard.2;
             let instant_bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
             let bps = if delta_bytes > 0 {
                 if old_bps > 0 {
@@ -98,39 +89,25 @@ impl TransferMetrics {
                 0
             };
 
-            if let Ok(mut guard) = self.download_speed_tracker.lock() {
-                *guard = (now, current_bytes, bps);
-            }
+            *guard = (now, current_bytes, bps);
+            self.cached_download_bps.store(bps, Ordering::Relaxed);
             bps
         } else {
-            old_bps
+            guard.2
         }
     }
 
     pub fn upload_bytes_per_second(&self) -> i64 {
-        let (elapsed, delta_bytes, needs_update, now, current_bytes, old_bps) = {
-            if let Ok(guard) = self.upload_speed_tracker.lock() {
-                let now = Instant::now();
-                let elapsed = now.duration_since(guard.0);
-                let current_bytes = self.total_bytes_uploaded.load(Ordering::Relaxed);
-                if elapsed.as_millis() >= 500 {
-                    (
-                        elapsed,
-                        current_bytes.saturating_sub(guard.1),
-                        true,
-                        now,
-                        current_bytes,
-                        guard.2,
-                    )
-                } else {
-                    (elapsed, 0, false, now, current_bytes, guard.2)
-                }
-            } else {
-                return 0;
-            }
+        let Ok(mut guard) = self.upload_speed_tracker.lock() else {
+            return self.cached_upload_bps.load(Ordering::Relaxed);
         };
 
-        if needs_update {
+        let now = Instant::now();
+        let elapsed = now.duration_since(guard.0);
+        if elapsed.as_millis() >= 500 {
+            let current_bytes = self.total_bytes_uploaded.load(Ordering::Relaxed);
+            let delta_bytes = current_bytes.saturating_sub(guard.1);
+            let old_bps = guard.2;
             let instant_bps = (delta_bytes as f64 / elapsed.as_secs_f64()) as i64;
             let bps = if delta_bytes > 0 {
                 if old_bps > 0 {
@@ -145,12 +122,23 @@ impl TransferMetrics {
                 0
             };
 
-            if let Ok(mut guard) = self.upload_speed_tracker.lock() {
-                *guard = (now, current_bytes, bps);
-            }
+            *guard = (now, current_bytes, bps);
+            self.cached_upload_bps.store(bps, Ordering::Relaxed);
             bps
         } else {
-            old_bps
+            guard.2
         }
+    }
+
+    /// Returns the most recently computed download bytes per second without acquiring tracker mutex.
+    #[inline]
+    pub fn current_download_bps(&self) -> i64 {
+        self.cached_download_bps.load(Ordering::Relaxed)
+    }
+
+    /// Returns the most recently computed upload bytes per second without acquiring tracker mutex.
+    #[inline]
+    pub fn current_upload_bps(&self) -> i64 {
+        self.cached_upload_bps.load(Ordering::Relaxed)
     }
 }

@@ -389,7 +389,7 @@ fn test_cross_swarm_bridge_piece_distribution() {
     );
     browser_peer.set_torrent_context(ctx_arc.clone());
     browser_peer.connected = true;
-    browser_peer.connection_type = "WebRTC".to_string();
+    browser_peer.connection_type = bittorrent_rs::ConnectionType::WebRtc;
 
     {
         let ctx_guard = ctx_arc.lock().unwrap();

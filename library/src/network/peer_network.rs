@@ -167,8 +167,10 @@ impl PeerNetwork {
         Ok(self.write(&buffer).await?)
     }
 
-    /// Reads and decodes a BitTorrent connection handshake from the network stream.
-    pub async fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>, [u8; 8]), BitTorrentError> {
+    /// Reads and decodes a BitTorrent connection handshake from the network stream into fixed-size byte arrays.
+    pub async fn read_handshake_arrays(
+        &self,
+    ) -> Result<([u8; 20], [u8; 20], [u8; 8]), BitTorrentError> {
         let mut buffer = [0u8; crate::constants::INITIAL_HANDSHAKE_LENGTH];
         let mut offset = 0;
         let mut retries = 0;
@@ -202,7 +204,13 @@ impl PeerNetwork {
                 }
             }
         }
-        PeerMessage::handshake_decode(&buffer)
+        PeerMessage::handshake_decode_arrays(&buffer)
+    }
+
+    /// Reads and decodes a BitTorrent connection handshake from the network stream.
+    pub async fn read_handshake(&self) -> Result<(Vec<u8>, Vec<u8>, [u8; 8]), BitTorrentError> {
+        let (info_hash, peer_id, reserved) = self.read_handshake_arrays().await?;
+        Ok((info_hash.to_vec(), peer_id.to_vec(), reserved))
     }
 
     /// Encodes and writes a high-level `PeerMessage` to the stream.

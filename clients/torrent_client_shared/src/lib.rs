@@ -55,12 +55,27 @@ impl SessionState {
 
     /// Synchronizes the local session state fields with the underlying TorrentContext.
     pub fn update_fields(&mut self, ctx_guard: &TorrentContext) {
-        self.last_file_name = std::path::Path::new(&ctx_guard.file_name)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| ctx_guard.file_name.clone());
+        if self.last_file_name.is_empty()
+            || (!ctx_guard.file_name.is_empty()
+                && !ctx_guard.file_name.ends_with(&self.last_file_name))
+        {
+            self.last_file_name = std::path::Path::new(&ctx_guard.file_name)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| ctx_guard.file_name.clone());
+        }
         self.last_progress = ctx_guard.progress_percent() / 100.0;
-        self.last_status = format!("{:?}", ctx_guard.status);
+        let status_str = match ctx_guard.status {
+            bittorrent_rs::TorrentStatus::Initialised => "Initialised",
+            bittorrent_rs::TorrentStatus::Downloading => "Downloading",
+            bittorrent_rs::TorrentStatus::Seeding => "Seeding",
+            bittorrent_rs::TorrentStatus::Paused => "Paused",
+            bittorrent_rs::TorrentStatus::Ended => "Ended",
+        };
+        if self.last_status != status_str {
+            self.last_status.clear();
+            self.last_status.push_str(status_str);
+        }
 
         let current_peers = ctx_guard.peer_swarm.read().unwrap().len();
         if current_peers > 0 {
@@ -226,7 +241,7 @@ pub fn extract_peer_infos(ctx: &bittorrent_rs::internals::TorrentContext) -> Vec
                     down_rate: peer.rolling_download_rate as u64,
                     up_rate: peer.rolling_upload_rate as u64,
                     flags,
-                    connection_type: peer.connection_type.clone(),
+                    connection_type: peer.connection_type.to_string(),
                 });
             }
         }

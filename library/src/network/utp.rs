@@ -81,8 +81,24 @@ pub fn build_sack_bitmask(ack_nr: u16, received_seqs: &[u16]) -> Vec<u8> {
     let min_bytes = (max_offset / 8) + 1;
     // SACK length must be at least 4 bytes and in multiples of 4
     let num_bytes = ((min_bytes + 3) / 4).max(1) * 4;
-    let mut bitmask = vec![0u8; num_bytes];
 
+    if num_bytes <= 32 {
+        let mut stack_mask = [0u8; 32];
+        for &seq in received_seqs {
+            let diff = seq.wrapping_sub(ack_nr);
+            if diff >= 2 && diff < 32768 {
+                let bit_offset = (diff - 2) as usize;
+                let byte_idx = bit_offset / 8;
+                let bit_idx = bit_offset % 8;
+                if byte_idx < num_bytes {
+                    stack_mask[byte_idx] |= 1 << bit_idx;
+                }
+            }
+        }
+        return stack_mask[..num_bytes].to_vec();
+    }
+
+    let mut bitmask = vec![0u8; num_bytes];
     for &seq in received_seqs {
         let diff = seq.wrapping_sub(ack_nr);
         if diff >= 2 && diff < 32768 {

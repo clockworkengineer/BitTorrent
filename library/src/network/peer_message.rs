@@ -345,8 +345,10 @@ impl<'a> PeerMessage<'a> {
         Ok(buffer)
     }
 
-    /// Decodes a 68-byte peer handshake packet and extracts the 20-byte `info_hash`, `peer_id`, and 8 reserved bytes.
-    pub fn handshake_decode(buffer: &[u8]) -> Result<(Vec<u8>, Vec<u8>, [u8; 8]), BitTorrentError> {
+    /// Decodes a 68-byte peer handshake packet into fixed-size byte arrays with zero heap allocations.
+    pub fn handshake_decode_arrays(
+        buffer: &[u8],
+    ) -> Result<([u8; 20], [u8; 20], [u8; 8]), BitTorrentError> {
         if buffer.len() != crate::constants::INITIAL_HANDSHAKE_LENGTH {
             return Err(BitTorrentError::Parse("Invalid handshake length".into()));
         }
@@ -363,9 +365,17 @@ impl<'a> PeerMessage<'a> {
         }
         let mut reserved = [0u8; 8];
         reserved.copy_from_slice(&buffer[20..28]);
-        let info_hash = buffer[28..48].to_vec();
-        let peer_id = buffer[48..68].to_vec();
+        let mut info_hash = [0u8; 20];
+        info_hash.copy_from_slice(&buffer[28..48]);
+        let mut peer_id = [0u8; 20];
+        peer_id.copy_from_slice(&buffer[48..68]);
         Ok((info_hash, peer_id, reserved))
+    }
+
+    /// Decodes a 68-byte peer handshake packet and extracts the 20-byte `info_hash`, `peer_id`, and 8 reserved bytes.
+    pub fn handshake_decode(buffer: &[u8]) -> Result<(Vec<u8>, Vec<u8>, [u8; 8]), BitTorrentError> {
+        let (info_hash, peer_id, reserved) = Self::handshake_decode_arrays(buffer)?;
+        Ok((info_hash.to_vec(), peer_id.to_vec(), reserved))
     }
 
     #[inline]

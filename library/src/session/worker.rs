@@ -2,7 +2,7 @@ use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::error::BitTorrentError;
 use crate::log_debug;
 use crate::manager::Manager;
-use crate::peer::Peer;
+use crate::peer::{ConnectionType, Peer};
 use crate::peer_message::PeerMessage;
 use crate::tracker::PeerDetails;
 use std::sync::{Arc, Mutex};
@@ -150,7 +150,7 @@ pub async fn perform_handshake(
 
     if peer_details.is_webrtc() {
         let mut pg = peer.lock().unwrap();
-        pg.connection_type = "WebRTC".to_string();
+        pg.connection_type = ConnectionType::WebRtc;
     }
 
     let mut net = {

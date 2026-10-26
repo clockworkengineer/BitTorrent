@@ -46,7 +46,7 @@ pub fn read_http_request<R: BufRead>(reader: &mut R) -> std::io::Result<Option<H
         if trimmed.is_empty() {
             break;
         }
-        if trimmed.to_lowercase().starts_with("range:") {
+        if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("range:") {
             range_header = Some(trimmed["range:".len()..].trim().to_string());
         }
     }

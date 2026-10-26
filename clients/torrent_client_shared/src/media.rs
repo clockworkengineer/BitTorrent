@@ -2,43 +2,49 @@
 
 /// Returns true if the file name has a common video or audio extension.
 pub fn is_media_filename(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.ends_with(".mp4")
-        || lower.ends_with(".mkv")
-        || lower.ends_with(".webm")
-        || lower.ends_with(".avi")
-        || lower.ends_with(".mov")
-        || lower.ends_with(".m4v")
-        || lower.ends_with(".flv")
-        || lower.ends_with(".wmv")
-        || lower.ends_with(".mp3")
-        || lower.ends_with(".flac")
-        || lower.ends_with(".ogg")
-        || lower.ends_with(".wav")
-        || lower.ends_with(".aac")
-        || lower.ends_with(".m4a")
+    let Some(dot_idx) = name.rfind('.') else {
+        return false;
+    };
+    let ext = &name[dot_idx + 1..];
+    ext.eq_ignore_ascii_case("mp4")
+        || ext.eq_ignore_ascii_case("mkv")
+        || ext.eq_ignore_ascii_case("webm")
+        || ext.eq_ignore_ascii_case("avi")
+        || ext.eq_ignore_ascii_case("mov")
+        || ext.eq_ignore_ascii_case("m4v")
+        || ext.eq_ignore_ascii_case("flv")
+        || ext.eq_ignore_ascii_case("wmv")
+        || ext.eq_ignore_ascii_case("mp3")
+        || ext.eq_ignore_ascii_case("flac")
+        || ext.eq_ignore_ascii_case("ogg")
+        || ext.eq_ignore_ascii_case("wav")
+        || ext.eq_ignore_ascii_case("aac")
+        || ext.eq_ignore_ascii_case("m4a")
 }
 
 /// Detects the MIME content type based on the file extension.
 pub fn detect_mime_type(name: &str) -> &'static str {
-    let lower = name.to_lowercase();
-    if lower.ends_with(".mp4") || lower.ends_with(".m4v") {
+    let Some(dot_idx) = name.rfind('.') else {
+        return "video/mp4";
+    };
+    let ext = &name[dot_idx + 1..];
+    if ext.eq_ignore_ascii_case("mp4") || ext.eq_ignore_ascii_case("m4v") {
         "video/mp4"
-    } else if lower.ends_with(".mkv") {
+    } else if ext.eq_ignore_ascii_case("mkv") {
         "video/x-matroska"
-    } else if lower.ends_with(".webm") {
+    } else if ext.eq_ignore_ascii_case("webm") {
         "video/webm"
-    } else if lower.ends_with(".avi") {
+    } else if ext.eq_ignore_ascii_case("avi") {
         "video/x-msvideo"
-    } else if lower.ends_with(".mov") {
+    } else if ext.eq_ignore_ascii_case("mov") {
         "video/quicktime"
-    } else if lower.ends_with(".mp3") {
+    } else if ext.eq_ignore_ascii_case("mp3") {
         "audio/mpeg"
-    } else if lower.ends_with(".flac") {
+    } else if ext.eq_ignore_ascii_case("flac") {
         "audio/flac"
-    } else if lower.ends_with(".ogg") {
+    } else if ext.eq_ignore_ascii_case("ogg") {
         "audio/ogg"
-    } else if lower.ends_with(".wav") {
+    } else if ext.eq_ignore_ascii_case("wav") {
         "audio/wav"
     } else {
         "video/mp4"

@@ -165,3 +165,18 @@ default_constructed_unit_structs = "allow"
 empty_line_after_outer_attr = "allow"
 empty_line_after_doc_comments = "allow"
 doc_markdown = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release-small]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

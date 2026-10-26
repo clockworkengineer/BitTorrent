@@ -120,6 +120,74 @@ pub enum PeerAction {
     DiscoverPeers(Vec<PeerDetails>),
 }
 
+/// Connection transport protocol for a remote BitTorrent peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ConnectionType {
+    #[default]
+    Tcp,
+    Utp,
+    WebRtc,
+}
+
+impl ConnectionType {
+    /// Returns the canonical protocol label string.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            ConnectionType::Tcp => "TCP",
+            ConnectionType::Utp => "uTP",
+            ConnectionType::WebRtc => "WebRTC",
+        }
+    }
+}
+
+impl core::fmt::Display for ConnectionType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for ConnectionType {
+    fn from(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("webrtc") {
+            ConnectionType::WebRtc
+        } else if s.eq_ignore_ascii_case("utp") {
+            ConnectionType::Utp
+        } else {
+            ConnectionType::Tcp
+        }
+    }
+}
+
+impl From<String> for ConnectionType {
+    fn from(s: String) -> Self {
+        Self::from(s.as_str())
+    }
+}
+
+impl PartialEq<&str> for ConnectionType {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str().eq_ignore_ascii_case(other)
+    }
+}
+
+impl PartialEq<ConnectionType> for &str {
+    fn eq(&self, other: &ConnectionType) -> bool {
+        other.as_str().eq_ignore_ascii_case(self)
+    }
+}
+
+impl PartialEq<str> for ConnectionType {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str().eq_ignore_ascii_case(other)
+    }
+}
+
+impl PartialEq<String> for ConnectionType {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str().eq_ignore_ascii_case(other.as_str())
+    }
+}
+
 /// Represents a remote peer connection, holding socket state, bitfield arrays, choking/interest flags, and latency stats.
 pub struct Peer {
     pub network: Option<PeerNetwork>,
@@ -153,21 +221,21 @@ pub struct Peer {
     pub allowed_fast_pieces: Vec<u32>,
     pub suggested_pieces: Vec<u32>,
     pub supports_holepunch: bool,
-    pub connection_type: String,
+    pub connection_type: ConnectionType,
 }
 
 impl Peer {
     /// Creates a new `Peer` representing a remote client connected via the provided socket.
     pub fn new_with_socket(ip: String, port: u16, socket: Arc<Socket>) -> Self {
         let connection_type = if ip.starts_with("webrtc:") {
-            "WebRTC".to_string()
+            ConnectionType::WebRtc
         } else {
             match socket.as_ref() {
                 #[cfg(feature = "utp")]
-                Socket::Utp(_) => "uTP".to_string(),
+                Socket::Utp(_) => ConnectionType::Utp,
                 #[cfg(feature = "webrtc")]
-                Socket::WebRtc(_) => "WebRTC".to_string(),
-                _ => "TCP".to_string(),
+                Socket::WebRtc(_) => ConnectionType::WebRtc,
+                _ => ConnectionType::Tcp,
             }
         };
 
@@ -212,7 +280,7 @@ impl Peer {
     pub fn new_webrtc(peer_id: &str, adapter: crate::network::webrtc::WebRtcSocketAdapter) -> Self {
         let socket = Arc::new(Socket::WebRtc(adapter));
         let mut p = Self::new_with_socket(format!("webrtc:{}", peer_id), 0, socket);
-        p.connection_type = "WebRTC".to_string();
+        p.connection_type = ConnectionType::WebRtc;
         p
     }
 

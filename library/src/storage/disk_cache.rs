@@ -179,8 +179,10 @@ impl CachedBlockStorage {
         state: &mut CacheState,
         range_filter: Option<(u64, u64)>,
     ) -> Result<(), BitTorrentError> {
-        // Collect dirty blocks that match optional range filter
-        let mut dirty_items: Vec<(u64, Vec<u8>)> = Vec::new();
+        // Coalesce contiguous dirty blocks directly in one pass (BTreeMap is already sorted by offset)
+        let mut chunks: Vec<(u64, Vec<u8>)> = Vec::new();
+        let mut flushed_offsets: Vec<u64> = Vec::new();
+
         for (&offset, block) in state.blocks.iter() {
             if !block.dirty {
                 continue;
@@ -191,28 +193,19 @@ impl CachedBlockStorage {
                     continue;
                 }
             }
-            dirty_items.push((offset, block.data.clone()));
-        }
-
-        if dirty_items.is_empty() {
-            return Ok(());
-        }
-
-        // Sort by offset ascending to facilitate sequential coalescing
-        dirty_items.sort_by_key(|(offset, _)| *offset);
-
-        // Coalesce contiguous blocks
-        let mut chunks: Vec<(u64, Vec<u8>)> = Vec::new();
-        for (offset, data) in dirty_items {
+            flushed_offsets.push(offset);
             if let Some((last_offset, last_data)) = chunks.last_mut() {
                 let last_end = *last_offset + last_data.len() as u64;
                 if offset == last_end {
-                    // Contiguous! Merge into the existing chunk
-                    last_data.extend_from_slice(&data);
+                    last_data.extend_from_slice(&block.data);
                     continue;
                 }
             }
-            chunks.push((offset, data));
+            chunks.push((offset, block.data.clone()));
+        }
+
+        if chunks.is_empty() {
+            return Ok(());
         }
 
         // Write each coalesced chunk to underlying storage
@@ -226,9 +219,8 @@ impl CachedBlockStorage {
 
         // Mark flushed blocks as clean in the cache
         let mut bytes_flushed_total = 0usize;
-        for (start_offset, coalesced_data) in chunks {
-            let chunk_end = start_offset + coalesced_data.len() as u64;
-            for (&_offset, block) in state.blocks.range_mut(start_offset..chunk_end) {
+        for offset in flushed_offsets {
+            if let Some(block) = state.blocks.get_mut(&offset) {
                 if block.dirty {
                     block.dirty = false;
                     bytes_flushed_total += block.data.len();

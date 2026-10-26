@@ -97,7 +97,7 @@ fn test_piece_availability_and_swarm_rarity() {
         allowed_fast_pieces: Vec::new(),
         suggested_pieces: Vec::new(),
         supports_holepunch: true,
-        connection_type: "TCP".to_string(),
+        connection_type: bittorrent_rs::ConnectionType::Tcp,
     }));
 
     // Peer 2 holds pieces 2, 3, 8, 9 (0b0011_0000, 0b1100_0000)
@@ -133,7 +133,7 @@ fn test_piece_availability_and_swarm_rarity() {
         allowed_fast_pieces: Vec::new(),
         suggested_pieces: Vec::new(),
         supports_holepunch: false,
-        connection_type: "WebRTC".to_string(),
+        connection_type: bittorrent_rs::ConnectionType::WebRtc,
     }));
 
     let mut swarm = HashMap::new();

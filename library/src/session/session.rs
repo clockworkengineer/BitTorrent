@@ -689,6 +689,34 @@ impl TorrentSession {
         }
     }
 
+    /// Returns a snapshot of statistics if the context lock is immediately available without blocking.
+    pub fn try_stats(&self) -> Option<SessionStats> {
+        let ctx = self.context.try_lock().ok()?;
+        let progress = ctx.progress_percent();
+        let status = ctx.status;
+        let bytes_downloaded = ctx
+            .total_bytes_downloaded
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let bytes_uploaded = ctx
+            .total_bytes_uploaded
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let bytes_left = ctx.bytes_left_to_download().unwrap_or(0);
+        let download_speed = ctx.current_download_bps() as f64;
+        let upload_speed = ctx.current_upload_bps() as f64;
+        let connected_peers = ctx.peer_swarm.read().ok().map(|s| s.len()).unwrap_or(0);
+
+        Some(SessionStats {
+            progress,
+            status,
+            bytes_downloaded,
+            bytes_uploaded,
+            bytes_left,
+            download_speed,
+            upload_speed,
+            connected_peers,
+        })
+    }
+
     /// Returns the local piece completion status and swarm-wide piece availability counts.
     pub fn piece_availability(&self) -> (Vec<bool>, Vec<u16>) {
         self.context.lock().unwrap().get_piece_availability()
