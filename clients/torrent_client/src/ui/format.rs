@@ -78,7 +78,13 @@ pub fn fmt_eta(remaining_bytes: u64, bps: u64) -> String {
 /// Opens the containing folder of a downloaded torrent in the native system file manager.
 #[cfg(windows)]
 pub fn open_containing_folder(path: &std::path::Path) {
-    let _ = std::process::Command::new("explorer").arg(path).spawn();
+    if path.is_file() {
+        let _ = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn();
+    } else {
+        let _ = std::process::Command::new("explorer").arg(path).spawn();
+    }
 }
 
 #[cfg(not(windows))]

@@ -417,9 +417,14 @@ impl TorrentContext {
                 TorrentStatus::Initialised
             },
             file_name: torrent_meta_info
-                .torrent_file_name
-                .to_string_lossy()
-                .to_string(),
+                .get_name()
+                .unwrap_or_else(|_| {
+                    torrent_meta_info
+                        .torrent_file_name
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| torrent_meta_info.torrent_file_name.to_string_lossy().to_string())
+                }),
             selector,
             storage,
             download_path: download_path.to_path_buf(),
@@ -607,12 +612,27 @@ impl TorrentContext {
 
         #[cfg(feature = "std")]
         {
-            self.file_name = meta_info.torrent_file_name.to_string_lossy().to_string();
+            if let Ok(name) = meta_info.get_name() {
+                if !name.trim().is_empty() {
+                    self.file_name = name;
+                }
+            } else if !meta_info.torrent_file_name.as_os_str().is_empty() {
+                self.file_name = meta_info
+                    .torrent_file_name
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| meta_info.torrent_file_name.to_string_lossy().to_string());
+            }
         }
 
         disk_io.create_torrent_bitfield(self)?;
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
         self.initial_bytes_downloaded = downloaded;
+
+        if self.is_download_complete() {
+            self.set_status(TorrentStatus::Seeding);
+            self.download_finished.set();
+        }
 
         let torrent_filename = format!(
             "{}.torrent",

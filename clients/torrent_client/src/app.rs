@@ -573,10 +573,30 @@ impl eframe::App for TorrentClientApp {
             // Display pending/loading sessions with a spinner or error state
             let mut delete_pending_indices = vec![];
             for (p_idx, pending) in self.pending_sessions.iter().enumerate() {
-                let name = std::path::Path::new(&pending.torrent_path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| pending.torrent_path.clone());
+                let name = if pending.torrent_path.starts_with("magnet:?") {
+                    if let Ok(mag) = bittorrent_rs::MagnetLink::parse(&pending.torrent_path) {
+                        mag.display_name.clone().unwrap_or_else(|| {
+                            let hex = bittorrent_rs::util::info_hash_to_string(&mag.info_hash);
+                            let short = if hex.len() >= 8 { &hex[..8] } else { &hex };
+                            format!("Magnet ({})", short)
+                        })
+                    } else {
+                        "Magnet Link".to_string()
+                    }
+                } else {
+                    let path = std::path::Path::new(&pending.torrent_path);
+                    if let Ok(meta) = bittorrent_rs::metainfo::MetaInfoFile::new(path) {
+                        meta.get_name().unwrap_or_else(|_| {
+                            path.file_stem()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_else(|| pending.torrent_path.clone())
+                        })
+                    } else {
+                        path.file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| pending.torrent_path.clone())
+                    }
+                };
 
                 ui.group(|ui| {
                     ui.horizontal(|ui| {

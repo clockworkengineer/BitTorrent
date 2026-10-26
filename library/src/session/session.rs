@@ -466,8 +466,7 @@ impl TorrentSession {
 
     /// Transitions the session status to `Downloading`, commencing active peer-based downloading.
     ///
-    /// # Errors
-    /// Returns a [`BitTorrentError::Parse`] if the torrent status is already `Seeding`.
+    /// If the session is already in `Seeding` mode, commences serving pieces without altering status.
     ///
     /// # Examples
     /// ```no_run
@@ -480,12 +479,9 @@ impl TorrentSession {
     pub fn start_download(&mut self) -> Result<(), BitTorrentError> {
         {
             let mut context = self.context.lock().unwrap();
-            if context.status == TorrentStatus::Seeding {
-                return Err(BitTorrentError::Parse(
-                    "Cannot start download while torrent is configured for seeding.".into(),
-                ));
+            if context.status != TorrentStatus::Seeding {
+                context.start_downloading()?;
             }
-            context.start_downloading()?;
         }
 
         let context = self.context.lock().unwrap();
@@ -644,6 +640,16 @@ impl TorrentSession {
         }
 
         Ok(())
+    }
+
+    /// Starts the session in seeding mode, serving verified local pieces to peers.
+    pub fn start_seeding(&mut self) -> Result<(), BitTorrentError> {
+        {
+            let mut context = self.context.lock().unwrap();
+            context.set_status(TorrentStatus::Seeding);
+            context.download_finished.set();
+        }
+        self.start_download()
     }
 
     /// Pauses the torrent download session.

@@ -359,6 +359,20 @@ pub fn get_config_path() -> std::path::PathBuf {
     }
 }
 
+/// Determines the directory where cached .torrent metadata files are stored.
+pub fn get_torrents_cache_dir() -> std::path::PathBuf {
+    if let Some(mut proj_dirs) = dirs::data_local_dir() {
+        proj_dirs.push("BitTorrent-rs");
+        proj_dirs.push("torrents");
+        let _ = std::fs::create_dir_all(&proj_dirs);
+        proj_dirs
+    } else {
+        let p = std::path::PathBuf::from("cached_torrents");
+        let _ = std::fs::create_dir_all(&p);
+        p
+    }
+}
+
 /// Loads the saved window geometry and placement from local storage, if present.
 pub fn load_saved_window_state() -> Option<WindowState> {
     let state_path = get_config_path();
@@ -432,6 +446,22 @@ impl TorrentClientApp {
         } else {
             None
         };
+
+        let cache_dir = get_torrents_cache_dir();
+        for s in &self.sessions {
+            if let Ok(ctx) = s.session.context().lock() {
+                if !ctx.pieces_info_hash.is_empty() {
+                    let hash_hex = bittorrent_rs::util::info_hash_to_string(&ctx.info_hash);
+                    let target_cache = cache_dir.join(format!("{}.torrent", hash_hex));
+                    if !target_cache.exists() {
+                        let candidate = ctx.download_path.join(format!("{}.torrent", hash_hex));
+                        if candidate.exists() {
+                            let _ = std::fs::copy(&candidate, &target_cache);
+                        }
+                    }
+                }
+            }
+        }
 
         let state = ClientState {
             download_dir: self.download_dir.clone(),
@@ -582,15 +612,81 @@ impl TorrentClientApp {
                 Arc::new(bittorrent_rs::RarestFirstSelector)
             };
 
-            let session_res = if torrent_path.starts_with("magnet:?") {
+            let cached_torrent = if torrent_path.starts_with("magnet:?") {
+                if let Ok(mag) = bittorrent_rs::MagnetLink::parse(&torrent_path) {
+                    let hash_hex = bittorrent_rs::util::info_hash_to_string(&mag.info_hash);
+                    let in_dl = download_dir_buf.join(format!("{}.torrent", hash_hex));
+                    let in_cache = get_torrents_cache_dir().join(format!("{}.torrent", hash_hex));
+                    if in_dl.exists() {
+                        Some(in_dl)
+                    } else if in_cache.exists() {
+                        Some(in_cache)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let is_completed = if let Some(ref hex_str) = bitfield_hex_clone {
+                if let Ok(bytes) = bittorrent_rs::util::from_hex(hex_str) {
+                    let check_torrent_file = cached_torrent.as_ref().unwrap_or(&torrent_path_buf);
+                    if let Ok(meta) = bittorrent_rs::metainfo::MetaInfoFile::new(check_torrent_file) {
+                        if let Ok(pieces) = meta.get_pieces_info_hash() {
+                            let num = pieces.len() / 20;
+                            num > 0
+                                && (0..num as u32).all(|p| {
+                                    let (b_idx, mask) =
+                                        bittorrent_rs::util::get_bitfield_index_and_mask(p);
+                                    b_idx < bytes.len() && (bytes[b_idx] & mask) != 0
+                                })
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let session_res = if let Some(ref tf) = cached_torrent {
+                let builder = TorrentSession::builder(tf, &download_dir_buf)
+                    .config(config)
+                    .selector(selector)
+                    .seeding(is_completed);
+                builder.build().map(|mut sess| {
+                    if let Ok(mag) = bittorrent_rs::MagnetLink::parse(&torrent_path) {
+                        if !mag.trackers.is_empty() {
+                            let ctx_arc = sess.context();
+                            let mut ctx = ctx_arc.lock().unwrap();
+                            for tr in mag.trackers {
+                                ctx.add_tracker_url(tr);
+                            }
+                        }
+                        if !mag.web_seeds.is_empty() {
+                            sess.inject_web_seeds(mag.web_seeds);
+                        }
+                    }
+                    sess
+                })
+            } else if torrent_path.starts_with("magnet:?") {
                 TorrentSession::from_magnet(&torrent_path, &download_dir_buf)
                     .config(config)
                     .selector(selector)
+                    .seeding(is_completed)
                     .build()
             } else {
                 TorrentSession::builder(&torrent_path_buf, &download_dir_buf)
                     .config(config)
                     .selector(selector)
+                    .seeding(is_completed)
                     .build()
             };
 
@@ -639,6 +735,17 @@ impl TorrentClientApp {
                         .store(downloaded, std::sync::atomic::Ordering::Relaxed);
                     ctx.missing_pieces_count = missing_count;
                     ctx.initial_bytes_downloaded = downloaded;
+                    if missing_count == 0 && downloaded > 0 {
+                        ctx.set_status(bittorrent_rs::TorrentStatus::Seeding);
+                        ctx.download_finished.set();
+                    }
+                }
+            }
+
+            if let Ok(mut ctx) = session.context.lock() {
+                if ctx.is_download_complete() {
+                    ctx.set_status(bittorrent_rs::TorrentStatus::Seeding);
+                    ctx.download_finished.set();
                 }
             }
 

@@ -84,7 +84,7 @@ impl TorrentClientApp {
                             let name_label =
                                 egui::RichText::new(format!("{} {}", icon, s.last_file_name))
                                     .strong();
-                            let name_resp = if is_selected {
+                            let mut name_resp = if is_selected {
                                 ui.selectable_label(true, name_label)
                             } else {
                                 ui.selectable_label(false, name_label)
@@ -93,6 +93,31 @@ impl TorrentClientApp {
                             if name_resp.clicked() {
                                 select_idx = Some(session_idx);
                             }
+
+                            name_resp = name_resp.on_hover_ui(|ui| {
+                                ui.strong(&s.last_file_name);
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new("Source:").weak());
+                                    ui.label(&s.torrent_path);
+                                });
+                                if let Ok(ctx) = s.session.context.lock() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("Save Path:").weak());
+                                        ui.label(ctx.download_path.to_string_lossy());
+                                    });
+                                    if !ctx.files_to_download.is_empty() {
+                                        ui.add_space(2.0);
+                                        ui.label(egui::RichText::new(format!("Content Files ({}):", ctx.files_to_download.len())).strong());
+                                        for f in ctx.files_to_download.iter().take(5) {
+                                            ui.label(format!("• {} ({})", f.torrent_path, fmt_bytes(f.length)));
+                                        }
+                                        if ctx.files_to_download.len() > 5 {
+                                            ui.label(egui::RichText::new(format!("... and {} more files (see 'Files' tab)", ctx.files_to_download.len() - 5)).weak());
+                                        }
+                                    }
+                                }
+                            });
 
                             // Context menu on row
                             name_resp.context_menu(|ui| {
@@ -166,6 +191,16 @@ impl TorrentClientApp {
                                     ui.close_menu();
                                 }
 
+                                if ui.button("📋 Copy Torrent Name").clicked() {
+                                    ui.output_mut(|o| o.copied_text = s.last_file_name.clone());
+                                    ui.close_menu();
+                                }
+
+                                if ui.button("📋 Copy Source Path / Magnet").clicked() {
+                                    ui.output_mut(|o| o.copied_text = s.torrent_path.clone());
+                                    ui.close_menu();
+                                }
+
                                 if ui.button("📋 Copy Magnet URL").clicked() {
                                     if let Ok(ctx) = s.session.context.lock() {
                                         let hex = bittorrent_rs::util::info_hash_to_string(
@@ -179,6 +214,26 @@ impl TorrentClientApp {
                                         ui.output_mut(|o| o.copied_text = mag);
                                     }
                                     ui.close_menu();
+                                }
+
+                                if let Ok(ctx) = s.session.context.lock() {
+                                    if !ctx.files_to_download.is_empty() {
+                                        let label = if ctx.files_to_download.len() == 1 {
+                                            "📋 Copy Content Filename"
+                                        } else {
+                                            "📋 Copy All Content Filenames"
+                                        };
+                                        if ui.button(label).clicked() {
+                                            let names = ctx
+                                                .files_to_download
+                                                .iter()
+                                                .map(|f| f.torrent_path.as_str())
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            ui.output_mut(|o| o.copied_text = names);
+                                            ui.close_menu();
+                                        }
+                                    }
                                 }
 
                                 ui.separator();
@@ -431,11 +486,149 @@ impl TorrentClientApp {
 
                                 let name_text =
                                     egui::RichText::new(&s.last_file_name).strong().size(14.0);
-                                let name_resp = ui.selectable_label(is_selected, name_text);
+                                let mut name_resp = ui.selectable_label(is_selected, name_text);
                                 if name_resp.clicked() {
                                     select_idx = Some(session_idx);
                                 }
-                                name_resp.on_hover_text(&s.last_file_name);
+                                name_resp = name_resp.on_hover_ui(|ui| {
+                                    ui.strong(&s.last_file_name);
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("Source:").weak());
+                                        ui.label(&s.torrent_path);
+                                    });
+                                    if let Ok(ctx) = s.session.context.lock() {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Save Path:").weak());
+                                            ui.label(ctx.download_path.to_string_lossy());
+                                        });
+                                        if !ctx.files_to_download.is_empty() {
+                                            ui.add_space(2.0);
+                                            ui.label(egui::RichText::new(format!("Content Files ({}):", ctx.files_to_download.len())).strong());
+                                            for f in ctx.files_to_download.iter().take(5) {
+                                                ui.label(format!("• {} ({})", f.torrent_path, fmt_bytes(f.length)));
+                                            }
+                                            if ctx.files_to_download.len() > 5 {
+                                                ui.label(egui::RichText::new(format!("... and {} more files (see 'Files' tab)", ctx.files_to_download.len() - 5)).weak());
+                                            }
+                                        }
+                                    }
+                                });
+
+                                name_resp.context_menu(|ui| {
+                                    let is_paused = s.last_status == "Paused";
+                                    let is_ended = s.last_status == "Ended";
+                                    if is_paused {
+                                        if ui
+                                            .add_enabled(!is_ended, egui::Button::new("▶ Resume"))
+                                            .clicked()
+                                        {
+                                            toggle_pause_idx = Some(session_idx);
+                                            ui.close_menu();
+                                        }
+                                    } else if ui
+                                        .add_enabled(!is_ended, egui::Button::new("⏸ Pause"))
+                                        .clicked()
+                                    {
+                                        toggle_pause_idx = Some(session_idx);
+                                        ui.close_menu();
+                                    }
+
+                                    let can_stream =
+                                        torrent_client_shared::is_media_filename(&s.last_file_name);
+                                    if ui
+                                        .add_enabled(can_stream, egui::Button::new("▶ Stream Media"))
+                                        .clicked()
+                                    {
+                                        stream_target = Some(session_idx);
+                                        ui.close_menu();
+                                    }
+
+                                    let can_recheck = s.last_status != "Ended";
+                                    if ui
+                                        .add_enabled(can_recheck, egui::Button::new("🔍 Force Recheck"))
+                                        .clicked()
+                                    {
+                                        recheck_target = Some(session_idx);
+                                        ui.close_menu();
+                                    }
+
+                                    ui.separator();
+
+                                    let folder_exists = s
+                                        .session
+                                        .context
+                                        .lock()
+                                        .map(|ctx| ctx.download_path.exists())
+                                        .unwrap_or(false);
+                                    if ui
+                                        .add_enabled(folder_exists, egui::Button::new("📁 Open Folder"))
+                                        .clicked()
+                                    {
+                                        if let Ok(ctx) = s.session.context.lock() {
+                                            explore_target = Some(ctx.download_path.clone());
+                                        }
+                                        ui.close_menu();
+                                    }
+
+                                    if ui.button("📋 Copy Torrent Name").clicked() {
+                                        ui.output_mut(|o| o.copied_text = s.last_file_name.clone());
+                                        ui.close_menu();
+                                    }
+
+                                    if ui.button("📋 Copy Source Path / Magnet").clicked() {
+                                        ui.output_mut(|o| o.copied_text = s.torrent_path.clone());
+                                        ui.close_menu();
+                                    }
+
+                                    if ui.button("📋 Copy Magnet URL").clicked() {
+                                        if let Ok(ctx) = s.session.context.lock() {
+                                            let hex = bittorrent_rs::util::info_hash_to_string(
+                                                &ctx.info_hash,
+                                            );
+                                            let mag = format!(
+                                                "magnet:?xt=urn:btih:{}&dn={}",
+                                                hex,
+                                                urlencoding_simple(&ctx.file_name)
+                                            );
+                                            ui.output_mut(|o| o.copied_text = mag);
+                                        }
+                                        ui.close_menu();
+                                    }
+
+                                    if let Ok(ctx) = s.session.context.lock() {
+                                        if !ctx.files_to_download.is_empty() {
+                                            let label = if ctx.files_to_download.len() == 1 {
+                                                "📋 Copy Content Filename"
+                                            } else {
+                                                "📋 Copy All Content Filenames"
+                                            };
+                                            if ui.button(label).clicked() {
+                                                let names = ctx
+                                                    .files_to_download
+                                                    .iter()
+                                                    .map(|f| f.torrent_path.as_str())
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n");
+                                                ui.output_mut(|o| o.copied_text = names);
+                                                ui.close_menu();
+                                            }
+                                        }
+                                    }
+
+                                    ui.separator();
+
+                                    if ui
+                                        .button(
+                                            egui::RichText::new("🗑 Delete Torrent")
+                                                .color(self.settings.theme.error_color()),
+                                        )
+                                        .clicked()
+                                    {
+                                        delete_target_idx = Some(session_idx);
+                                        ui.close_menu();
+                                    }
+                                });
 
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),

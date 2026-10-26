@@ -361,15 +361,65 @@ impl TorrentSessionBuilder {
                 }
                 sess
             }
-            TorrentSource::Magnet(link) => TorrentSession::new_magnet_with_options_internal(
-                link,
-                &self.download_path,
-                self.config,
-                self.selector,
-                self.web_seeds,
-                self.auto_inject_webtorrent,
-                self.selected_files,
-            )?,
+            TorrentSource::Magnet(link) => {
+                let cached_torrent = if let Ok(magnet) = crate::MagnetLink::parse(link) {
+                    let hash_hex = crate::util::info_hash_to_string(&magnet.info_hash);
+                    let candidate = self.download_path.join(format!("{}.torrent", hash_hex));
+                    if candidate.exists() {
+                        Some(candidate)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(torrent_file) = cached_torrent {
+                    let mut sess = TorrentSession::new_with_options_internal(
+                        &torrent_file,
+                        &self.download_path,
+                        self.seeding,
+                        self.config,
+                        self.selector,
+                        fast_resume,
+                    )?;
+                    if let Ok(magnet) = crate::MagnetLink::parse(link) {
+                        let mut ctx = sess.context.lock().unwrap();
+                        for tr in magnet.trackers {
+                            ctx.add_tracker_url(tr);
+                        }
+                        if let Some(ref dn) = magnet.display_name {
+                            if ctx.file_name.is_empty()
+                                || ctx.file_name.ends_with(".torrent")
+                                || ctx.file_name.starts_with("Magnet (")
+                            {
+                                ctx.file_name = dn.clone();
+                            }
+                        }
+                        drop(ctx);
+                        if !magnet.web_seeds.is_empty() {
+                            sess.inject_web_seeds(magnet.web_seeds);
+                        }
+                    }
+                    if !self.web_seeds.is_empty() {
+                        sess.inject_web_seeds(self.web_seeds);
+                    }
+                    if let Some(ref sel) = self.selected_files {
+                        sess.context.lock().unwrap().set_selected_files(sel);
+                    }
+                    sess
+                } else {
+                    TorrentSession::new_magnet_with_options_internal(
+                        link,
+                        &self.download_path,
+                        self.config,
+                        self.selector,
+                        self.web_seeds,
+                        self.auto_inject_webtorrent,
+                        self.selected_files,
+                    )?
+                }
+            }
         };
         session.manager = self.manager;
         Ok(session)

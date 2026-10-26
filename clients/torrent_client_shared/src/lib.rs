@@ -57,14 +57,60 @@ impl SessionState {
 
     /// Synchronizes the local session state fields with the underlying TorrentContext.
     pub fn update_fields(&mut self, ctx_guard: &TorrentContext) {
-        if self.last_file_name.is_empty()
-            || (!ctx_guard.file_name.is_empty()
-                && !ctx_guard.file_name.ends_with(&self.last_file_name))
-        {
-            self.last_file_name = std::path::Path::new(&ctx_guard.file_name)
+        let mut meaningful_name = String::new();
+        let raw = ctx_guard.file_name.trim();
+        let is_raw_hex = (raw.len() == 40 || (raw.len() == 48 && raw.ends_with(".torrent")))
+            && raw.chars().take(40).all(|c| c.is_ascii_hexdigit());
+
+        if !raw.is_empty() && !is_raw_hex && !raw.starts_with("Magnet (") {
+            let candidate = std::path::Path::new(raw)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| ctx_guard.file_name.clone());
+                .unwrap_or_else(|| raw.to_string());
+            meaningful_name = candidate;
+        }
+
+        if meaningful_name.is_empty() && self.torrent_path.starts_with("magnet:?") {
+            if let Ok(mag) = bittorrent_rs::MagnetLink::parse(&self.torrent_path) {
+                if let Some(ref dn) = mag.display_name {
+                    if !dn.trim().is_empty() {
+                        meaningful_name = dn.clone();
+                    }
+                }
+            }
+        }
+
+        if meaningful_name.is_empty() && !self.torrent_path.starts_with("magnet:?") {
+            let path = std::path::Path::new(&self.torrent_path);
+            if let Some(stem) = path.file_stem() {
+                let s = stem.to_string_lossy().to_string();
+                let is_stem_hex = s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit());
+                if !is_stem_hex && !s.is_empty() {
+                    meaningful_name = s;
+                }
+            }
+        }
+
+        if meaningful_name.is_empty() && ctx_guard.files_to_download.len() == 1 {
+            meaningful_name = ctx_guard.files_to_download[0].torrent_path.clone();
+        }
+
+        if meaningful_name.is_empty() {
+            if !raw.is_empty() {
+                meaningful_name = raw.to_string();
+            } else {
+                let hex = bittorrent_rs::util::info_hash_to_string(&ctx_guard.info_hash);
+                let short = if hex.len() >= 8 { &hex[..8] } else { &hex };
+                meaningful_name = format!("Magnet ({})", short);
+            }
+        }
+
+        if meaningful_name.ends_with(".torrent") && meaningful_name.len() > 8 {
+            meaningful_name = meaningful_name.strip_suffix(".torrent").unwrap().to_string();
+        }
+
+        if self.last_file_name != meaningful_name {
+            self.last_file_name = meaningful_name;
         }
         self.last_progress = ctx_guard.progress_percent() / 100.0;
         let status_str = match ctx_guard.status {

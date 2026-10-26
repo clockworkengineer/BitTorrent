@@ -398,20 +398,22 @@ pub async fn perform_handshake(
         peer_details.port
     );
 
-    if net.write_message(PeerMessage::Interested).await.is_err() {
-        mark_peer_dead(manager, &peer_details.ip);
-        return Err(());
+    if !is_seed {
+        if net.write_message(PeerMessage::Interested).await.is_err() {
+            mark_peer_dead(manager, &peer_details.ip);
+            return Err(());
+        }
+        {
+            let mut pg = peer.lock().unwrap();
+            pg.update_last_message_sent();
+            pg.am_interested = true;
+        }
+        log_debug!(
+            "[peer {}:{}] sent Interested",
+            peer_details.ip,
+            peer_details.port
+        );
     }
-    {
-        let mut pg = peer.lock().unwrap();
-        pg.update_last_message_sent();
-        pg.am_interested = true;
-    }
-    log_debug!(
-        "[peer {}:{}] sent Interested",
-        peer_details.ip,
-        peer_details.port
-    );
 
     Ok(HandshakeResult {
         peer,
@@ -910,11 +912,17 @@ async fn run_peer_loop(
                 }
             }
 
-            let _ = net.write_message(PeerMessage::Interested).await;
-            {
-                let mut pg = peer.lock().unwrap();
-                pg.am_interested = true;
-                pg.update_last_message_sent();
+            let is_seed = {
+                let ctx = context.lock().unwrap();
+                ctx.status == TorrentStatus::Seeding || ctx.is_download_complete()
+            };
+            if !is_seed {
+                let _ = net.write_message(PeerMessage::Interested).await;
+                {
+                    let mut pg = peer.lock().unwrap();
+                    pg.am_interested = true;
+                    pg.update_last_message_sent();
+                }
             }
         }
 
