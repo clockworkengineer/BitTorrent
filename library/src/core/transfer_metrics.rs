@@ -10,7 +10,7 @@ use std::time::Instant;
 pub struct TransferMetrics {
     pub total_bytes_downloaded: Arc<AtomicU64>,
     pub initial_bytes_downloaded: u64,
-    pub total_bytes_to_download: u64,
+    pub total_bytes_to_download: Arc<AtomicU64>,
     pub total_bytes_uploaded: Arc<AtomicU64>,
     pub download_speed_tracker: Arc<Mutex<(Instant, u64, i64)>>,
     pub upload_speed_tracker: Arc<Mutex<(Instant, u64, i64)>>,
@@ -23,13 +23,17 @@ impl TransferMetrics {
         TransferMetrics {
             total_bytes_downloaded: Arc::new(AtomicU64::new(0)),
             initial_bytes_downloaded: 0,
-            total_bytes_to_download,
+            total_bytes_to_download: Arc::new(AtomicU64::new(total_bytes_to_download)),
             total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
             download_speed_tracker: Arc::new(Mutex::new((Instant::now(), 0, 0))),
             upload_speed_tracker: Arc::new(Mutex::new((Instant::now(), 0, 0))),
             cached_download_bps: Arc::new(AtomicI64::new(0)),
             cached_upload_bps: Arc::new(AtomicI64::new(0)),
         }
+    }
+
+    pub fn set_total_bytes_to_download(&self, total: u64) {
+        self.total_bytes_to_download.store(total, Ordering::Release);
     }
 
     pub fn record_download(&self, bytes: u64) {
@@ -43,11 +47,12 @@ impl TransferMetrics {
     }
 
     pub fn progress_ppm(&self) -> u32 {
-        if self.total_bytes_to_download == 0 {
-            return 10000;
+        let total = self.total_bytes_to_download.load(Ordering::Relaxed);
+        if total == 0 {
+            return 0;
         }
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
-        let ppm = (downloaded * 10000) / self.total_bytes_to_download;
+        let ppm = (downloaded * 10000) / total;
         ppm.min(10000) as u32
     }
 
@@ -57,12 +62,16 @@ impl TransferMetrics {
 
     pub fn bytes_left_to_download(&self) -> Result<u64, crate::error::BitTorrentError> {
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
-        if self.total_bytes_to_download < downloaded {
+        let total = self.total_bytes_to_download.load(Ordering::Relaxed);
+        if total == 0 {
+            return Ok(0);
+        }
+        if total < downloaded {
             return Err(crate::error::BitTorrentError::Parse(
                 "Bytes left to download turned negative.".to_string(),
             ));
         }
-        Ok(self.total_bytes_to_download - downloaded)
+        Ok(total - downloaded)
     }
 
     pub fn bytes_per_second(&self) -> i64 {

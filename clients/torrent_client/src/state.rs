@@ -376,11 +376,14 @@ pub fn load_saved_window_state() -> Option<WindowState> {
 pub fn matches_filter(session: &SessionState, filter: SidebarFilter) -> bool {
     match filter {
         SidebarFilter::All => true,
-        SidebarFilter::Downloading => session.last_status == "Downloading",
+        SidebarFilter::Downloading => {
+            session.last_status == "Downloading" || session.last_status == "Fetching Metadata"
+        }
         SidebarFilter::Seeding => session.last_status == "Seeding",
         SidebarFilter::Paused => session.last_status == "Paused",
         SidebarFilter::Completed => {
-            session.last_progress >= 1.0 || session.last_status == "Seeding"
+            (session.last_progress >= 1.0 && session.last_total > 0)
+                || session.last_status == "Seeding"
         }
     }
 }

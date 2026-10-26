@@ -207,13 +207,48 @@ impl TorrentClientApp {
                                 String::new()
                             };
 
-                            let bar = egui::ProgressBar::new(prog)
-                                .text(format!("{:.1}%{}", prog * 100.0, eta_str))
-                                .animate(prog < 1.0 && s.last_status == "Downloading");
+                            let is_fetching_metadata = s.last_status == "Fetching Metadata";
+                            let is_searching_stalled = is_fetching_metadata
+                                && s.last_peers_connected == 0
+                                && s.created_at.elapsed() >= std::time::Duration::from_secs(30);
+
+                            let bar_text = if is_fetching_metadata {
+                                if s.last_peers_connected == 0 {
+                                    if is_searching_stalled {
+                                        "No seeders in swarm (searching DHT/trackers...)"
+                                            .to_string()
+                                    } else {
+                                        "Finding peers (DHT/trackers)...".to_string()
+                                    }
+                                } else {
+                                    format!(
+                                        "Fetching metadata ({} peer{})...",
+                                        s.last_peers_connected,
+                                        if s.last_peers_connected == 1 { "" } else { "s" }
+                                    )
+                                }
+                            } else {
+                                format!("{:.1}%{}", prog * 100.0, eta_str)
+                            };
+                            let bar = egui::ProgressBar::new(prog).text(bar_text).animate(
+                                is_fetching_metadata
+                                    || (prog < 1.0 && s.last_status == "Downloading"),
+                            );
                             ui.add_sized([160.0, 14.0], bar);
 
                             // Status badge
                             let (badge_color, status_text) = match s.last_status.as_str() {
+                                "Fetching Metadata" => {
+                                    if s.last_peers_connected == 0 {
+                                        if is_searching_stalled {
+                                            (self.settings.theme.warning_color(), "No Seeds")
+                                        } else {
+                                            (self.settings.theme.accent_color(), "Finding Peers")
+                                        }
+                                    } else {
+                                        (self.settings.theme.accent_color(), "Metadata")
+                                    }
+                                }
                                 "Downloading" => {
                                     (self.settings.theme.accent_color(), "Downloading")
                                 }
@@ -405,10 +440,35 @@ impl TorrentClientApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
+                                        let is_searching_stalled = s.last_status == "Fetching Metadata"
+                                            && s.last_peers_connected == 0
+                                            && s.created_at.elapsed()
+                                                >= std::time::Duration::from_secs(30);
+
                                         let (badge_color, status_text) = match s
                                             .last_status
                                             .as_str()
                                         {
+                                            "Fetching Metadata" => {
+                                                if s.last_peers_connected == 0 {
+                                                    if is_searching_stalled {
+                                                        (
+                                                            self.settings.theme.warning_color(),
+                                                            "No Seeds Available",
+                                                        )
+                                                    } else {
+                                                        (
+                                                            self.settings.theme.accent_color(),
+                                                            "Finding Peers",
+                                                        )
+                                                    }
+                                                } else {
+                                                    (
+                                                        self.settings.theme.accent_color(),
+                                                        "Fetching Metadata",
+                                                    )
+                                                }
+                                            }
                                             "Downloading" => {
                                                 (self.settings.theme.accent_color(), "Downloading")
                                             }
@@ -444,17 +504,39 @@ impl TorrentClientApp {
                                 String::new()
                             };
 
-                            let progress_text = format!(
-                                "{:.1}% ({}/{} downloaded{})",
-                                prog * 100.0,
-                                fmt_bytes(s.last_downloaded),
-                                fmt_bytes(s.last_total),
-                                eta_str
-                            );
+                            let is_fetching_metadata = s.last_status == "Fetching Metadata";
+                            let is_searching_stalled = is_fetching_metadata
+                                && s.last_peers_connected == 0
+                                && s.created_at.elapsed() >= std::time::Duration::from_secs(30);
 
-                            let bar = egui::ProgressBar::new(prog)
-                                .text(progress_text)
-                                .animate(prog < 1.0 && s.last_status == "Downloading");
+                            let progress_text = if is_fetching_metadata {
+                                if s.last_peers_connected == 0 {
+                                    if is_searching_stalled {
+                                        "Swarm inactive: 0 seeders found across DHT & trackers (waiting for peers...)".to_string()
+                                    } else {
+                                        "Searching DHT & trackers for peers sharing metadata...".to_string()
+                                    }
+                                } else {
+                                    format!(
+                                        "Fetching metadata from {} connected peer{}...",
+                                        s.last_peers_connected,
+                                        if s.last_peers_connected == 1 { "" } else { "s" }
+                                    )
+                                }
+                            } else {
+                                format!(
+                                    "{:.1}% ({}/{} downloaded{})",
+                                    prog * 100.0,
+                                    fmt_bytes(s.last_downloaded),
+                                    fmt_bytes(s.last_total),
+                                    eta_str
+                                )
+                            };
+
+                            let bar = egui::ProgressBar::new(prog).text(progress_text).animate(
+                                is_fetching_metadata
+                                    || (prog < 1.0 && s.last_status == "Downloading"),
+                            );
                             ui.add_sized([ui.available_width(), 18.0], bar);
 
                             ui.add_space(6.0);

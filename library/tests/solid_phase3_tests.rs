@@ -126,7 +126,7 @@ fn test_torrent_context_implements_transfer_stats_view() {
     .expect("Bootstrap succeeds");
     ctx.init_pieces(4, 16384);
     ctx.total_bytes_to_download = 65536;
-    ctx.transfer_metrics.total_bytes_to_download = 65536;
+    ctx.transfer_metrics.set_total_bytes_to_download(65536);
 
     let stats_view: &dyn TransferStatsView = &ctx;
     assert_eq!(stats_view.total_downloaded(), 0);

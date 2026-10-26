@@ -55,10 +55,11 @@ impl TorrentClientApp {
                     self.resume_all();
                 }
 
-                let has_active = self
-                    .sessions
-                    .iter()
-                    .any(|s| s.last_status == "Downloading" || s.last_status == "Seeding");
+                let has_active = self.sessions.iter().any(|s| {
+                    s.last_status == "Downloading"
+                        || s.last_status == "Fetching Metadata"
+                        || s.last_status == "Seeding"
+                });
                 if ui
                     .add_enabled(has_active, egui::Button::new("⏸ Pause All"))
                     .on_hover_text(if has_active {

@@ -222,6 +222,7 @@ pub struct Peer {
     pub suggested_pieces: Vec<u32>,
     pub supports_holepunch: bool,
     pub connection_type: ConnectionType,
+    pub peer_is_seed: bool,
 }
 
 impl Peer {
@@ -272,6 +273,7 @@ impl Peer {
             suggested_pieces: Vec::new(),
             supports_holepunch: false,
             connection_type,
+            peer_is_seed: false,
         }
     }
 
@@ -302,8 +304,13 @@ impl Peer {
 
     /// Initializes the peer bitfield without requiring a TorrentContext (DIP).
     pub fn init_bitfield(&mut self, number_of_pieces: usize, bitfield_len: usize) {
-        self.number_of_missing_pieces = number_of_pieces;
-        self.remote_piece_bitfield = vec![0u8; bitfield_len];
+        if self.peer_is_seed {
+            self.number_of_missing_pieces = 0;
+            self.remote_piece_bitfield = vec![0xFF; bitfield_len];
+        } else {
+            self.number_of_missing_pieces = number_of_pieces;
+            self.remote_piece_bitfield = vec![0u8; bitfield_len];
+        }
     }
 
     /// Links the peer to a specific `TorrentContext`, initializing the peer's remote bitfield capacity.
@@ -454,6 +461,9 @@ impl Peer {
 
     /// Checks if the remote peer's bitfield indicates they have the specified piece.
     pub fn is_piece_on_remote_peer(&self, piece_number: u32) -> bool {
+        if self.peer_is_seed {
+            return true;
+        }
         let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
         if byte_index < self.remote_piece_bitfield.len() {
             (self.remote_piece_bitfield[byte_index] & bit_mask) != 0
@@ -464,6 +474,9 @@ impl Peer {
 
     /// Checks if the remote peer has all pieces in the torrent (is a complete seed).
     pub fn is_seed(&self, total_pieces: usize) -> bool {
+        if self.peer_is_seed {
+            return true;
+        }
         if total_pieces == 0 {
             return false;
         }
@@ -472,11 +485,12 @@ impl Peer {
 
     /// Marks the specified piece as complete on the remote peer and updates missing piece counts.
     pub fn set_piece_on_remote_peer(&mut self, piece_number: u32) {
-        if !self.is_piece_on_remote_peer(piece_number) {
-            let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
-            if byte_index < self.remote_piece_bitfield.len() {
-                self.remote_piece_bitfield[byte_index] |= bit_mask;
-            }
+        let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);
+        if byte_index >= self.remote_piece_bitfield.len() {
+            self.remote_piece_bitfield.resize(byte_index + 1, 0);
+        }
+        if (self.remote_piece_bitfield[byte_index] & bit_mask) == 0 {
+            self.remote_piece_bitfield[byte_index] |= bit_mask;
             self.number_of_missing_pieces = self.number_of_missing_pieces.saturating_sub(1);
         }
     }
@@ -792,7 +806,7 @@ impl Peer {
             }
             PeerMessage::Extended { ext_id, payload } => {
                 if ext_id == 0 {
-                    if let Ok(bnode) = crate::bencode::Bencode::decode(payload) {
+                    if let Ok((bnode, _)) = crate::bencode::Bencode::decode_partial(payload) {
                         if let Some(m_node) = bnode.dict_get(b"m") {
                             if let crate::bencode::BNode::Dictionary(entries) = m_node {
                                 for (key_bytes, val_node) in entries {
@@ -813,18 +827,24 @@ impl Peer {
                                 }
                             }
                         }
-                        if let Some(crate::bencode::BNode::Number(num_bytes)) =
-                            bnode.dict_get(b"metadata_size")
-                        {
-                            if let Ok(num_str) = core::str::from_utf8(num_bytes) {
-                                if let Ok(size) = num_str.parse::<usize>() {
-                                    self.metadata_size = Some(size);
-                                    tc.metadata_size = Some(size);
-                                }
-                            }
+                        let meta_size = bnode
+                            .dict_get(b"metadata_size")
+                            .or_else(|| {
+                                bnode
+                                    .dict_get(b"m")
+                                    .and_then(|m| m.dict_get(b"metadata_size"))
+                            })
+                            .and_then(|n| n.as_number_bytes())
+                            .and_then(|b| core::str::from_utf8(b).ok())
+                            .and_then(|s| s.parse::<usize>().ok());
+                        if let Some(size) = meta_size {
+                            self.metadata_size = Some(size);
+                            tc.metadata_size = Some(size);
                         }
                     }
-                } else if ext_id == 1 {
+                } else if ext_id == 1
+                    || (ext_id != 0 && self.extension_ids.get("ut_metadata") == Some(&ext_id))
+                {
                     if let Ok((bnode, consumed)) = crate::bencode::Bencode::decode_partial(payload)
                     {
                         let msg_type = bnode
@@ -842,18 +862,40 @@ impl Peer {
                             Some(1) => {
                                 // Data
                                 if let Some(p) = piece {
-                                    let raw_data = &payload[consumed..];
-                                    tc.metadata_pieces.insert(p, raw_data.to_vec());
-                                    if let Some(crate::bencode::BNode::Number(num_bytes)) =
-                                        bnode.dict_get(b"total_size")
-                                    {
-                                        if let Ok(num_str) = core::str::from_utf8(num_bytes) {
-                                            if let Ok(size) = num_str.parse::<usize>() {
-                                                self.metadata_size = Some(size);
-                                                tc.metadata_size = Some(size);
-                                            }
-                                        }
+                                    let size_opt = bnode
+                                        .dict_get(b"total_size")
+                                        .or_else(|| bnode.dict_get(b"metadata_size"))
+                                        .and_then(|n| n.as_number_bytes())
+                                        .and_then(|b| core::str::from_utf8(b).ok())
+                                        .and_then(|s| s.parse::<usize>().ok());
+                                    if let Some(size) = size_opt {
+                                        self.metadata_size = Some(size);
+                                        tc.metadata_size = Some(size);
                                     }
+
+                                    let raw_data = &payload[consumed..];
+                                    let expected_len = if let Some(total) = tc.metadata_size {
+                                        let offset = p as usize * 16384;
+                                        if offset < total {
+                                            (total - offset).min(16384)
+                                        } else {
+                                            16384
+                                        }
+                                    } else {
+                                        16384
+                                    };
+                                    let piece_bytes = if raw_data.len() > expected_len {
+                                        &raw_data[..expected_len]
+                                    } else {
+                                        raw_data
+                                    };
+                                    tc.metadata_pieces.insert(p, piece_bytes.to_vec());
+                                }
+                            }
+                            Some(2) => {
+                                // Reject
+                                if let Some(p) = piece {
+                                    tc.requested_metadata_pieces.remove(&p);
                                 }
                             }
                             Some(0) => {
@@ -883,7 +925,7 @@ impl Peer {
                                 } else {
                                     if let Some(p) = piece {
                                         let header =
-                                            alloc::format!("d8:msg_typei2e5:piecei{}eee", p);
+                                            alloc::format!("d8:msg_typei2e5:piecei{}ee", p);
                                         actions.push(PeerAction::SendExtended {
                                             ext_id: *self
                                                 .extension_ids
@@ -1000,6 +1042,7 @@ impl Peer {
                 self.suggested_pieces.push(index);
             }
             PeerMessage::HaveAll => {
+                self.peer_is_seed = true;
                 if self.remote_piece_bitfield.len() != tc.bitfield.len() {
                     self.remote_piece_bitfield = vec![0xFF; tc.bitfield.len()];
                 } else {
@@ -1009,6 +1052,7 @@ impl Peer {
                 tc.merge_piece_bitfield(self);
             }
             PeerMessage::HaveNone => {
+                self.peer_is_seed = false;
                 if self.remote_piece_bitfield.len() != tc.bitfield.len() {
                     self.remote_piece_bitfield = vec![0x00; tc.bitfield.len()];
                 } else {

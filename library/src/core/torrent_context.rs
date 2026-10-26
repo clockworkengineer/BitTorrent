@@ -532,17 +532,27 @@ impl TorrentContext {
         info_dict_bytes: &[u8],
         download_path: &std::path::Path,
     ) -> Result<(), crate::error::BitTorrentError> {
-        let info_node = crate::bencode::Bencode::decode(info_dict_bytes)?;
+        let (info_node, _) = crate::bencode::Bencode::decode_partial(info_dict_bytes)?;
+
+        let tracker_str = if !self.tracker_url.is_empty() {
+            self.tracker_url.clone()
+        } else if let Some(first) = self.tracker_urls.first() {
+            first.clone()
+        } else {
+            "http://tracker.openbittorrent.com:80/announce".to_string()
+        };
 
         let mut root_entries = Vec::new();
         root_entries.push((
             b"announce".as_slice(),
-            crate::bencode::BNode::String(self.tracker_url.as_bytes()),
+            crate::bencode::BNode::String(tracker_str.as_bytes()),
         ));
         root_entries.push((b"info".as_slice(), info_node));
 
         let root_node = crate::bencode::BNode::Dictionary(root_entries);
         let torrent_bytes = crate::bencode::Bencode::encode(&root_node);
+
+        let _ = std::fs::create_dir_all(download_path);
 
         let mut meta_info = MetaInfoFile::from_bytes(&torrent_bytes);
         meta_info.parse()?;
@@ -591,6 +601,8 @@ impl TorrentContext {
         self.piece_data = piece_data;
         self.files_to_download = all_files_to_download;
         self.total_bytes_to_download = total_download_length;
+        self.transfer_metrics
+            .set_total_bytes_to_download(total_download_length);
         self.storage = storage;
 
         #[cfg(feature = "std")]
@@ -638,6 +650,21 @@ impl TorrentContext {
                         piece_index,
                     });
                 }
+            }
+        }
+
+        // Re-synchronize bitfields of already-connected peers now that number of pieces is established
+        let peers: Vec<Arc<Mutex<Peer>>> = if let Ok(swarm) = self.peer_swarm.read() {
+            swarm.values().cloned().collect()
+        } else {
+            Vec::new()
+        };
+        for peer_arc in peers {
+            if let Ok(mut peer_guard) = peer_arc.lock() {
+                if peer_guard.remote_piece_bitfield.len() != self.bitfield.len() {
+                    peer_guard.init_bitfield(self.number_of_pieces, self.bitfield.len());
+                }
+                self.merge_piece_bitfield(&peer_guard);
             }
         }
 
@@ -767,10 +794,12 @@ impl TorrentContext {
         let total = if self.total_bytes_to_download > 0 {
             self.total_bytes_to_download
         } else {
-            self.transfer_metrics.total_bytes_to_download
+            self.transfer_metrics
+                .total_bytes_to_download
+                .load(Ordering::Relaxed)
         };
         if total == 0 {
-            return 10000;
+            return 0;
         }
         let downloaded = self.total_bytes_downloaded.load(Ordering::Relaxed);
         let ppm = (downloaded * 10000) / total;
@@ -1427,7 +1456,10 @@ impl TorrentContext {
             pieces.sort_by_key(|&piece| {
                 (
                     std::cmp::Reverse(self.get_piece_priority(piece)),
-                    self.piece_data[piece as usize].peer_count,
+                    self.piece_data
+                        .get(piece as usize)
+                        .map(|p| p.peer_count)
+                        .unwrap_or(0),
                     piece,
                 )
             });
@@ -1517,7 +1549,10 @@ impl TorrentContext {
                 .min_by_key(|&(piece, _)| {
                     (
                         std::cmp::Reverse(self.get_piece_priority(piece)),
-                        self.piece_data[piece as usize].peer_count,
+                        self.piece_data
+                            .get(piece as usize)
+                            .map(|p| p.peer_count)
+                            .unwrap_or(0),
                         piece,
                     )
                 });
@@ -1575,7 +1610,10 @@ impl TorrentContext {
             .min_by_key(|&(piece, _)| {
                 (
                     std::cmp::Reverse(self.get_piece_priority(piece)),
-                    self.piece_data[piece as usize].peer_count,
+                    self.piece_data
+                        .get(piece as usize)
+                        .map(|p| p.peer_count)
+                        .unwrap_or(0),
                     piece,
                 )
             });
@@ -1591,21 +1629,32 @@ impl TorrentContext {
 
     /// Increments the local peer availability count for a given piece.
     pub fn increment_peer_count(&mut self, piece_number: u32) {
-        self.piece_data[piece_number as usize].peer_count += 1;
-        let new_count = self.piece_data[piece_number as usize].peer_count;
-        self.piece_priority_queue.lock().unwrap().push(PieceRarity {
-            peer_count: new_count,
-            piece_index: piece_number,
-        });
+        if let Some(info) = self.piece_data.get_mut(piece_number as usize) {
+            info.peer_count += 1;
+            let new_count = info.peer_count;
+            if let Ok(mut pq) = self.piece_priority_queue.lock() {
+                pq.push(PieceRarity {
+                    peer_count: new_count,
+                    piece_index: piece_number,
+                });
+            }
+        }
     }
 
     /// Walks piece availability vectors to identify the next missing piece starting search from `start_piece`.
     pub fn find_next_missing_piece(&self, start_piece: u32) -> (bool, u32) {
+        if self.number_of_pieces == 0 || self.piece_data.is_empty() {
+            return (false, 0);
+        }
         let mut current_piece = start_piece;
         loop {
             if self.is_piece_missing(current_piece)
                 && self.is_piece_wanted(current_piece)
-                && self.piece_data[current_piece as usize].peer_count > 0
+                && self
+                    .piece_data
+                    .get(current_piece as usize)
+                    .map(|p| p.peer_count > 0)
+                    .unwrap_or(false)
             {
                 return (true, current_piece);
             }
@@ -1614,6 +1663,7 @@ impl TorrentContext {
                 break;
             }
         }
+
         (false, current_piece)
     }
 

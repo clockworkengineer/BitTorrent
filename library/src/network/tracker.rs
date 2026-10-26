@@ -334,10 +334,12 @@ impl Tracker {
 
     /// Computes bytes remaining to download in the torrent.
     pub fn left(&self) -> u64 {
-        let downloaded = self
-            .total_bytes_downloaded
-            .load(std::sync::atomic::Ordering::Relaxed);
-        self.total_bytes_to_download.saturating_sub(downloaded)
+        let guard = self.tc.lock().unwrap();
+        if guard.is_download_complete() {
+            0
+        } else {
+            guard.bytes_left_to_download().unwrap_or(1).max(1)
+        }
     }
 
     /// Constructs the parameters object needed to make an announce request.
@@ -544,7 +546,7 @@ impl Tracker {
         if self.tracker_status == TrackerStatus::Running {
             return Err(BitTorrentError::Parse("Tracker is already running".into()));
         }
-        if self.tc.lock().unwrap().bytes_left_to_download()? == 0 {
+        if self.tc.lock().unwrap().is_download_complete() {
             self.announce_completed()
         } else {
             self.announce_started()

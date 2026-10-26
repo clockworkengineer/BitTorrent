@@ -28,6 +28,7 @@ pub struct SessionState {
     pub last_total: u64,
     pub last_uploaded: u64,
     pub last_peer_seen_time: Option<std::time::Instant>,
+    pub created_at: std::time::Instant,
 }
 
 impl SessionState {
@@ -46,6 +47,7 @@ impl SessionState {
             last_total: 0,
             last_uploaded: 0,
             last_peer_seen_time: None,
+            created_at: std::time::Instant::now(),
         };
         if let Ok(ctx_guard) = state.session.context().lock() {
             state.update_fields(&ctx_guard);
@@ -67,7 +69,13 @@ impl SessionState {
         self.last_progress = ctx_guard.progress_percent() / 100.0;
         let status_str = match ctx_guard.status {
             bittorrent_rs::TorrentStatus::Initialised => "Initialised",
-            bittorrent_rs::TorrentStatus::Downloading => "Downloading",
+            bittorrent_rs::TorrentStatus::Downloading => {
+                if ctx_guard.pieces_info_hash.is_empty() {
+                    "Fetching Metadata"
+                } else {
+                    "Downloading"
+                }
+            }
             bittorrent_rs::TorrentStatus::Seeding => "Seeding",
             bittorrent_rs::TorrentStatus::Paused => "Paused",
             bittorrent_rs::TorrentStatus::Ended => "Ended",

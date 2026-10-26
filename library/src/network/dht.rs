@@ -443,6 +443,42 @@ impl Dht {
                                         }
                                     }
                                 } else if y == b"r" {
+                                    // Parse nodes from any incoming response to learn active DHT nodes
+                                    if let Some(r_node) = bnode.dict_get(b"r") {
+                                        if let Some(s_id) =
+                                            r_node.dict_get(b"id").and_then(|n| n.as_string())
+                                        {
+                                            if s_id.len() == 20 {
+                                                let mut id = [0u8; 20];
+                                                id.copy_from_slice(s_id);
+                                                routing_table.lock().unwrap().add_node(DhtNode {
+                                                    id,
+                                                    ip: src_addr.ip().to_string(),
+                                                    port: src_addr.port(),
+                                                });
+                                            }
+                                        }
+                                        if let Some(nodes_bytes) =
+                                            r_node.dict_get(b"nodes").and_then(|n| n.as_string())
+                                        {
+                                            let nodes = parse_compact_nodes_slice(nodes_bytes);
+                                            let mut rt = routing_table.lock().unwrap();
+                                            for node in nodes {
+                                                rt.add_node(node);
+                                            }
+                                        }
+                                        if let Some(nodes6_bytes) =
+                                            r_node.dict_get(b"nodes6").and_then(|n| n.as_string())
+                                        {
+                                            let nodes6 =
+                                                parse_compact_ipv6_nodes_slice(nodes6_bytes);
+                                            let mut rt = routing_table.lock().unwrap();
+                                            for node in nodes6 {
+                                                rt.add_node(node);
+                                            }
+                                        }
+                                    }
+
                                     // Match incoming response to outstanding query
                                     let mut queries = outstanding_queries.lock().unwrap();
                                     if let Some(sender) = queries.remove(t) {
@@ -452,11 +488,18 @@ impl Dht {
                             }
                         }
                     }
-                    Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                        // Periodic socket check
+                    Err(ref err)
+                        if err.kind() == std::io::ErrorKind::WouldBlock
+                            || err.kind() == std::io::ErrorKind::TimedOut
+                            || err.kind() == std::io::ErrorKind::ConnectionReset
+                            || err.raw_os_error() == Some(10054) =>
+                    {
+                        // Periodic socket check or Windows WSAECONNRESET (10054) on ICMP unreachable
                     }
                     Err(_) => {
-                        break;
+                        if !*running.lock().unwrap() {
+                            break;
+                        }
                     }
                 }
             }
@@ -476,6 +519,7 @@ impl Dht {
             "router.bittorrent.com:6881",
             "router.utorrent.com:6881",
             "dht.transmissionbt.com:6881",
+            "dht.libtorrent.org:25401",
         ];
 
         let local_id = self.node_id;
@@ -525,10 +569,11 @@ impl Dht {
             let mut queried = Vec::new();
             let mut candidates = routing_table.lock().unwrap().closest_nodes(&info_hash, 8);
 
-            if candidates.is_empty() {
-                // If table is empty, wait for bootstrapping to find nodes
+            let mut retries = 0;
+            while candidates.is_empty() && retries < 10 {
                 thread::sleep(Duration::from_millis(500));
                 candidates = routing_table.lock().unwrap().closest_nodes(&info_hash, 8);
+                retries += 1;
             }
 
             let mut count = 0;
@@ -622,8 +667,8 @@ impl Dht {
                             }
 
                             // 2. Check closer nodes
-                            let nodes = r_node.dict_get(b"nodes");
-                            if let Some(BNode::String(nodes_bytes)) = nodes {
+                            let nodes = r_node.dict_get(b"nodes").and_then(|n| n.as_string());
+                            if let Some(nodes_bytes) = nodes {
                                 let closer = parse_compact_nodes_slice(nodes_bytes);
                                 for c_node in closer {
                                     if !queried.contains(&c_node.id)
@@ -635,8 +680,8 @@ impl Dht {
                             }
 
                             // 3. Check closer IPv6 nodes (BEP 32)
-                            let nodes6 = r_node.dict_get(b"nodes6");
-                            if let Some(BNode::String(nodes6_bytes)) = nodes6 {
+                            let nodes6 = r_node.dict_get(b"nodes6").and_then(|n| n.as_string());
+                            if let Some(nodes6_bytes) = nodes6 {
                                 let closer6 = parse_compact_ipv6_nodes_slice(nodes6_bytes);
                                 for c_node in closer6 {
                                     if !queried.contains(&c_node.id)
@@ -649,6 +694,7 @@ impl Dht {
                         }
                     }
                 }
+                outstanding_queries.lock().unwrap().remove(&tid);
             }
         });
     }

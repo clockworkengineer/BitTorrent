@@ -399,3 +399,58 @@ fn test_session_builder_and_runtime_bep53_selection() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_magnet_metadata_transition_end_to_end() {
+    use bittorrent_rs::bencode::{BNode, Bencode};
+    use bittorrent_rs::core::torrent_context::TorrentContext;
+    use sha1::{Digest, Sha1};
+
+    let temp_dir = std::env::temp_dir().join(format!("bt_meta_test_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    // Create a mock info dictionary
+    let mut info_entries = Vec::new();
+    let piece_length_str = "16384".to_string();
+    info_entries.push((
+        b"piece length".as_slice(),
+        BNode::Number(piece_length_str.as_bytes()),
+    ));
+    let dummy_hash = [0xabu8; 20];
+    info_entries.push((b"pieces".as_slice(), BNode::String(&dummy_hash)));
+    info_entries.push((b"name".as_slice(), BNode::String(b"test_payload.bin")));
+    let length_str = "16384".to_string();
+    info_entries.push((b"length".as_slice(), BNode::Number(length_str.as_bytes())));
+
+    let info_node = BNode::Dictionary(info_entries);
+    let info_dict_bytes = Bencode::encode(&info_node);
+
+    let mut hasher = Sha1::new();
+    hasher.update(&info_dict_bytes);
+    let info_hash = hasher.finalize().to_vec();
+
+    let mut ctx = TorrentContext::new_magnet_bootstrap(
+        info_hash.clone(),
+        vec!["http://tracker.example.com:80/announce".to_string()],
+        std::sync::Arc::new(RarestFirstSelector),
+        &temp_dir,
+        SessionConfig::default(),
+    )
+    .expect("Create magnet bootstrap context");
+
+    assert!(ctx.pieces_info_hash.is_empty());
+    assert_eq!(ctx.number_of_pieces, 0);
+
+    // Call transition_from_metadata
+    ctx.transition_from_metadata(&info_dict_bytes, &temp_dir)
+        .expect("Transition from metadata");
+
+    assert!(!ctx.pieces_info_hash.is_empty());
+    assert_eq!(ctx.number_of_pieces, 1);
+    assert_eq!(ctx.piece_length, 16384);
+    assert_eq!(ctx.total_bytes_to_download, 16384);
+    assert_eq!(ctx.files_to_download.len(), 1);
+    assert_eq!(ctx.files_to_download[0].length, 16384);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

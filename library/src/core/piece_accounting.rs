@@ -63,11 +63,19 @@ impl TorrentContext {
     }
 
     pub(crate) fn update_piece_peer_counts(&mut self, remote_peer: &Peer, increment: bool) {
+        if self.piece_data.is_empty() || self.number_of_pieces == 0 {
+            return;
+        }
         let mut piece_number = 0u32;
-        let mut pq = self.piece_priority_queue.lock().unwrap();
+        let mut pq = match self.piece_priority_queue.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
         for byte in &remote_peer.remote_piece_bitfield {
             for bit in &[0x80u8, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01] {
-                if piece_number as usize >= self.number_of_pieces {
+                if (piece_number as usize) >= self.number_of_pieces
+                    || (piece_number as usize) >= self.piece_data.len()
+                {
                     return;
                 }
                 if byte & bit != 0 {
@@ -100,24 +108,29 @@ impl TorrentContext {
 
     /// Returns the length of the specified piece.
     pub fn get_piece_length(&self, piece_number: u32) -> u32 {
-        self.piece_data[piece_number as usize].piece_length
+        self.piece_data
+            .get(piece_number as usize)
+            .map(|p| p.piece_length)
+            .unwrap_or(self.piece_length)
     }
 
     /// Returns the number of peers that have announced possession of the specified piece.
     pub fn get_piece_peer_count(&self, piece_number: u32) -> usize {
-        self.piece_data[piece_number as usize].peer_count
+        self.piece_data
+            .get(piece_number as usize)
+            .map(|p| p.peer_count)
+            .unwrap_or(0)
     }
 
     /// Sets the byte length for a given piece index.
     ///
     /// If `piece_length` is larger than the torrent's standard piece length, the call is
     /// ignored and an error is logged — the piece length is left unchanged.
-    ///
-    /// # Panics
-    /// Panics if `piece_number` is out of bounds (greater than or equal to the total number of pieces).
     pub fn set_piece_length(&mut self, piece_number: u32, piece_length: u32) {
         if piece_length <= self.piece_length {
-            self.piece_data[piece_number as usize].piece_length = piece_length;
+            if let Some(p) = self.piece_data.get_mut(piece_number as usize) {
+                p.piece_length = piece_length;
+            }
         } else {
             crate::log_debug!(
                 "[context] set_piece_length: piece {} length {} exceeds torrent max {}; ignoring",
@@ -198,8 +211,13 @@ impl TorrentContext {
         let total = if self.total_bytes_to_download > 0 {
             self.total_bytes_to_download
         } else {
-            self.transfer_metrics.total_bytes_to_download
+            self.transfer_metrics
+                .total_bytes_to_download
+                .load(Ordering::Relaxed)
         };
+        if total == 0 {
+            return Ok(0);
+        }
         if total < downloaded {
             return Err(crate::error::BitTorrentError::Parse(
                 "Bytes left to download turned negative.".to_string(),
@@ -422,11 +440,8 @@ impl TorrentContext {
 
     /// Checks if the session download is complete (all wanted pieces downloaded).
     pub fn is_download_complete(&self) -> bool {
-        if self.number_of_pieces == 0 {
+        if self.number_of_pieces == 0 || self.total_bytes_to_download == 0 {
             return false;
-        }
-        if self.bytes_left_to_download().unwrap_or(1) == 0 {
-            return true;
         }
         let mut any_wanted = false;
         for piece in 0..self.number_of_pieces as u32 {

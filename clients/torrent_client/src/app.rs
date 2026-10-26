@@ -478,7 +478,10 @@ impl eframe::App for TorrentClientApp {
         let mut total_up_bps = 0u64;
         let mut active_count = 0;
         for s in &self.sessions {
-            if s.last_status == "Downloading" || s.last_status == "Seeding" {
+            if s.last_status == "Downloading"
+                || s.last_status == "Fetching Metadata"
+                || s.last_status == "Seeding"
+            {
                 active_count += 1;
             }
             total_down_bps += s.last_bps;

@@ -262,13 +262,37 @@ impl TorrentSession {
             magnet.add_web_seed(ws);
         }
 
+        let mut trackers = magnet.trackers.clone();
+        if trackers.is_empty() {
+            trackers.push("udp://tracker.opentrackr.org:1337/announce".to_string());
+            trackers.push("udp://open.stealth.si:80/announce".to_string());
+            trackers.push("udp://tracker.torrent.eu.org:451/announce".to_string());
+            trackers.push("http://tracker.openbittorrent.com:80/announce".to_string());
+            trackers.push("udp://explodie.org:6969/announce".to_string());
+        }
+
         let context = Arc::new(Mutex::new(TorrentContext::new_magnet_bootstrap(
             magnet.info_hash.clone(),
-            magnet.trackers.clone(),
+            trackers,
             selector,
             &download_path,
             config.clone(),
         )?));
+
+        {
+            let mut ctx = context.lock().unwrap();
+            if let Some(ref name) = magnet.display_name {
+                ctx.file_name = name.clone();
+            } else {
+                let hash_hex = crate::util::info_hash_to_string(&magnet.info_hash);
+                let short_hash = if hash_hex.len() >= 8 {
+                    &hash_hex[..8]
+                } else {
+                    &hash_hex
+                };
+                ctx.file_name = format!("Magnet ({})", short_hash);
+            }
+        }
 
         // Inject WebSeeds and WebTorrent WebSocket trackers
         crate::network::webtorrent_injector::WebTorrentMagnetInjector::inject_into_shared_context(
@@ -524,20 +548,51 @@ impl TorrentSession {
         #[cfg(feature = "dht")]
         {
             let is_private = self.context.lock().unwrap().is_private;
-            if config.dht_enabled && self.dht.is_none() && !is_private {
-                if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
-                    let _ = d.start();
-                    d.bootstrap();
-
-                    let d_arc = Arc::new(d);
-                    self.dht = Some(d_arc.clone());
-
-                    let mut ih = [0u8; 20];
-                    if info_hash.len() == 20 {
-                        ih.copy_from_slice(&info_hash);
+            if config.dht_enabled && !is_private {
+                if self.dht.is_none() {
+                    if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
+                        let _ = d.start();
+                        d.bootstrap();
+                        self.dht = Some(Arc::new(d));
                     }
+                }
 
-                    d_arc.lookup_peers(ih, peer_tx.clone());
+                if let Some(d_arc) = self.dht.clone() {
+                    let mut ih = [0u8; 20];
+                    if info_hash.len() >= 20 {
+                        ih.copy_from_slice(&info_hash[..20]);
+                    }
+                    let peer_tx_clone = peer_tx.clone();
+                    let context_clone = self.context.clone();
+                    thread::spawn(move || {
+                        loop {
+                            if d_arc
+                                .routing_table
+                                .lock()
+                                .unwrap()
+                                .closest_nodes(&ih, 1)
+                                .is_empty()
+                            {
+                                d_arc.bootstrap();
+                            }
+                            d_arc.lookup_peers(ih, peer_tx_clone.clone());
+                            for _ in 0..20 {
+                                std::thread::sleep(Duration::from_secs(1));
+                                let status = {
+                                    if let Ok(ctx) = context_clone.try_lock() {
+                                        ctx.status
+                                    } else {
+                                        TorrentStatus::Downloading
+                                    }
+                                };
+                                if status == TorrentStatus::Ended
+                                    || status == TorrentStatus::Seeding
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -580,12 +635,13 @@ impl TorrentSession {
         }
 
         // Wire tracker automatically
-        let mut tracker = Tracker::new(self.context.clone())?;
-        tracker.set_peer_swarm_queue(peer_tx);
-        if let Some(ref mgr) = self.manager {
-            tracker.set_peer_manager(mgr.clone());
+        if let Ok(mut tracker) = Tracker::new(self.context.clone()) {
+            tracker.set_peer_swarm_queue(peer_tx);
+            if let Some(ref mgr) = self.manager {
+                tracker.set_peer_manager(mgr.clone());
+            }
+            let _ = self.start_reannounce_loop(tracker);
         }
-        let _ = self.start_reannounce_loop(tracker);
 
         Ok(())
     }
@@ -1105,7 +1161,7 @@ impl TorrentSession {
         let peer_workers = self.peer_workers.clone();
         let manager = self.manager.clone();
 
-        let _ = self.task_tx.send(Box::pin(async move {
+        thread::spawn(move || {
             let _ = tracker.start_announcing();
             let mut announced_completed = false;
             loop {
@@ -1113,7 +1169,18 @@ impl TorrentSession {
                     let ctx = context.lock().unwrap();
                     ctx.config.min_reannounce_interval
                 };
-                let interval = tracker.interval.max(min_reannounce as usize);
+                let has_peers = context
+                    .lock()
+                    .unwrap()
+                    .peer_swarm
+                    .read()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false);
+                let interval = if !has_peers {
+                    10
+                } else {
+                    tracker.interval.max(min_reannounce as usize)
+                };
                 let start_time = std::time::Instant::now();
                 let duration = Duration::from_secs(interval as u64);
                 let mut ended = false;
@@ -1122,7 +1189,7 @@ impl TorrentSession {
                         ended = true;
                         break;
                     }
-                    self::worker::delay(Duration::from_millis(100)).await;
+                    std::thread::sleep(Duration::from_millis(100));
                 }
                 if ended {
                     break;
@@ -1166,9 +1233,7 @@ impl TorrentSession {
 
             // Send stopped when the session ends.
             let _ = tracker.announce_stopped();
-        }));
-
-        thread::spawn(|| {})
+        })
     }
 }
 

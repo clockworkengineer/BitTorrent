@@ -1009,7 +1009,9 @@ impl MetaInfoFile {
         #[cfg(feature = "std")]
         {
             let tracker = self.get_tracker()?;
-            url::Url::parse(&tracker).map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+            if !tracker.is_empty() {
+                url::Url::parse(&tracker).map_err(|err| BitTorrentError::Parse(err.to_string()))?;
+            }
 
             let files = self.local_files_to_download_list(Path::new("."))?.1;
             if files.is_empty() {
@@ -1022,7 +1024,8 @@ impl MetaInfoFile {
         #[cfg(not(feature = "std"))]
         {
             let tracker = self.get_tracker()?;
-            if !tracker.starts_with("http://")
+            if !tracker.is_empty()
+                && !tracker.starts_with("http://")
                 && !tracker.starts_with("https://")
                 && !tracker.starts_with("udp://")
             {

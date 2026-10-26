@@ -402,7 +402,11 @@ pub async fn perform_handshake(
         mark_peer_dead(manager, &peer_details.ip);
         return Err(());
     }
-    peer.lock().unwrap().update_last_message_sent();
+    {
+        let mut pg = peer.lock().unwrap();
+        pg.update_last_message_sent();
+        pg.am_interested = true;
+    }
     log_debug!(
         "[peer {}:{}] sent Interested",
         peer_details.ip,
@@ -476,6 +480,21 @@ pub async fn handle_magnet_bootstrap(
                         }
                     }
                     target_piece
+                } else if !ctx.metadata_pieces.contains_key(&0) {
+                    // Unknown metadata size: unconditionally request piece 0 to obtain total_size from peer's reply
+                    let timeout =
+                        Duration::from_secs(ctx.config.metadata_request_timeout_secs.max(1));
+                    let is_requested = ctx
+                        .requested_metadata_pieces
+                        .get(&0)
+                        .map(|t| t.elapsed() < timeout)
+                        .unwrap_or(false);
+                    if !is_requested {
+                        ctx.requested_metadata_pieces.insert(0, Instant::now());
+                        Some((0, peer_ext_id))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -515,11 +534,21 @@ pub async fn handle_magnet_bootstrap(
                         assembled.extend_from_slice(chunk);
                     }
                 }
-                use sha1::Digest;
-                let mut hasher = sha1::Sha1::new();
-                hasher.update(&assembled);
-                let hash = hasher.finalize().to_vec();
-                if hash == info_hash {
+                if assembled.len() > size {
+                    assembled.truncate(size);
+                }
+                let matches_hash = if info_hash.len() == 32 {
+                    use sha2::Digest;
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(&assembled);
+                    hasher.finalize().as_slice() == info_hash.as_slice()
+                } else {
+                    use sha1::Digest;
+                    let mut hasher = sha1::Sha1::new();
+                    hasher.update(&assembled);
+                    hasher.finalize().as_slice() == info_hash.as_slice()
+                };
+                if matches_hash {
                     Some(assembled)
                 } else {
                     ctx.metadata_pieces.clear();
@@ -651,6 +680,7 @@ async fn run_peer_loop(
     let mut last_pex_sent = Instant::now();
     let mut sent_peers: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
     let atomic_status = context.lock().unwrap().atomic_status.clone();
+    let mut post_bootstrap_announced = !context.lock().unwrap().pieces_info_hash.is_empty();
 
     loop {
         // Pause / ended check
@@ -736,6 +766,44 @@ async fn run_peer_loop(
                                 peer.lock().unwrap().update_last_message_sent();
                             }
                         }
+
+                        let is_downloading = atomic_status
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            == TorrentStatus::Downloading as u8;
+                        let is_magnet_bootstrap =
+                            context.lock().unwrap().pieces_info_hash.is_empty();
+                        if is_magnet_bootstrap && is_downloading {
+                            if handle_magnet_bootstrap(peer_details, peer, net, context, manager)
+                                .await
+                            {
+                                break;
+                            }
+                        } else if !is_magnet_bootstrap && is_downloading {
+                            let (peer_choking_set, outstanding_count, missing_count, can_fast) = {
+                                let pg = peer.lock().unwrap();
+                                (
+                                    pg.peer_choking.wait_one(0),
+                                    pg.outstanding_requests_count,
+                                    pg.number_of_missing_pieces,
+                                    pg.supports_fast_extension
+                                        && !pg.allowed_fast_pieces.is_empty(),
+                                )
+                            };
+                            if (peer_choking_set || can_fast)
+                                && send_block_requests(
+                                    peer_details,
+                                    peer,
+                                    net,
+                                    context,
+                                    manager,
+                                    outstanding_count,
+                                    missing_count,
+                                )
+                                .await
+                            {
+                                break;
+                            }
+                        }
                         continue;
                     }
                 }
@@ -809,6 +877,47 @@ async fn run_peer_loop(
         }
 
         // ── Block requests ────────────────────────────────────────────────
+        if !is_magnet_bootstrap && !post_bootstrap_announced {
+            post_bootstrap_announced = true;
+            // Send initial piece availability and Interested now that we know the piece layout
+            let (bitfield, supports_fast, is_seed, is_empty, num_pieces) = {
+                let ctx = context.lock().unwrap();
+                let num = ctx.number_of_pieces;
+                let seed = ctx.is_download_complete()
+                    || (num > 0 && (0..num as u32).all(|p| ctx.is_piece_local(p)));
+                let empty = num > 0 && (0..num as u32).all(|p| !ctx.is_piece_local(p));
+                let pg = peer.lock().unwrap();
+                (
+                    ctx.bitfield.clone(),
+                    pg.supports_fast_extension,
+                    seed,
+                    empty,
+                    num,
+                )
+            };
+
+            if num_pieces > 0 {
+                if supports_fast {
+                    if is_seed {
+                        let _ = net.write_message(PeerMessage::HaveAll).await;
+                    } else if is_empty {
+                        let _ = net.write_message(PeerMessage::HaveNone).await;
+                    } else if !bitfield.is_empty() {
+                        let _ = net.write_message(PeerMessage::Bitfield(&bitfield)).await;
+                    }
+                } else if !bitfield.is_empty() {
+                    let _ = net.write_message(PeerMessage::Bitfield(&bitfield)).await;
+                }
+            }
+
+            let _ = net.write_message(PeerMessage::Interested).await;
+            {
+                let mut pg = peer.lock().unwrap();
+                pg.am_interested = true;
+                pg.update_last_message_sent();
+            }
+        }
+
         if !is_magnet_bootstrap && (peer_choking_set || can_request_fast) && is_downloading {
             if send_block_requests(
                 peer_details,
@@ -898,6 +1007,9 @@ pub async fn handle_peer_session(
             for &(pn, bi, _) in &pg.reserved_blocks {
                 ctx.release_block_request(pn, bi);
             }
+        }
+        if ctx.pieces_info_hash.is_empty() {
+            ctx.requested_metadata_pieces.clear();
         }
         ctx.on_peer_disconnect(&peer_details.ip);
         ctx.remove_peer(&peer_details.ip);
