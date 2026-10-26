@@ -307,13 +307,20 @@ impl ChokingStrategy for PolicyChokingStrategy {
         let policy = self.policy.clone();
         let max_slots = self.max_upload_slots;
 
+        let atomic_status = {
+            let ctx = context.lock().unwrap();
+            ctx.atomic_status.clone()
+        };
+
         let _ = task_tx.send(Box::pin(async move {
             loop {
                 let start_time = Instant::now();
                 let duration = Duration::from_secs(10);
                 let mut ended = false;
                 while start_time.elapsed() < duration {
-                    if context.lock().unwrap().status == TorrentStatus::Ended {
+                    if atomic_status.load(std::sync::atomic::Ordering::Relaxed)
+                        == TorrentStatus::Ended as u8
+                    {
                         ended = true;
                         break;
                     }

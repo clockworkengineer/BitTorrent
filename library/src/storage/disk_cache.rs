@@ -45,20 +45,47 @@ pub struct CacheMetrics {
     pub current_cached_bytes: usize,
     /// Current number of dirty bytes awaiting flush to storage.
     pub current_dirty_bytes: usize,
+    /// Current number of reusable buffers retained in the pool.
+    pub pooled_buffers_count: usize,
 }
 
 struct CacheState {
     blocks: BTreeMap<u64, CacheBlock>,
+    buffer_pool: Vec<Vec<u8>>,
+    max_pooled_buffers: usize,
     current_cached_bytes: usize,
     current_dirty_bytes: usize,
 }
 
 impl CacheState {
-    fn new() -> Self {
+    fn new(max_pooled_buffers: usize) -> Self {
         CacheState {
             blocks: BTreeMap::new(),
+            buffer_pool: Vec::with_capacity(max_pooled_buffers.min(256)),
+            max_pooled_buffers,
             current_cached_bytes: 0,
             current_dirty_bytes: 0,
+        }
+    }
+
+    fn acquire_buffer(&mut self, required_capacity: usize) -> Vec<u8> {
+        Self::acquire_from_pool(&mut self.buffer_pool, required_capacity)
+    }
+
+    fn acquire_from_pool(pool: &mut Vec<Vec<u8>>, required_capacity: usize) -> Vec<u8> {
+        while let Some(mut buf) = pool.pop() {
+            if buf.capacity() >= required_capacity {
+                buf.clear();
+                return buf;
+            }
+        }
+        Vec::with_capacity(required_capacity.max(16384))
+    }
+
+    fn return_buffer(&mut self, mut buf: Vec<u8>) {
+        if buf.capacity() >= 16384 && self.buffer_pool.len() < self.max_pooled_buffers {
+            buf.clear();
+            self.buffer_pool.push(buf);
         }
     }
 }
@@ -79,10 +106,11 @@ pub struct CachedBlockStorage {
 impl CachedBlockStorage {
     /// Wraps an underlying `BlockStorage` with an in-memory write-coalescing cache of `max_cache_bytes` size.
     pub fn new(inner: Arc<dyn BlockStorage>, max_cache_bytes: usize) -> Self {
+        let max_pooled_buffers = (max_cache_bytes / 16384).clamp(32, 2048);
         CachedBlockStorage {
             inner,
             max_cache_bytes,
-            state: Mutex::new(CacheState::new()),
+            state: Mutex::new(CacheState::new(max_pooled_buffers)),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             flushes_performed: AtomicU64::new(0),
@@ -109,6 +137,7 @@ impl CachedBlockStorage {
             coalesced_write_operations: self.coalesced_write_operations.load(Ordering::Relaxed),
             current_cached_bytes: state.current_cached_bytes,
             current_dirty_bytes: state.current_dirty_bytes,
+            pooled_buffers_count: state.buffer_pool.len(),
         }
     }
 
@@ -155,6 +184,7 @@ impl CachedBlockStorage {
                     state.current_dirty_bytes =
                         state.current_dirty_bytes.saturating_sub(removed.data.len());
                 }
+                state.return_buffer(removed.data);
             }
         }
     }
@@ -168,7 +198,10 @@ impl CachedBlockStorage {
     /// Clears all blocks from the cache immediately.
     pub fn clear(&self) {
         let mut state = self.state.lock().unwrap();
-        state.blocks.clear();
+        let blocks = std::mem::take(&mut state.blocks);
+        for (_, block) in blocks {
+            state.return_buffer(block.data);
+        }
         state.current_cached_bytes = 0;
         state.current_dirty_bytes = 0;
     }
@@ -201,7 +234,11 @@ impl CachedBlockStorage {
                     continue;
                 }
             }
-            chunks.push((offset, block.data.clone()));
+            let mut chunk_buf =
+                CacheState::acquire_from_pool(&mut state.buffer_pool, block.data.len());
+            chunk_buf.clear();
+            chunk_buf.extend_from_slice(&block.data);
+            chunks.push((offset, chunk_buf));
         }
 
         if chunks.is_empty() {
@@ -209,12 +246,13 @@ impl CachedBlockStorage {
         }
 
         // Write each coalesced chunk to underlying storage
-        for (start_offset, coalesced_data) in &chunks {
-            self.inner.write_block(*start_offset, coalesced_data)?;
+        for (start_offset, coalesced_data) in chunks {
+            self.inner.write_block(start_offset, &coalesced_data)?;
             self.coalesced_write_operations
                 .fetch_add(1, Ordering::Relaxed);
             self.bytes_flushed_to_storage
                 .fetch_add(coalesced_data.len() as u64, Ordering::Relaxed);
+            state.return_buffer(coalesced_data);
         }
 
         // Mark flushed blocks as clean in the cache
@@ -252,7 +290,9 @@ impl CachedBlockStorage {
         clean_blocks.sort_by_key(|(_, _, last_accessed)| *last_accessed);
 
         for (offset, size, _) in clean_blocks {
-            state.blocks.remove(&offset);
+            if let Some(removed) = state.blocks.remove(&offset) {
+                state.return_buffer(removed.data);
+            }
             state.current_cached_bytes = state.current_cached_bytes.saturating_sub(size);
             if state.current_cached_bytes <= self.max_cache_bytes {
                 return Ok(());
@@ -272,7 +312,9 @@ impl CachedBlockStorage {
             remaining_blocks.sort_by_key(|(_, _, last_accessed)| *last_accessed);
 
             for (offset, size, _) in remaining_blocks {
-                state.blocks.remove(&offset);
+                if let Some(removed) = state.blocks.remove(&offset) {
+                    state.return_buffer(removed.data);
+                }
                 state.current_cached_bytes = state.current_cached_bytes.saturating_sub(size);
                 if state.current_cached_bytes <= self.max_cache_bytes {
                     break;
@@ -303,7 +345,8 @@ impl BlockWriter for CachedBlockStorage {
         if let Some(existing) = state.blocks.get_mut(&offset) {
             let old_len = existing.data.len();
             let old_dirty = existing.dirty;
-            existing.data = data.to_vec();
+            existing.data.clear();
+            existing.data.extend_from_slice(data);
             existing.dirty = true;
             existing.last_accessed = Instant::now();
             state.current_cached_bytes = state.current_cached_bytes.saturating_sub(old_len);
@@ -311,11 +354,14 @@ impl BlockWriter for CachedBlockStorage {
                 state.current_dirty_bytes = state.current_dirty_bytes.saturating_sub(old_len);
             }
         } else {
+            let mut buf = state.acquire_buffer(data.len());
+            buf.clear();
+            buf.extend_from_slice(data);
             state.blocks.insert(
                 offset,
                 CacheBlock {
                     offset,
-                    data: data.to_vec(),
+                    data: buf,
                     dirty: true,
                     last_accessed: Instant::now(),
                 },

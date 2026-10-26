@@ -295,7 +295,7 @@ impl FastResumeData {
         }
 
         if missing_count == 0 {
-            ctx.status = TorrentStatus::Seeding;
+            ctx.set_status(TorrentStatus::Seeding);
             ctx.download_finished.set();
         }
 

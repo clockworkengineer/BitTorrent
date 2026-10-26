@@ -217,3 +217,37 @@ fn test_session_config_and_builder_disk_cache() {
     let builder = TorrentSessionBuilder::new("sample.torrent", ".").disk_cache_size_mb(128);
     assert_eq!(builder.get_config().disk_cache_size_mb, 128);
 }
+
+#[test]
+fn test_buffer_pool_recycling_and_integrity() {
+    let mock = Arc::new(CountingStorage::new());
+    let cache = CachedBlockStorage::new(mock.clone(), 64 * 1024);
+
+    // Initial state: buffer pool is empty
+    assert_eq!(cache.metrics().pooled_buffers_count, 0);
+
+    // Write 2 blocks of 16 KiB
+    let block_a = vec![0xAAu8; 16384];
+    let block_b = vec![0xBBu8; 16384];
+    cache.write_block(0, &block_a).unwrap();
+    cache.write_block(16384, &block_b).unwrap();
+
+    // Flush dirty blocks to storage - coalesced chunk buffer is returned to pool on completion
+    cache.flush_all().unwrap();
+    assert!(cache.metrics().pooled_buffers_count >= 1);
+
+    // Discarding clean blocks returns their buffers to the pool
+    cache.clear();
+    let pooled_after_clear = cache.metrics().pooled_buffers_count;
+    assert!(pooled_after_clear >= 2);
+
+    // Writing new blocks reuses buffers from the pool
+    let block_c = vec![0xCCu8; 16384];
+    cache.write_block(0, &block_c).unwrap();
+    assert_eq!(cache.metrics().pooled_buffers_count, pooled_after_clear - 1);
+
+    // Verify data integrity
+    let mut read_buf = vec![0u8; 16384];
+    cache.read_block(0, &mut read_buf).unwrap();
+    assert_eq!(read_buf, block_c);
+}

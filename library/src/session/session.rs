@@ -7,6 +7,7 @@
 //! Configuration lives in [`super::config`]; builder types live in [`super::builder`].
 
 use crate::core::torrent_context::{TorrentContext, TorrentStatus};
+use crate::core::transfer_metrics::TransferMetrics;
 use crate::disk_io::DiskIO;
 use crate::error::BitTorrentError;
 use crate::magnet::MagnetLink;
@@ -16,9 +17,11 @@ use crate::peer::Peer;
 use crate::selector::PieceSelector;
 use crate::storage::fast_resume::FastResumeData;
 use crate::tracker::{PeerDetails, Tracker};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -62,6 +65,9 @@ pub struct TorrentSession {
     pub dht: Option<Arc<crate::dht::Dht>>,
     #[cfg(feature = "nat-pmp")]
     pub nat_pmp: Option<Arc<dyn crate::nat::PortMapper>>,
+    pub atomic_status: Arc<AtomicU8>,
+    pub transfer_metrics: TransferMetrics,
+    pub peer_swarm: Arc<RwLock<HashMap<String, Arc<Mutex<Peer>>>>>,
 }
 
 impl TorrentSession {
@@ -92,10 +98,19 @@ impl TorrentSession {
             std::sync::mpsc::channel::<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>();
         let executor_thread = spawn_executor(context.clone(), task_rx);
 
+        let (atomic_status, transfer_metrics, peer_swarm) = {
+            let ctx = context.lock().unwrap();
+            (
+                ctx.atomic_status.clone(),
+                ctx.transfer_metrics.clone(),
+                ctx.peer_swarm.clone(),
+            )
+        };
+
         if is_magnet {
-            spawn_stats_loop_magnet(context.clone(), task_tx.clone());
+            spawn_stats_loop_magnet(context.clone(), atomic_status.clone(), task_tx.clone());
         } else {
-            spawn_stats_loop_standard(context.clone(), task_tx.clone());
+            spawn_stats_loop_standard(context.clone(), atomic_status.clone(), task_tx.clone());
         }
 
         let session = TorrentSession {
@@ -109,6 +124,9 @@ impl TorrentSession {
             dht: None,
             #[cfg(feature = "nat-pmp")]
             nat_pmp: None,
+            atomic_status,
+            transfer_metrics,
+            peer_swarm,
         };
 
         if validate {
@@ -646,9 +664,10 @@ impl TorrentSession {
         storage.flush()
     }
 
-    /// Returns the current state (e.g. paused, downloading, seeding) of the torrent.
+    /// Returns the current state (e.g. paused, downloading, seeding) of the torrent via lock-free atomic read.
+    #[inline]
     pub fn status(&self) -> TorrentStatus {
-        self.context.lock().unwrap().status
+        TorrentStatus::from(self.atomic_status.load(Ordering::Relaxed))
     }
 
     /// Creates and returns a new `Tracker` linked to this session.
@@ -656,26 +675,28 @@ impl TorrentSession {
         crate::tracker::Tracker::new(self.context.clone())
     }
 
-    /// Returns the percentage of download completion (0.0 to 100.0).
+    /// Returns the percentage of download completion (0.0 to 100.0) without acquiring the context lock.
+    #[inline]
     pub fn progress(&self) -> f32 {
-        self.context.lock().unwrap().progress_percent()
+        self.transfer_metrics.progress_percent()
     }
 
-    /// Returns a snapshot of statistics for the current session.
+    /// Returns a snapshot of statistics for the current session without acquiring the context lock.
     pub fn stats(&self) -> SessionStats {
-        let ctx = self.context.lock().unwrap();
-        let progress = ctx.progress_percent();
-        let status = ctx.status;
-        let bytes_downloaded = ctx
+        let status = TorrentStatus::from(self.atomic_status.load(Ordering::Relaxed));
+        let progress = self.transfer_metrics.progress_percent();
+        let bytes_downloaded = self
+            .transfer_metrics
             .total_bytes_downloaded
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let bytes_uploaded = ctx
+            .load(Ordering::Relaxed);
+        let bytes_uploaded = self
+            .transfer_metrics
             .total_bytes_uploaded
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let bytes_left = ctx.bytes_left_to_download().unwrap_or(0);
-        let download_speed = ctx.bytes_per_second() as f64;
-        let upload_speed = ctx.upload_bytes_per_second() as f64;
-        let connected_peers = ctx.peer_swarm.read().unwrap().len();
+            .load(Ordering::Relaxed);
+        let bytes_left = self.transfer_metrics.bytes_left_to_download().unwrap_or(0);
+        let download_speed = self.transfer_metrics.bytes_per_second().max(0) as f64;
+        let upload_speed = self.transfer_metrics.upload_bytes_per_second().max(0) as f64;
+        let connected_peers = self.peer_swarm.read().map(|s| s.len()).unwrap_or(0);
 
         SessionStats {
             progress,
@@ -689,21 +710,22 @@ impl TorrentSession {
         }
     }
 
-    /// Returns a snapshot of statistics if the context lock is immediately available without blocking.
+    /// Returns a snapshot of statistics if the peer swarm lock is immediately available without blocking.
     pub fn try_stats(&self) -> Option<SessionStats> {
-        let ctx = self.context.try_lock().ok()?;
-        let progress = ctx.progress_percent();
-        let status = ctx.status;
-        let bytes_downloaded = ctx
+        let connected_peers = self.peer_swarm.try_read().ok()?.len();
+        let status = TorrentStatus::from(self.atomic_status.load(Ordering::Relaxed));
+        let progress = self.transfer_metrics.progress_percent();
+        let bytes_downloaded = self
+            .transfer_metrics
             .total_bytes_downloaded
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let bytes_uploaded = ctx
+            .load(Ordering::Relaxed);
+        let bytes_uploaded = self
+            .transfer_metrics
             .total_bytes_uploaded
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let bytes_left = ctx.bytes_left_to_download().unwrap_or(0);
-        let download_speed = ctx.current_download_bps() as f64;
-        let upload_speed = ctx.current_upload_bps() as f64;
-        let connected_peers = ctx.peer_swarm.read().ok().map(|s| s.len()).unwrap_or(0);
+            .load(Ordering::Relaxed);
+        let bytes_left = self.transfer_metrics.bytes_left_to_download().unwrap_or(0);
+        let download_speed = self.transfer_metrics.current_download_bps().max(0) as f64;
+        let upload_speed = self.transfer_metrics.current_upload_bps().max(0) as f64;
 
         Some(SessionStats {
             progress,
@@ -1187,6 +1209,7 @@ fn spawn_executor(
 /// Spawns the periodic stats-logging future for a standard torrent session.
 fn spawn_stats_loop_standard(
     context: Arc<Mutex<TorrentContext>>,
+    atomic_status: Arc<AtomicU8>,
     task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
 ) {
     let _ = task_tx.send(Box::pin(async move {
@@ -1194,12 +1217,12 @@ fn spawn_stats_loop_standard(
             let start_time = std::time::Instant::now();
             let duration = Duration::from_secs(5);
             while start_time.elapsed() < duration {
-                if context.lock().unwrap().status == TorrentStatus::Ended {
+                if atomic_status.load(Ordering::Relaxed) == TorrentStatus::Ended as u8 {
                     return;
                 }
                 delay(Duration::from_millis(100)).await;
             }
-            if context.lock().unwrap().status == TorrentStatus::Ended {
+            if atomic_status.load(Ordering::Relaxed) == TorrentStatus::Ended as u8 {
                 break;
             }
             if let Ok(ctx) = context.try_lock() {
@@ -1226,6 +1249,7 @@ fn spawn_stats_loop_standard(
 /// Spawns the periodic stats-logging future for a magnet-bootstrap session.
 fn spawn_stats_loop_magnet(
     context: Arc<Mutex<TorrentContext>>,
+    atomic_status: Arc<AtomicU8>,
     task_tx: std::sync::mpsc::Sender<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
 ) {
     let _ = task_tx.send(Box::pin(async move {
@@ -1233,12 +1257,12 @@ fn spawn_stats_loop_magnet(
             let start_time = std::time::Instant::now();
             let duration = Duration::from_secs(5);
             while start_time.elapsed() < duration {
-                if context.lock().unwrap().status == TorrentStatus::Ended {
+                if atomic_status.load(Ordering::Relaxed) == TorrentStatus::Ended as u8 {
                     return;
                 }
                 delay(Duration::from_millis(100)).await;
             }
-            if context.lock().unwrap().status == TorrentStatus::Ended {
+            if atomic_status.load(Ordering::Relaxed) == TorrentStatus::Ended as u8 {
                 break;
             }
             if let Ok(ctx) = context.try_lock() {

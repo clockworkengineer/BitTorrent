@@ -6,15 +6,16 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Tracks downloaded/uploaded byte counters and moving average speeds.
+#[derive(Clone)]
 pub struct TransferMetrics {
     pub total_bytes_downloaded: Arc<AtomicU64>,
     pub initial_bytes_downloaded: u64,
     pub total_bytes_to_download: u64,
     pub total_bytes_uploaded: Arc<AtomicU64>,
-    pub download_speed_tracker: Mutex<(Instant, u64, i64)>,
-    pub upload_speed_tracker: Mutex<(Instant, u64, i64)>,
-    pub cached_download_bps: AtomicI64,
-    pub cached_upload_bps: AtomicI64,
+    pub download_speed_tracker: Arc<Mutex<(Instant, u64, i64)>>,
+    pub upload_speed_tracker: Arc<Mutex<(Instant, u64, i64)>>,
+    pub cached_download_bps: Arc<AtomicI64>,
+    pub cached_upload_bps: Arc<AtomicI64>,
 }
 
 impl TransferMetrics {
@@ -24,10 +25,10 @@ impl TransferMetrics {
             initial_bytes_downloaded: 0,
             total_bytes_to_download,
             total_bytes_uploaded: Arc::new(AtomicU64::new(0)),
-            download_speed_tracker: Mutex::new((Instant::now(), 0, 0)),
-            upload_speed_tracker: Mutex::new((Instant::now(), 0, 0)),
-            cached_download_bps: AtomicI64::new(0),
-            cached_upload_bps: AtomicI64::new(0),
+            download_speed_tracker: Arc::new(Mutex::new((Instant::now(), 0, 0))),
+            upload_speed_tracker: Arc::new(Mutex::new((Instant::now(), 0, 0))),
+            cached_download_bps: Arc::new(AtomicI64::new(0)),
+            cached_upload_bps: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -65,7 +66,7 @@ impl TransferMetrics {
     }
 
     pub fn bytes_per_second(&self) -> i64 {
-        let Ok(mut guard) = self.download_speed_tracker.lock() else {
+        let Ok(mut guard) = self.download_speed_tracker.try_lock() else {
             return self.cached_download_bps.load(Ordering::Relaxed);
         };
 
@@ -98,7 +99,7 @@ impl TransferMetrics {
     }
 
     pub fn upload_bytes_per_second(&self) -> i64 {
-        let Ok(mut guard) = self.upload_speed_tracker.lock() else {
+        let Ok(mut guard) = self.upload_speed_tracker.try_lock() else {
             return self.cached_upload_bps.load(Ordering::Relaxed);
         };
 

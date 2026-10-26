@@ -139,7 +139,7 @@ fn test_piece_availability_and_swarm_rarity() {
     let mut swarm = HashMap::new();
     swarm.insert("192.168.1.100:6881".to_string(), peer_1);
     swarm.insert("10.0.0.50:51413".to_string(), peer_2);
-    ctx.peer_swarm = RwLock::new(swarm);
+    ctx.peer_swarm = std::sync::Arc::new(RwLock::new(swarm));
 
     let (local_have, swarm_rarity) = ctx.get_piece_availability();
     assert_eq!(local_have.len(), 10);

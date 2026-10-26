@@ -650,17 +650,15 @@ async fn run_peer_loop(
     let read_buffer_backing = heap_buf.as_mut_slice();
     let mut last_pex_sent = Instant::now();
     let mut sent_peers: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
+    let atomic_status = context.lock().unwrap().atomic_status.clone();
 
     loop {
         // Pause / ended check
-        let status = {
-            let ctx = context.lock().unwrap();
-            if ctx.status == TorrentStatus::Ended {
-                break;
-            }
-            ctx.is_paused()
-        };
-        if status {
+        if atomic_status.load(std::sync::atomic::Ordering::Relaxed) == TorrentStatus::Ended as u8 {
+            break;
+        }
+        let is_paused = context.lock().unwrap().is_paused();
+        if is_paused {
             delay(Duration::from_millis(100)).await;
             continue;
         }
@@ -798,7 +796,8 @@ async fn run_peer_loop(
             )
         };
 
-        let is_downloading = context.lock().unwrap().status == TorrentStatus::Downloading;
+        let is_downloading = atomic_status.load(std::sync::atomic::Ordering::Relaxed)
+            == TorrentStatus::Downloading as u8;
 
         let is_magnet_bootstrap = context.lock().unwrap().pieces_info_hash.is_empty();
 

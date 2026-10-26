@@ -6,6 +6,8 @@ pub mod merkle;
 pub mod metadata_bootstrap;
 pub mod metainfo;
 #[cfg(feature = "std")]
+pub mod piece_accounting;
+#[cfg(feature = "std")]
 pub mod piece_store;
 #[cfg(feature = "std")]
 pub mod selector;
