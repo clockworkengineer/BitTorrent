@@ -25,6 +25,7 @@ impl TorrentContext {
             }
         }
         self.piece_store.mark_piece_local(piece_number, local);
+        self.piece_manager.mark_piece_local(piece_number, local);
     }
 
     /// Checks if a specific piece has been fully downloaded and verified locally.
@@ -51,6 +52,7 @@ impl TorrentContext {
             }
         }
         self.piece_store.mark_piece_missing(piece_number, missing);
+        self.piece_manager.mark_piece_missing(piece_number, missing);
     }
 
     /// Checks if a specific piece index is currently marked as missing.
@@ -337,6 +339,7 @@ impl TorrentContext {
         sorted.sort_unstable();
         sorted.dedup();
         self.selected_file_indices = Some(sorted.clone());
+        self.storage_manager.set_selected_files(&sorted);
         if !self.files_to_download.is_empty() {
             self.apply_bep53_file_selection(&sorted);
         }

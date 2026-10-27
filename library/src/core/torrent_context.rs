@@ -25,6 +25,11 @@ pub use crate::core::metadata_bootstrap::MetadataBootstrap;
 pub use crate::core::piece_store::{PieceInfo, PieceRarity, PieceStore};
 pub use crate::core::swarm_topology::SwarmTopology;
 pub use crate::core::transfer_metrics::TransferMetrics;
+pub use crate::core::metadata_manager::MetadataManager;
+pub use crate::core::piece_manager::PieceManager;
+pub use crate::core::storage_manager::StorageManager;
+pub use crate::core::swarm_manager::SwarmManager;
+pub use crate::core::telemetry_manager::TelemetryManager;
 
 /// Placeholder structure representing a tracker client.
 #[derive(Debug, Clone)]
@@ -163,6 +168,12 @@ pub struct TorrentContext {
     pub swarm_topology: SwarmTopology,
     pub transfer_metrics: TransferMetrics,
     pub metadata_bootstrap: MetadataBootstrap,
+    // Decomposed Domain Managers (Phase 2 Maintainability)
+    pub telemetry: TelemetryManager,
+    pub piece_manager: PieceManager,
+    pub swarm_manager: SwarmManager,
+    pub storage_manager: StorageManager,
+    pub metadata_manager: MetadataManager,
 }
 
 struct TorrentContextParams {
@@ -261,6 +272,44 @@ impl TorrentContext {
         let swarm_topology = SwarmTopology::new(crate::constants::MAXIMUM_SWARM_SIZE);
         let metadata_bootstrap = MetadataBootstrap::new();
 
+        let verification_pool = Arc::new(
+            crate::storage::verification_pool::HashVerificationPool::new(
+                params.config.verification_workers,
+                params.config.verification_queue_capacity,
+            ),
+        );
+
+        let mut telemetry = TelemetryManager::new(params.total_bytes_to_download);
+        telemetry.total_bytes_downloaded = total_bytes_downloaded.clone();
+        telemetry.total_bytes_uploaded = total_bytes_uploaded.clone();
+        telemetry.atomic_status = atomic_status.clone();
+
+        let piece_manager = PieceManager::new(
+            params.number_of_pieces,
+            params.piece_length,
+            params.pieces_info_hash.clone(),
+        );
+
+        let swarm_manager = SwarmManager::new(crate::constants::MAXIMUM_SWARM_SIZE);
+
+        let storage_manager = StorageManager::new(
+            params.storage.clone(),
+            &params.download_path,
+            params.files_to_download.clone(),
+            verification_pool.clone(),
+        );
+
+        let metadata_manager = MetadataManager::new(
+            params.info_hash.clone(),
+            params.file_name.clone(),
+            params.tracker_url.clone(),
+            params.tracker_urls.clone(),
+            params.web_seeds.clone(),
+            params.is_private,
+            #[cfg(all(feature = "std", feature = "v2"))]
+            piece_layers_disk_cache.clone(),
+        );
+
         TorrentContext {
             info_hash: params.info_hash,
             tracker_url: params.tracker_url,
@@ -341,12 +390,7 @@ impl TorrentContext {
             #[cfg(all(feature = "std", feature = "v2"))]
             piece_layers_disk_cache,
             #[cfg(feature = "std")]
-            verification_pool: Arc::new(
-                crate::storage::verification_pool::HashVerificationPool::new(
-                    params.config.verification_workers,
-                    params.config.verification_queue_capacity,
-                ),
-            ),
+            verification_pool,
             pieces_verifying: Mutex::new(std::collections::HashSet::new()),
             selected_file_indices: None,
             expedited_manifest: None,
@@ -364,6 +408,11 @@ impl TorrentContext {
             swarm_topology,
             transfer_metrics,
             metadata_bootstrap,
+            telemetry,
+            piece_manager,
+            swarm_manager,
+            storage_manager,
+            metadata_manager,
         }
     }
 
@@ -503,6 +552,7 @@ impl TorrentContext {
             }
         }
         self.piece_store.init_pieces(number_of_pieces, piece_length);
+        self.piece_manager.init_pieces(number_of_pieces, piece_length, self.pieces_info_hash.clone());
     }
 
     /// Adds a BEP 19 WebSeed mirror URL to the context if not already present.
@@ -613,7 +663,16 @@ impl TorrentContext {
         self.total_bytes_to_download = total_download_length;
         self.transfer_metrics
             .set_total_bytes_to_download(total_download_length);
-        self.storage = storage;
+        self.telemetry
+            .set_total_bytes_to_download(total_download_length);
+        self.piece_manager.init_pieces(
+            number_of_pieces,
+            piece_length,
+            self.pieces_info_hash.clone(),
+        );
+        self.storage = storage.clone();
+        self.storage_manager.storage = storage;
+        self.storage_manager.files_to_download = self.files_to_download.clone();
 
         #[cfg(feature = "std")]
         {
@@ -647,6 +706,10 @@ impl TorrentContext {
         let _ = std::fs::write(torrent_path, &torrent_bytes);
 
         self.info_dict_bytes = Some(info_dict_bytes.to_vec());
+        self.metadata_manager.file_name = self.file_name.clone();
+        self.metadata_manager.web_seeds = self.web_seeds.clone();
+        self.metadata_manager.is_private = self.is_private;
+        self.metadata_manager.info_dict_bytes = Some(info_dict_bytes.to_vec());
 
         if self.expedited_manifest.is_none() {
             self.expedited_manifest =

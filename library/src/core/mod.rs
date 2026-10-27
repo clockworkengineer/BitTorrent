@@ -4,17 +4,27 @@ pub mod magnet;
 pub mod merkle;
 #[cfg(feature = "std")]
 pub mod metadata_bootstrap;
+#[cfg(feature = "std")]
+pub mod metadata_manager;
 pub mod metainfo;
 #[cfg(feature = "std")]
 pub mod piece_accounting;
+#[cfg(feature = "std")]
+pub mod piece_manager;
 #[cfg(feature = "std")]
 pub mod piece_store;
 #[cfg(feature = "std")]
 pub mod selector;
 #[cfg(feature = "std")]
+pub mod storage_manager;
+#[cfg(feature = "std")]
 pub mod super_seeding;
 #[cfg(feature = "std")]
+pub mod swarm_manager;
+#[cfg(feature = "std")]
 pub mod swarm_topology;
+#[cfg(feature = "std")]
+pub mod telemetry_manager;
 #[cfg(all(feature = "std", feature = "v2"))]
 pub mod torrent_builder;
 #[cfg(feature = "std")]

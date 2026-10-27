@@ -119,6 +119,16 @@ pub use core::views::{
     MockPieceAvailabilityView, MockSwarmView, PeerSnapshot, PieceAvailabilityView,
     RemotePeerPieceView, SwarmView, TransferStatsView,
 };
+#[cfg(feature = "std")]
+pub use core::metadata_manager::MetadataManager;
+#[cfg(feature = "std")]
+pub use core::piece_manager::PieceManager;
+#[cfg(feature = "std")]
+pub use core::storage_manager::StorageManager;
+#[cfg(feature = "std")]
+pub use core::swarm_manager::SwarmManager;
+#[cfg(feature = "std")]
+pub use core::telemetry_manager::TelemetryManager;
 
 #[cfg(feature = "std")]
 pub use network::announcer;
