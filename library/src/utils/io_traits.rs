@@ -183,6 +183,31 @@ impl MockSocket {
 
         (socket, sender, receiver)
     }
+
+    /// Creates a pair of interconnected mock sockets where writes to one socket are immediately
+    /// readable from the other, enabling high-speed in-memory peer loopback without OS sockets.
+    pub fn pair() -> (Self, Self) {
+        let q1 = alloc::sync::Arc::new(SpinLock::new(alloc::collections::VecDeque::new()));
+        let q2 = alloc::sync::Arc::new(SpinLock::new(alloc::collections::VecDeque::new()));
+        let c1 = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+        let c2 = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+
+        let socket_a = MockSocket {
+            rx: q1.clone(),
+            tx: q2.clone(),
+            read_buf: SpinLock::new(alloc::vec::Vec::new()),
+            closed: c1,
+        };
+
+        let socket_b = MockSocket {
+            rx: q2,
+            tx: q1,
+            read_buf: SpinLock::new(alloc::vec::Vec::new()),
+            closed: c2,
+        };
+
+        (socket_a, socket_b)
+    }
 }
 
 impl AsyncSocket for MockSocket {

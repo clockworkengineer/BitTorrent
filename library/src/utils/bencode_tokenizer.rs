@@ -80,8 +80,11 @@ impl<'a> BencodeTokenizer<'a> {
                 }
                 if let Ok(number_str) = core::str::from_utf8(number_bytes) {
                     if number_str.is_empty()
-                        || (number_str.starts_with('0') && number_str.len() > 1)
+                        || number_str == "-"
                         || number_str == "-0"
+                        || (number_str.starts_with('0') && number_str.len() > 1)
+                        || (number_str.starts_with("-0"))
+                        || number_str.parse::<i64>().is_err()
                     {
                         return Some(Err(BitTorrentError::Bencode(
                             BencodeError::InvalidIntegerFormat,

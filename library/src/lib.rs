@@ -87,6 +87,7 @@
 //! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 #![allow(
     clippy::collapsible_if,
     clippy::manual_is_ascii_check,
@@ -96,10 +97,15 @@
 
 extern crate alloc;
 
+#[allow(missing_docs)]
 pub mod core;
+#[allow(missing_docs)]
 pub mod network;
+#[allow(missing_docs)]
 pub mod session;
+#[allow(missing_docs)]
 pub mod storage;
+#[allow(missing_docs)]
 pub mod utils;
 
 // Re-export original modules under their original names for backward compatibility

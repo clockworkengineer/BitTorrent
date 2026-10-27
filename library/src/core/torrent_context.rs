@@ -899,7 +899,12 @@ impl TorrentContext {
     /// Computes percentage completion from bytes downloaded versus total.
     #[cfg(feature = "std")]
     pub fn progress_percent(&self) -> f32 {
-        self.transfer_metrics.progress_percent()
+        let ppm = self.progress_ppm();
+        if ppm > 0 {
+            ppm as f32 / 100.0
+        } else {
+            self.transfer_metrics.progress_percent()
+        }
     }
 
     /// Returns true if super-seeding mode (BEP 16) is actively running.

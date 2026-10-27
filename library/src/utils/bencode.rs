@@ -197,8 +197,11 @@ impl<'a> Parser<'a> {
         let number_str = core::str::from_utf8(number_bytes)
             .map_err(|e| BitTorrentError::Bencode(BencodeError::Custom(e.to_string())))?;
         if number_str.is_empty()
-            || (number_str.starts_with('0') && number_str.len() > 1)
+            || number_str == "-"
             || number_str == "-0"
+            || (number_str.starts_with('0') && number_str.len() > 1)
+            || (number_str.starts_with("-0"))
+            || number_str.parse::<i64>().is_err()
         {
             return Err(BitTorrentError::Bencode(BencodeError::InvalidIntegerFormat));
         }
