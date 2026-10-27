@@ -1,0 +1,27 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=BitTorrent Client
+GenericName=BitTorrent Client
+Comment=High-performance BitTorrent v1/v2, WebTorrent, and LAN Sync Client
+Exec=torrent_client %U
+Icon=bittorrent
+Terminal=false
+Categories=Network;FileTransfer;P2P;
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;
+Keywords=bittorrent;torrent;magnet;p2p;download;
+StartupNotify=true
+StartupWMClass=torrent_client
+Actions=WebUI;Daemon;SyncHub;
+
+[Desktop Action WebUI]
+Name=Open Web UI
+Exec=bt_webui
+
+[Desktop Action Daemon]
+Name=Start Daemon
+Exec=bt_daemon
+
+[Desktop Action SyncHub]
+Name=Launch LAN Sync Hub
+Exec=sync_hub

@@ -1,0 +1,22 @@
+[Unit]
+Description=BitTorrent Core Daemon
+Documentation=https://github.com/clockworkengineer/BitTorrent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bt_daemon
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+LimitNOFILE=65536
+
+# Security sandbox settings
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=%h/Downloads %h/.config/bittorrent
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
