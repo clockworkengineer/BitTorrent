@@ -4,15 +4,15 @@
 //! write-coalescing integration with `CachedBlockStorage`, and `Peer` buffer pooling.
 
 use bittorrent_rs::{
+    BitTorrentError,
     constants::BLOCK_SIZE,
     io_traits::{BlockReader, BlockWriter, MemStorage, MockSocket, Socket},
     network::peer::Peer,
     storage::disk_cache::CachedBlockStorage,
     storage::piece_buffer::{BlockBufferPool, PooledBlockBuffer},
-    BitTorrentError,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 /// Counting mock storage that tracks write invocations and transferred bytes.
@@ -49,7 +49,8 @@ impl BlockReader for CoalesceTrackerStorage {
 impl BlockWriter for CoalesceTrackerStorage {
     fn write_block(&self, offset: u64, data: &[u8]) -> Result<(), BitTorrentError> {
         self.write_count.fetch_add(1, Ordering::SeqCst);
-        self.bytes_transferred.fetch_add(data.len(), Ordering::SeqCst);
+        self.bytes_transferred
+            .fetch_add(data.len(), Ordering::SeqCst);
         self.inner.write_block(offset, data)
     }
 }

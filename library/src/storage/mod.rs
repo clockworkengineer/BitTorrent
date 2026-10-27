@@ -37,10 +37,10 @@ pub use erasure_staging::{
 };
 #[cfg(feature = "std")]
 pub use file_allocation::FileAllocationManager;
-#[cfg(all(feature = "std", feature = "v2"))]
-pub use piece_layers_cache::{PieceLayersCacheMetrics, PieceLayersDiskCache};
 #[cfg(feature = "std")]
 pub use piece_buffer::{BlockBufferPool, BlockBufferPoolMetrics, PieceBuffer, PooledBlockBuffer};
+#[cfg(all(feature = "std", feature = "v2"))]
+pub use piece_layers_cache::{PieceLayersCacheMetrics, PieceLayersDiskCache};
 #[cfg(feature = "std")]
 pub use verification_pool::{
     HashVerificationPool, PieceVerificationJob, PieceVerificationResult, RecheckProgress,

@@ -17,12 +17,12 @@ use crate::peer::Peer;
 use crate::selector::PieceSelector;
 use crate::storage::fast_resume::FastResumeData;
 use crate::tracker::{PeerDetails, Tracker};
+use crate::utils::util::{LockExt, RwLockExt};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use crate::utils::util::{LockExt, RwLockExt};
 use std::thread;
 use std::time::Duration;
 
@@ -202,10 +202,7 @@ impl TorrentSession {
                 }
             }
             if resume.verify_on_disk(&download_path).unwrap_or(false) {
-                if resume
-                    .apply_to_context(&mut context.lock_safe())
-                    .is_ok()
-                {
+                if resume.apply_to_context(&mut context.lock_safe()).is_ok() {
                     resumed = true;
                 }
             }
@@ -1315,24 +1312,24 @@ fn spawn_executor(
         let spawner = pool.spawner();
         let spawner_clone = spawner.clone();
         let _ = spawner.spawn_local(async move {
-                loop {
-                    if context.lock_safe().status == TorrentStatus::Ended {
+            loop {
+                if context.lock_safe().status == TorrentStatus::Ended {
+                    break;
+                }
+                match task_rx.try_recv() {
+                    Ok(future) => {
+                        let _ = spawner_clone.spawn_local(future);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        crate::util::yield_now().await;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         break;
                     }
-                    match task_rx.try_recv() {
-                        Ok(future) => {
-                            let _ = spawner_clone.spawn_local(future);
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => {
-                            std::thread::sleep(std::time::Duration::from_millis(5));
-                            crate::util::yield_now().await;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            break;
-                        }
-                    }
                 }
-            });
+            }
+        });
         pool.run();
     })
 }
@@ -1440,4 +1437,3 @@ impl super::config::ChokingStrategy for super::config::StandardChoking {
         strategy.spawn_choking_loop(context, task_tx, manager);
     }
 }
-

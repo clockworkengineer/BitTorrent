@@ -69,8 +69,9 @@ impl MetadataManager {
         tracker_urls: Vec<String>,
         web_seeds: Vec<String>,
         is_private: bool,
-        #[cfg(all(feature = "std", feature = "v2"))]
-        piece_layers_disk_cache: Arc<PieceLayersDiskCache>,
+        #[cfg(all(feature = "std", feature = "v2"))] piece_layers_disk_cache: Arc<
+            PieceLayersDiskCache,
+        >,
     ) -> Self {
         Self {
             info_hash,
@@ -100,8 +101,9 @@ impl MetadataManager {
     /// Creates an empty `MetadataManager` for initializing magnet downloads.
     pub fn empty(
         info_hash: Vec<u8>,
-        #[cfg(all(feature = "std", feature = "v2"))]
-        piece_layers_disk_cache: Arc<PieceLayersDiskCache>,
+        #[cfg(all(feature = "std", feature = "v2"))] piece_layers_disk_cache: Arc<
+            PieceLayersDiskCache,
+        >,
     ) -> Self {
         Self {
             info_hash,

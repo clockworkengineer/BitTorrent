@@ -111,9 +111,19 @@ pub mod utils;
 // Re-export original modules under their original names for backward compatibility
 pub use core::constants;
 pub use core::magnet;
+#[cfg(feature = "std")]
+pub use core::metadata_manager::MetadataManager;
 pub use core::metainfo;
 #[cfg(feature = "std")]
+pub use core::piece_manager::PieceManager;
+#[cfg(feature = "std")]
 pub use core::selector;
+#[cfg(feature = "std")]
+pub use core::storage_manager::StorageManager;
+#[cfg(feature = "std")]
+pub use core::swarm_manager::SwarmManager;
+#[cfg(feature = "std")]
+pub use core::telemetry_manager::TelemetryManager;
 #[cfg(feature = "std")]
 pub use core::torrent_context::{
     PieceWriteAccess, SessionStatusQuery, SwarmReadAccess, TorrentStatus,
@@ -125,16 +135,6 @@ pub use core::views::{
     MockPieceAvailabilityView, MockSwarmView, PeerSnapshot, PieceAvailabilityView,
     RemotePeerPieceView, SwarmView, TransferStatsView,
 };
-#[cfg(feature = "std")]
-pub use core::metadata_manager::MetadataManager;
-#[cfg(feature = "std")]
-pub use core::piece_manager::PieceManager;
-#[cfg(feature = "std")]
-pub use core::storage_manager::StorageManager;
-#[cfg(feature = "std")]
-pub use core::swarm_manager::SwarmManager;
-#[cfg(feature = "std")]
-pub use core::telemetry_manager::TelemetryManager;
 
 #[cfg(feature = "std")]
 pub use network::announcer;
@@ -184,7 +184,9 @@ pub use storage::fast_resume::{FastResumeData, FastResumeFileEntry};
 #[cfg(feature = "std")]
 pub use storage::piece_buffer;
 #[cfg(feature = "std")]
-pub use storage::piece_buffer::{BlockBufferPool, BlockBufferPoolMetrics, PieceBuffer, PooledBlockBuffer};
+pub use storage::piece_buffer::{
+    BlockBufferPool, BlockBufferPoolMetrics, PieceBuffer, PooledBlockBuffer,
+};
 #[cfg(feature = "std")]
 pub use storage::piece_request;
 #[cfg(feature = "std")]
@@ -252,8 +254,6 @@ pub use utils::bencode::{BNode, Bencode};
 pub use utils::bencode_tokenizer::{BencodeToken, BencodeTokenizer};
 pub use utils::error::{BencodeError, BitTorrentError};
 #[cfg(feature = "std")]
-pub use utils::util::{LockExt, RwLockExt};
-#[cfg(feature = "std")]
 pub use utils::io_traits::SocketFactory;
 pub use utils::io_traits::{
     AsyncSocket, BlockReader, BlockStorage, BlockWriter, MemStorage, MockReceiver, MockSender,
@@ -261,6 +261,8 @@ pub use utils::io_traits::{
 };
 #[cfg(all(feature = "std", feature = "http-tracker"))]
 pub use utils::io_traits::{HttpClient, UreqHttpClient};
+#[cfg(feature = "std")]
+pub use utils::util::{LockExt, RwLockExt};
 
 #[cfg(feature = "v2")]
 pub use core::merkle::{BLOCK_SIZE as V2_BLOCK_SIZE, MerkleProof, MerkleTree};
@@ -298,6 +300,8 @@ pub use network::webrtc::{
     WebTorrentScrapeResponse, create_webtorrent_answer, create_webtorrent_offer,
 };
 #[cfg(feature = "std")]
+pub use session::builder::{Initial, Ready, TorrentSessionBuilder, TorrentSource};
+#[cfg(feature = "std")]
 pub use session::choking_policy::{
     BitTyrantPolicy, ChokingDecision, ChokingPolicy, PolicyChokingStrategy, RoundRobinPolicy,
     StandardTitForTatPolicy,
@@ -306,8 +310,6 @@ pub use session::choking_policy::{
 pub use session::client::TorrentClient;
 #[cfg(feature = "std")]
 pub use session::config::{ChokingStrategy, SessionConfig, StandardChoking};
-#[cfg(feature = "std")]
-pub use session::builder::{Initial, Ready, TorrentSessionBuilder, TorrentSource};
 #[cfg(feature = "std")]
 pub use session::events::{EventBroadcaster, SessionEvent};
 #[cfg(feature = "std")]

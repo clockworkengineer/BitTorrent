@@ -5,13 +5,13 @@
 //! messages without keeping large tree structures permanently in RAM or re-hashing disk blocks.
 
 use crate::error::BitTorrentError;
+use crate::utils::util::LockExt;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use crate::utils::util::LockExt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Magic header bytes identifying a binary BitTorrent v2 Layers cache file (`b"BT2L"`).
@@ -609,7 +609,10 @@ pub fn reconstruct_tree_from_piece_layer(
         layers.push(next);
     }
 
-    let root = layers.last().and_then(|l| l.first().copied()).unwrap_or([0u8; 32]);
+    let root = layers
+        .last()
+        .and_then(|l| l.first().copied())
+        .unwrap_or([0u8; 32]);
     (layers, root)
 }
 
@@ -679,4 +682,3 @@ pub fn generate_hashes_response_from_layers(
 
     Some(out)
 }
-

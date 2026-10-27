@@ -8,9 +8,9 @@ use crate::tracker::{AnnounceResponse, ScrapeResponse, Tracker, TrackerAnnounceC
 #[cfg(feature = "http-tracker")]
 use crate::tracker::{PeerDetails, TrackerEvent};
 use crate::util::{pack_u32, pack_u64, unpack_u32, unpack_u64};
+use crate::utils::util::RwLockExt;
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
-use crate::utils::util::RwLockExt;
 #[cfg(feature = "http-tracker")]
 use urlencoding::encode;
 #[cfg(feature = "http-tracker")]

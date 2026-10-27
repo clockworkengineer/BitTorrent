@@ -131,7 +131,10 @@ impl TorrentSessionBuilder<Initial> {
     }
 
     /// Sets the destination download directory and transitions the builder into the `Ready` typestate.
-    pub fn with_download_path(self, download_path: impl AsRef<Path>) -> TorrentSessionBuilder<Ready> {
+    pub fn with_download_path(
+        self,
+        download_path: impl AsRef<Path>,
+    ) -> TorrentSessionBuilder<Ready> {
         TorrentSessionBuilder {
             source: self.source,
             download_path: download_path.as_ref().to_path_buf(),

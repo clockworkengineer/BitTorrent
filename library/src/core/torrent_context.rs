@@ -15,21 +15,21 @@ use crate::selector::PieceSelector;
 use crate::session::SessionConfig;
 use crate::util::get_bitfield_index_and_mask;
 
+use crate::utils::util::{LockExt, RwLockExt};
 use std::cmp::min;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use crate::utils::util::{LockExt, RwLockExt};
 
 pub use crate::core::metadata_bootstrap::MetadataBootstrap;
-pub use crate::core::piece_store::{PieceInfo, PieceRarity, PieceStore};
-pub use crate::core::swarm_topology::SwarmTopology;
-pub use crate::core::transfer_metrics::TransferMetrics;
 pub use crate::core::metadata_manager::MetadataManager;
 pub use crate::core::piece_manager::PieceManager;
+pub use crate::core::piece_store::{PieceInfo, PieceRarity, PieceStore};
 pub use crate::core::storage_manager::StorageManager;
 pub use crate::core::swarm_manager::SwarmManager;
+pub use crate::core::swarm_topology::SwarmTopology;
 pub use crate::core::telemetry_manager::TelemetryManager;
+pub use crate::core::transfer_metrics::TransferMetrics;
 
 /// Placeholder structure representing a tracker client.
 #[derive(Debug, Clone)]
@@ -472,15 +472,18 @@ impl TorrentContext {
             } else {
                 TorrentStatus::Initialised
             },
-            file_name: torrent_meta_info
-                .get_name()
-                .unwrap_or_else(|_| {
-                    torrent_meta_info
-                        .torrent_file_name
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| torrent_meta_info.torrent_file_name.to_string_lossy().to_string())
-                }),
+            file_name: torrent_meta_info.get_name().unwrap_or_else(|_| {
+                torrent_meta_info
+                    .torrent_file_name
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| {
+                        torrent_meta_info
+                            .torrent_file_name
+                            .to_string_lossy()
+                            .to_string()
+                    })
+            }),
             selector,
             storage,
             download_path: download_path.to_path_buf(),
@@ -554,7 +557,11 @@ impl TorrentContext {
             }
         }
         self.piece_store.init_pieces(number_of_pieces, piece_length);
-        self.piece_manager.init_pieces(number_of_pieces, piece_length, self.pieces_info_hash.clone());
+        self.piece_manager.init_pieces(
+            number_of_pieces,
+            piece_length,
+            self.pieces_info_hash.clone(),
+        );
     }
 
     /// Adds a BEP 19 WebSeed mirror URL to the context if not already present.
@@ -1186,9 +1193,7 @@ impl TorrentContext {
 
         if piece_complete {
             if self.config.enable_adaptive_endgame {
-                self.endgame_staging
-                    .lock_safe()
-                    .clear_piece(piece_number);
+                self.endgame_staging.lock_safe().clear_piece(piece_number);
             }
             #[cfg(feature = "std")]
             if self.config.enable_async_verification {
@@ -2455,9 +2460,7 @@ impl TorrentContext {
 
     /// Records a block timeout for a peer in the latency profiler.
     pub fn record_peer_block_timeout(&self, peer_ip: &str) {
-        self.latency_profiler
-            .lock_safe()
-            .record_timeout(peer_ip);
+        self.latency_profiler.lock_safe().record_timeout(peer_ip);
     }
 
     /// Records a block request dispatch for a peer in the latency profiler.
@@ -2719,4 +2722,3 @@ impl crate::core::views::TransferStatsView for TorrentContext {
         self.progress_percent()
     }
 }
-

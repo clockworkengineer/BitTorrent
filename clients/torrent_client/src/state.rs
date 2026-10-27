@@ -634,7 +634,8 @@ impl TorrentClientApp {
             let is_completed = if let Some(ref hex_str) = bitfield_hex_clone {
                 if let Ok(bytes) = bittorrent_rs::util::from_hex(hex_str) {
                     let check_torrent_file = cached_torrent.as_ref().unwrap_or(&torrent_path_buf);
-                    if let Ok(meta) = bittorrent_rs::metainfo::MetaInfoFile::new(check_torrent_file) {
+                    if let Ok(meta) = bittorrent_rs::metainfo::MetaInfoFile::new(check_torrent_file)
+                    {
                         if let Ok(pieces) = meta.get_pieces_info_hash() {
                             let num = pieces.len() / 20;
                             num > 0

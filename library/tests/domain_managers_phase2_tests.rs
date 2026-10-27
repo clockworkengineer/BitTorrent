@@ -7,9 +7,7 @@
 //! - `StorageManager`
 //! - `MetadataManager`
 
-use bittorrent_rs::core::views::{
-    PieceAvailabilityView, RemotePeerPieceView, TransferStatsView,
-};
+use bittorrent_rs::core::views::{PieceAvailabilityView, RemotePeerPieceView, TransferStatsView};
 use bittorrent_rs::io_traits::MemStorage;
 use bittorrent_rs::metainfo::{FileDetails, FilePriority};
 use bittorrent_rs::storage::verification_pool::HashVerificationPool;

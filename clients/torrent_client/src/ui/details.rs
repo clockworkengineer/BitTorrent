@@ -117,7 +117,11 @@ impl TorrentClientApp {
                     ui.label("Name:");
                     ui.horizontal(|ui| {
                         ui.strong(file_name);
-                        if ui.small_button("📋 Copy").on_hover_text("Copy torrent name").clicked() {
+                        if ui
+                            .small_button("📋 Copy")
+                            .on_hover_text("Copy torrent name")
+                            .clicked()
+                        {
                             ui.output_mut(|o| o.copied_text = file_name.to_string());
                         }
                     });
@@ -135,12 +139,20 @@ impl TorrentClientApp {
                             torrent_path.to_string()
                         };
                         ui.label(&display_source).on_hover_text(torrent_path);
-                        if ui.small_button("📋 Copy").on_hover_text("Copy source path or magnet URL").clicked() {
+                        if ui
+                            .small_button("📋 Copy")
+                            .on_hover_text("Copy source path or magnet URL")
+                            .clicked()
+                        {
                             ui.output_mut(|o| o.copied_text = torrent_path.to_string());
                         }
                         let source_p = std::path::Path::new(torrent_path);
                         if source_p.exists() {
-                            if ui.small_button("📂 Open Folder").on_hover_text("Open folder containing .torrent file").clicked() {
+                            if ui
+                                .small_button("📂 Open Folder")
+                                .on_hover_text("Open folder containing .torrent file")
+                                .clicked()
+                            {
                                 super::format::open_containing_folder(source_p);
                             }
                         }
@@ -149,8 +161,11 @@ impl TorrentClientApp {
 
                     let hash_hex = bittorrent_rs::util::info_hash_to_string(&ctx.info_hash);
                     let cached_in_dl = ctx.download_path.join(format!("{}.torrent", hash_hex));
-                    let cached_in_app = dirs::data_local_dir()
-                        .map(|d| d.join("bittorrent-client").join("torrents").join(format!("{}.torrent", hash_hex)));
+                    let cached_in_app = dirs::data_local_dir().map(|d| {
+                        d.join("bittorrent-client")
+                            .join("torrents")
+                            .join(format!("{}.torrent", hash_hex))
+                    });
                     let cached_torrent = if cached_in_dl.exists() {
                         Some(cached_in_dl)
                     } else if cached_in_app.as_ref().map(|p| p.exists()).unwrap_or(false) {
@@ -164,10 +179,18 @@ impl TorrentClientApp {
                         ui.horizontal(|ui| {
                             let p_str = cached_path.to_string_lossy().to_string();
                             ui.label(&p_str).on_hover_text(&p_str);
-                            if ui.small_button("📋 Copy").on_hover_text("Copy cached .torrent file path").clicked() {
+                            if ui
+                                .small_button("📋 Copy")
+                                .on_hover_text("Copy cached .torrent file path")
+                                .clicked()
+                            {
                                 ui.output_mut(|o| o.copied_text = p_str);
                             }
-                            if ui.small_button("📂 Open Folder").on_hover_text("Open folder containing cached .torrent file").clicked() {
+                            if ui
+                                .small_button("📂 Open Folder")
+                                .on_hover_text("Open folder containing cached .torrent file")
+                                .clicked()
+                            {
                                 super::format::open_containing_folder(&cached_path);
                             }
                         });
@@ -178,10 +201,18 @@ impl TorrentClientApp {
                     ui.horizontal(|ui| {
                         let dl_str = ctx.download_path.to_string_lossy().to_string();
                         ui.label(&dl_str);
-                        if ui.small_button("📂 Open Folder").on_hover_text("Open folder in file explorer").clicked() {
+                        if ui
+                            .small_button("📂 Open Folder")
+                            .on_hover_text("Open folder in file explorer")
+                            .clicked()
+                        {
                             super::format::open_containing_folder(&ctx.download_path);
                         }
-                        if ui.small_button("📋 Copy").on_hover_text("Copy save path").clicked() {
+                        if ui
+                            .small_button("📋 Copy")
+                            .on_hover_text("Copy save path")
+                            .clicked()
+                        {
                             ui.output_mut(|o| o.copied_text = dl_str);
                         }
                     });
@@ -198,14 +229,26 @@ impl TorrentClientApp {
                             let full_path_str = full_path.to_string_lossy().to_string();
                             ui.horizontal(|ui| {
                                 ui.strong(fn_str);
-                                if ui.small_button("📋 Copy Name").on_hover_text("Copy filename").clicked() {
+                                if ui
+                                    .small_button("📋 Copy Name")
+                                    .on_hover_text("Copy filename")
+                                    .clicked()
+                                {
                                     ui.output_mut(|o| o.copied_text = fn_str.clone());
                                 }
-                                if ui.small_button("📋 Copy Full Path").on_hover_text(format!("Copy full path:\n{}", full_path_str)).clicked() {
+                                if ui
+                                    .small_button("📋 Copy Full Path")
+                                    .on_hover_text(format!("Copy full path:\n{}", full_path_str))
+                                    .clicked()
+                                {
                                     ui.output_mut(|o| o.copied_text = full_path_str);
                                 }
                                 if full_path.exists() {
-                                    if ui.small_button("📂 Reveal").on_hover_text("Reveal file in file explorer").clicked() {
+                                    if ui
+                                        .small_button("📂 Reveal")
+                                        .on_hover_text("Reveal file in file explorer")
+                                        .clicked()
+                                    {
                                         super::format::open_containing_folder(&full_path);
                                     }
                                 }
@@ -216,33 +259,70 @@ impl TorrentClientApp {
                                 if ui.small_button("📁 View in Files Tab").clicked() {
                                     switch_to_files = true;
                                 }
-                                if ui.small_button("📋 Copy All Names").on_hover_text("Copy list of all filenames to clipboard").clicked() {
-                                    let names = ctx.files_to_download.iter().map(|f| f.torrent_path.as_str()).collect::<Vec<_>>().join("\n");
+                                if ui
+                                    .small_button("📋 Copy All Names")
+                                    .on_hover_text("Copy list of all filenames to clipboard")
+                                    .clicked()
+                                {
+                                    let names = ctx
+                                        .files_to_download
+                                        .iter()
+                                        .map(|f| f.torrent_path.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
                                     ui.output_mut(|o| o.copied_text = names);
                                 }
-                                if ui.small_button("📋 Copy Full Paths").on_hover_text("Copy all full disk paths to clipboard").clicked() {
-                                    let paths = ctx.files_to_download.iter().map(|f| ctx.download_path.join(&f.torrent_path).to_string_lossy().to_string()).collect::<Vec<_>>().join("\n");
+                                if ui
+                                    .small_button("📋 Copy Full Paths")
+                                    .on_hover_text("Copy all full disk paths to clipboard")
+                                    .clicked()
+                                {
+                                    let paths = ctx
+                                        .files_to_download
+                                        .iter()
+                                        .map(|f| {
+                                            ctx.download_path
+                                                .join(&f.torrent_path)
+                                                .to_string_lossy()
+                                                .to_string()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
                                     ui.output_mut(|o| o.copied_text = paths);
                                 }
                             });
                             ui.collapsing(format!("Files preview ({})", count), |ui| {
-                                egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
-                                    for f in &ctx.files_to_download {
-                                        let file_full = ctx.download_path.join(&f.torrent_path);
-                                        let icon = get_file_icon(&f.torrent_path);
-                                        ui.horizontal(|ui| {
-                                            ui.label(format!("{} {}", icon, f.torrent_path));
-                                            if ui.small_button("📋").on_hover_text("Copy filename").clicked() {
-                                                ui.output_mut(|o| o.copied_text = f.torrent_path.clone());
-                                            }
-                                            if file_full.exists() {
-                                                if ui.small_button("📂").on_hover_text("Reveal in Explorer").clicked() {
-                                                    super::format::open_containing_folder(&file_full);
+                                egui::ScrollArea::vertical()
+                                    .max_height(140.0)
+                                    .show(ui, |ui| {
+                                        for f in &ctx.files_to_download {
+                                            let file_full = ctx.download_path.join(&f.torrent_path);
+                                            let icon = get_file_icon(&f.torrent_path);
+                                            ui.horizontal(|ui| {
+                                                ui.label(format!("{} {}", icon, f.torrent_path));
+                                                if ui
+                                                    .small_button("📋")
+                                                    .on_hover_text("Copy filename")
+                                                    .clicked()
+                                                {
+                                                    ui.output_mut(|o| {
+                                                        o.copied_text = f.torrent_path.clone()
+                                                    });
                                                 }
-                                            }
-                                        });
-                                    }
-                                });
+                                                if file_full.exists() {
+                                                    if ui
+                                                        .small_button("📂")
+                                                        .on_hover_text("Reveal in Explorer")
+                                                        .clicked()
+                                                    {
+                                                        super::format::open_containing_folder(
+                                                            &file_full,
+                                                        );
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    });
                             });
                         }
                     });
@@ -252,7 +332,11 @@ impl TorrentClientApp {
                     ui.label("Info Hash:");
                     ui.horizontal(|ui| {
                         ui.label(&hash_hex);
-                        if ui.small_button("📋 Copy").on_hover_text("Copy info hash").clicked() {
+                        if ui
+                            .small_button("📋 Copy")
+                            .on_hover_text("Copy info hash")
+                            .clicked()
+                        {
                             ui.output_mut(|o| o.copied_text = hash_hex);
                         }
                     });
@@ -327,13 +411,39 @@ impl TorrentClientApp {
             let mut priority_changes: Vec<(usize, bittorrent_rs::FilePriority)> = Vec::new();
 
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!("{} files total", ctx.files_to_download.len())).strong());
-                if ui.small_button("📋 Copy All Relative Paths").on_hover_text("Copy relative paths of all files to clipboard").clicked() {
-                    let names = ctx.files_to_download.iter().map(|f| f.torrent_path.as_str()).collect::<Vec<_>>().join("\n");
+                ui.label(
+                    egui::RichText::new(format!("{} files total", ctx.files_to_download.len()))
+                        .strong(),
+                );
+                if ui
+                    .small_button("📋 Copy All Relative Paths")
+                    .on_hover_text("Copy relative paths of all files to clipboard")
+                    .clicked()
+                {
+                    let names = ctx
+                        .files_to_download
+                        .iter()
+                        .map(|f| f.torrent_path.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     ui.output_mut(|o| o.copied_text = names);
                 }
-                if ui.small_button("📋 Copy All Full Paths").on_hover_text("Copy full absolute paths of all files on disk").clicked() {
-                    let paths = ctx.files_to_download.iter().map(|f| ctx.download_path.join(&f.torrent_path).to_string_lossy().to_string()).collect::<Vec<_>>().join("\n");
+                if ui
+                    .small_button("📋 Copy All Full Paths")
+                    .on_hover_text("Copy full absolute paths of all files on disk")
+                    .clicked()
+                {
+                    let paths = ctx
+                        .files_to_download
+                        .iter()
+                        .map(|f| {
+                            ctx.download_path
+                                .join(&f.torrent_path)
+                                .to_string_lossy()
+                                .to_string()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     ui.output_mut(|o| o.copied_text = paths);
                 }
             });
@@ -357,14 +467,26 @@ impl TorrentClientApp {
                         let full_str = file_full.to_string_lossy().to_string();
                         ui.horizontal(|ui| {
                             ui.label(format!("{} {}", icon, file.torrent_path));
-                            if ui.small_button("📋").on_hover_text("Copy relative file path").clicked() {
+                            if ui
+                                .small_button("📋")
+                                .on_hover_text("Copy relative file path")
+                                .clicked()
+                            {
                                 ui.output_mut(|o| o.copied_text = file.torrent_path.clone());
                             }
-                            if ui.small_button("📋 Full").on_hover_text(format!("Copy full path on disk:\n{}", full_str)).clicked() {
+                            if ui
+                                .small_button("📋 Full")
+                                .on_hover_text(format!("Copy full path on disk:\n{}", full_str))
+                                .clicked()
+                            {
                                 ui.output_mut(|o| o.copied_text = full_str.clone());
                             }
                             if file_full.exists() {
-                                if ui.small_button("📂").on_hover_text("Reveal file in file explorer").clicked() {
+                                if ui
+                                    .small_button("📂")
+                                    .on_hover_text("Reveal file in file explorer")
+                                    .clicked()
+                                {
                                     super::format::open_containing_folder(&file_full);
                                 }
                             }

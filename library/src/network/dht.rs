@@ -28,8 +28,8 @@
 
 use crate::bencode::{BNode, Bencode};
 use crate::error::BitTorrentError;
-use crate::utils::util::LockExt;
 use crate::tracker::PeerDetails;
+use crate::utils::util::LockExt;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -330,10 +330,8 @@ impl Dht {
                                                 encode_string("id", &mut reply);
                                                 encode_bytes(&local_id, &mut reply);
 
-                                                let cached_peers = peer_cache
-                                                    .lock_safe()
-                                                    .get(&target)
-                                                    .cloned();
+                                                let cached_peers =
+                                                    peer_cache.lock_safe().get(&target).cloned();
                                                 if let Some(peers) = cached_peers {
                                                     encode_string("token", &mut reply);
                                                     encode_bytes(&token, &mut reply);
@@ -544,7 +542,9 @@ impl Dht {
             encode_dict_end(&mut out);
 
             // Seed bootstrap nodes asynchronously
-            let Ok(socket) = self.socket.try_clone() else { continue; };
+            let Ok(socket) = self.socket.try_clone() else {
+                continue;
+            };
             let addr_str = router.to_string();
             thread::spawn(move || {
                 if let Ok(mut resolved) = addr_str.to_socket_addrs() {
@@ -559,7 +559,9 @@ impl Dht {
     /// Recursively queries nodes closer to a target info_hash to discover active peers.
     pub fn lookup_peers(&self, info_hash: NodeId, peer_sender: Sender<PeerDetails>) {
         let routing_table = self.routing_table.clone();
-        let Ok(socket_clone) = self.socket.try_clone() else { return; };
+        let Ok(socket_clone) = self.socket.try_clone() else {
+            return;
+        };
         let local_id = self.node_id;
         let outstanding_queries = self.outstanding_queries.clone();
 
@@ -741,4 +743,3 @@ fn parse_compact_ipv6_nodes_slice(bytes: &[u8]) -> Vec<DhtNode> {
     }
     nodes
 }
-

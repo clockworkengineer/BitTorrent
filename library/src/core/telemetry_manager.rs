@@ -4,7 +4,7 @@
 //! completion progress, and network protocol counters without coarse mutex contention.
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 

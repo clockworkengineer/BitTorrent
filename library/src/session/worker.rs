@@ -5,8 +5,8 @@ use crate::manager::Manager;
 use crate::peer::{ConnectionType, Peer};
 use crate::peer_message::PeerMessage;
 use crate::tracker::PeerDetails;
-use std::sync::{Arc, Mutex};
 use crate::utils::util::LockExt;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Marks a peer IP address as dead in the peer manager registry.
@@ -773,8 +773,7 @@ async fn run_peer_loop(
                         let is_downloading = atomic_status
                             .load(std::sync::atomic::Ordering::Relaxed)
                             == TorrentStatus::Downloading as u8;
-                        let is_magnet_bootstrap =
-                            context.lock_safe().pieces_info_hash.is_empty();
+                        let is_magnet_bootstrap = context.lock_safe().pieces_info_hash.is_empty();
                         if is_magnet_bootstrap && is_downloading {
                             if handle_magnet_bootstrap(peer_details, peer, net, context, manager)
                                 .await
@@ -972,10 +971,7 @@ pub async fn handle_peer_session(
         }
     }
 
-    if context
-        .lock_safe()
-        .is_peer_blacklisted(&peer_details.ip)
-    {
+    if context.lock_safe().is_peer_blacklisted(&peer_details.ip) {
         return;
     }
 
@@ -1023,4 +1019,3 @@ pub async fn handle_peer_session(
         ctx.remove_peer(&peer_details.ip);
     }
 }
-

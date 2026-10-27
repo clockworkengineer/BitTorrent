@@ -5,6 +5,7 @@
 //! hash verification in < 200 ms without physical sockets or disk I/O.
 
 use bittorrent_rs::{
+    TorrentStatus,
     constants::BLOCK_SIZE,
     internals::TorrentContext,
     io_traits::{BlockReader, BlockWriter, MemStorage, MockSocket, Socket},
@@ -12,7 +13,6 @@ use bittorrent_rs::{
     peer_message::PeerMessage,
     selector::SequentialSelector,
     session::config::SessionConfig,
-    TorrentStatus,
 };
 use sha1::Digest;
 use std::collections::{HashMap, VecDeque};
@@ -30,16 +30,22 @@ pub struct VirtualSwarmNode {
 }
 
 /// Decodes a wire-format packet including the 4-byte big-endian length prefix.
-fn decode_wire_packet<'a>(packet: &'a [u8]) -> Result<PeerMessage<'a>, bittorrent_rs::BitTorrentError> {
+fn decode_wire_packet<'a>(
+    packet: &'a [u8],
+) -> Result<PeerMessage<'a>, bittorrent_rs::BitTorrentError> {
     if packet.len() < 4 {
-        return Err(bittorrent_rs::BitTorrentError::Parse("Packet shorter than 4-byte length prefix".into()));
+        return Err(bittorrent_rs::BitTorrentError::Parse(
+            "Packet shorter than 4-byte length prefix".into(),
+        ));
     }
     let length = u32::from_be_bytes([packet[0], packet[1], packet[2], packet[3]]) as usize;
     if length == 0 {
         return Ok(PeerMessage::KeepAlive);
     }
     if packet.len() < 4 + length {
-        return Err(bittorrent_rs::BitTorrentError::Parse("Truncated packet payload".into()));
+        return Err(bittorrent_rs::BitTorrentError::Parse(
+            "Truncated packet payload".into(),
+        ));
     }
     PeerMessage::decode(&packet[4..4 + length])
 }
@@ -58,7 +64,9 @@ impl VirtualSwarmNode {
         let storage = Arc::new(MemStorage::new(total_bytes as usize));
 
         if let Some(data) = initial_data {
-            storage.write_block(0, data).expect("Failed to write initial seed data");
+            storage
+                .write_block(0, data)
+                .expect("Failed to write initial seed data");
         }
 
         let mut config = SessionConfig::default();
@@ -78,7 +86,8 @@ impl VirtualSwarmNode {
         ctx.pieces_info_hash = pieces_info_hash.to_vec();
         ctx.init_pieces(num_pieces, piece_length);
         ctx.total_bytes_to_download = total_bytes;
-        ctx.transfer_metrics.set_total_bytes_to_download(total_bytes);
+        ctx.transfer_metrics
+            .set_total_bytes_to_download(total_bytes);
         ctx.storage = storage.clone();
 
         if is_seeder {
@@ -129,7 +138,11 @@ impl VirtualSwarmNode {
         // 2. Execute resulting actions (e.g. SendPiece)
         for (remote_id, action) in actions_to_execute {
             match action {
-                PeerAction::SendPiece { index, begin, block } => {
+                PeerAction::SendPiece {
+                    index,
+                    begin,
+                    block,
+                } => {
                     let msg = PeerMessage::Piece {
                         index,
                         begin,
@@ -154,7 +167,9 @@ impl VirtualSwarmNode {
                     let mut peer = peer_arc.lock().unwrap();
                     if peer.peer_choking.wait_one(0) && peer.outstanding_requests_count < 8 {
                         while peer.outstanding_requests_count < 4 {
-                            if let Some((pn, begin, length)) = ctx.next_block_request_for_peer(&peer) {
+                            if let Some((pn, begin, length)) =
+                                ctx.next_block_request_for_peer(&peer)
+                            {
                                 peer.outstanding_requests_count += 1;
                                 let bi = begin / BLOCK_SIZE as u32;
                                 peer.reserved_blocks.push((pn, bi, Instant::now()));
@@ -294,8 +309,24 @@ impl VirtualSwarm {
         peer_on_b.am_choking = false;
 
         // Exchange bitfields
-        let bitfield_a = self.nodes.get(node_a).unwrap().context.lock().unwrap().bitfield.clone();
-        let bitfield_b = self.nodes.get(node_b).unwrap().context.lock().unwrap().bitfield.clone();
+        let bitfield_a = self
+            .nodes
+            .get(node_a)
+            .unwrap()
+            .context
+            .lock()
+            .unwrap()
+            .bitfield
+            .clone();
+        let bitfield_b = self
+            .nodes
+            .get(node_b)
+            .unwrap()
+            .context
+            .lock()
+            .unwrap()
+            .bitfield
+            .clone();
 
         peer_on_a.remote_piece_bitfield = bitfield_b.clone();
         peer_on_b.remote_piece_bitfield = bitfield_a.clone();
@@ -327,12 +358,24 @@ impl VirtualSwarm {
 
         // Deliver initial Unchoke and Bitfield messages to inboxes
         if self.nodes.get(node_a).unwrap().is_seeder {
-            let inbox_b = self.nodes.get_mut(node_b).unwrap().inboxes.get_mut(node_a).unwrap();
+            let inbox_b = self
+                .nodes
+                .get_mut(node_b)
+                .unwrap()
+                .inboxes
+                .get_mut(node_a)
+                .unwrap();
             inbox_b.push_back(PeerMessage::Bitfield(&bitfield_a).encode());
             inbox_b.push_back(PeerMessage::Unchoke.encode());
         }
         if self.nodes.get(node_b).unwrap().is_seeder {
-            let inbox_a = self.nodes.get_mut(node_a).unwrap().inboxes.get_mut(node_b).unwrap();
+            let inbox_a = self
+                .nodes
+                .get_mut(node_a)
+                .unwrap()
+                .inboxes
+                .get_mut(node_b)
+                .unwrap();
             inbox_a.push_back(PeerMessage::Bitfield(&bitfield_b).encode());
             inbox_a.push_back(PeerMessage::Unchoke.encode());
         }

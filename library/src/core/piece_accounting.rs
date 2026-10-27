@@ -484,7 +484,9 @@ impl TorrentContext {
             self.set_status(TorrentStatus::Seeding);
             self.download_finished.set();
             if let Some(ref eb) = self.event_broadcaster {
-                eb.emit(crate::session::events::SessionEvent::StateChanged(TorrentStatus::Seeding));
+                eb.emit(crate::session::events::SessionEvent::StateChanged(
+                    TorrentStatus::Seeding,
+                ));
                 eb.emit(crate::session::events::SessionEvent::DownloadFinished);
             }
         }

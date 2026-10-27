@@ -65,11 +65,7 @@ impl Manager {
     /// Retrieves a peer matching the given info hash and IP address.
     pub fn get_peer(&self, info_hash: &[u8], ip: &str) -> Option<Arc<Mutex<Peer>>> {
         let tc = self.get_torrent_context(info_hash)?;
-        tc.lock_safe()
-            .peer_swarm
-            .read_safe()
-            .get(ip)
-            .cloned()
+        tc.lock_safe().peer_swarm.read_safe().get(ip).cloned()
     }
 
     /// Adds an IP address to the dead peer list to suppress reconnection attempts.

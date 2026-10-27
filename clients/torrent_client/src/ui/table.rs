@@ -108,12 +108,28 @@ impl TorrentClientApp {
                                     });
                                     if !ctx.files_to_download.is_empty() {
                                         ui.add_space(2.0);
-                                        ui.label(egui::RichText::new(format!("Content Files ({}):", ctx.files_to_download.len())).strong());
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "Content Files ({}):",
+                                                ctx.files_to_download.len()
+                                            ))
+                                            .strong(),
+                                        );
                                         for f in ctx.files_to_download.iter().take(5) {
-                                            ui.label(format!("• {} ({})", f.torrent_path, fmt_bytes(f.length)));
+                                            ui.label(format!(
+                                                "• {} ({})",
+                                                f.torrent_path,
+                                                fmt_bytes(f.length)
+                                            ));
                                         }
                                         if ctx.files_to_download.len() > 5 {
-                                            ui.label(egui::RichText::new(format!("... and {} more files (see 'Files' tab)", ctx.files_to_download.len() - 5)).weak());
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "... and {} more files (see 'Files' tab)",
+                                                    ctx.files_to_download.len() - 5
+                                                ))
+                                                .weak(),
+                                            );
                                         }
                                     }
                                 }

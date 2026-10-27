@@ -7,11 +7,11 @@
 use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::error::BitTorrentError;
 use crate::io_traits::{BlockReader, BlockStorage};
+use crate::utils::util::LockExt;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;
-use crate::utils::util::LockExt;
 use std::time::Duration;
 
 /// Adapter allowing any [`BlockStorage`] implementation to be used as a [`BlockReader`].
@@ -377,4 +377,3 @@ impl Seek for TorrentStream {
         Ok(self.position)
     }
 }
-

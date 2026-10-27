@@ -137,7 +137,10 @@ fn test_strongly_typed_bittorrent_error_variants() {
         path: "/mnt/fast/file.iso".to_string(),
         reason: "No space left on device".to_string(),
     };
-    assert!(err.to_string().contains("Storage failure on '/mnt/fast/file.iso'"));
+    assert!(
+        err.to_string()
+            .contains("Storage failure on '/mnt/fast/file.iso'")
+    );
 
     // Tracker variant
     let err = BitTorrentError::Tracker("HTTP 503 Service Unavailable".to_string());
@@ -148,7 +151,10 @@ fn test_strongly_typed_bittorrent_error_variants() {
         peer: "192.168.1.50:6881".to_string(),
         reason: "Malformed handshake preamble".to_string(),
     };
-    assert!(err.to_string().contains("Protocol violation from peer 192.168.1.50:6881"));
+    assert!(
+        err.to_string()
+            .contains("Protocol violation from peer 192.168.1.50:6881")
+    );
 
     // SessionClosed variant
     let err = BitTorrentError::SessionClosed;

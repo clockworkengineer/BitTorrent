@@ -12,10 +12,10 @@
 
 use crate::error::BitTorrentError;
 use crate::io_traits::{BlockReader, BlockStorage, BlockWriter};
+use crate::utils::util::LockExt;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use crate::utils::util::LockExt;
 use std::time::Instant;
 
 /// Individual cached data block with offset and metadata.
@@ -486,4 +486,3 @@ impl Drop for CachedBlockStorage {
         let _ = self.flush_all();
     }
 }
-

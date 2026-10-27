@@ -4,11 +4,11 @@
 //! enabling custom announcer protocols, mock announcers, and transport adapters
 //! without modifying existing library code.
 
+use crate::utils::util::RwLockExt;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use std::sync::{OnceLock, RwLock};
-use crate::utils::util::RwLockExt;
 
 use crate::error::BitTorrentError;
 use crate::network::announcer::{Announcer, AnnouncerEnum, UdpAnnouncer};

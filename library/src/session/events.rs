@@ -1,9 +1,9 @@
 //! Asynchronous session event stream and subscription broadcaster.
 
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
 use crate::core::torrent_context::TorrentStatus;
 use crate::utils::util::LockExt;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 
 /// Strongly typed lifecycle and progress events emitted by an active `TorrentSession`.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,20 +17,11 @@ pub enum SessionEvent {
         total_pieces: usize,
     },
     /// All pieces spanning a specific file have completed download and verification.
-    FileCompleted {
-        file_index: usize,
-        path: String,
-    },
+    FileCompleted { file_index: usize, path: String },
     /// A new peer connected and successfully completed the BitTorrent wire handshake.
-    PeerConnected {
-        addr: String,
-        client: String,
-    },
+    PeerConnected { addr: String, client: String },
     /// An existing peer disconnected or encountered a protocol error.
-    PeerDisconnected {
-        addr: String,
-        reason: String,
-    },
+    PeerDisconnected { addr: String, reason: String },
     /// BEP 9 extension metadata for a magnet link was fully assembled and validated.
     MetadataResolved {
         name: String,

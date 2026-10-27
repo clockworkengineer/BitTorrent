@@ -106,7 +106,10 @@ impl SessionState {
         }
 
         if meaningful_name.ends_with(".torrent") && meaningful_name.len() > 8 {
-            meaningful_name = meaningful_name.strip_suffix(".torrent").unwrap().to_string();
+            meaningful_name = meaningful_name
+                .strip_suffix(".torrent")
+                .unwrap()
+                .to_string();
         }
 
         if self.last_file_name != meaningful_name {

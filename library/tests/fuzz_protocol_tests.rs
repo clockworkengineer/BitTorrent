@@ -85,7 +85,11 @@ fn test_fuzz_bencode_malformed_integers() {
 
     for &case in adversarial_cases {
         let res = Bencode::decode(case);
-        assert!(res.is_err(), "Malformed integer {:?} must be rejected", String::from_utf8_lossy(case));
+        assert!(
+            res.is_err(),
+            "Malformed integer {:?} must be rejected",
+            String::from_utf8_lossy(case)
+        );
     }
 }
 
@@ -93,16 +97,20 @@ fn test_fuzz_bencode_malformed_integers() {
 fn test_fuzz_bencode_string_length_overflow_and_truncation() {
     let malicious_strings: &[&[u8]] = &[
         b"999999999999999999999999:abc", // Exceeds usize
-        b"1000000:short",                 // Declares 1MB, only 5 bytes present
-        b"-5:hello",                      // Negative length
-        b"00:hello",                      // Leading zero
-        b"3:",                            // Missing payload entirely
-        b":",                             // Missing length and payload
+        b"1000000:short",                // Declares 1MB, only 5 bytes present
+        b"-5:hello",                     // Negative length
+        b"00:hello",                     // Leading zero
+        b"3:",                           // Missing payload entirely
+        b":",                            // Missing length and payload
     ];
 
     for &case in malicious_strings {
         let res = Bencode::decode(case);
-        assert!(res.is_err(), "Malformed string {:?} must be rejected", String::from_utf8_lossy(case));
+        assert!(
+            res.is_err(),
+            "Malformed string {:?} must be rejected",
+            String::from_utf8_lossy(case)
+        );
     }
 }
 
@@ -128,7 +136,10 @@ fn test_fuzz_wire_message_boundary_edge_cases() {
     assert_eq!(PeerMessage::decode(&[0]).unwrap(), PeerMessage::Choke);
     assert_eq!(PeerMessage::decode(&[1]).unwrap(), PeerMessage::Unchoke);
     assert_eq!(PeerMessage::decode(&[2]).unwrap(), PeerMessage::Interested);
-    assert_eq!(PeerMessage::decode(&[3]).unwrap(), PeerMessage::NotInterested);
+    assert_eq!(
+        PeerMessage::decode(&[3]).unwrap(),
+        PeerMessage::NotInterested
+    );
 
     // 3. Have with truncated index payload
     assert!(PeerMessage::decode(&[4, 0, 1]).is_err()); // Only 2 bytes, needs 4

@@ -20,8 +20,6 @@ pub mod worker;
 #[cfg(feature = "std")]
 pub use self::builder::{TorrentSessionBuilder, TorrentSource};
 #[cfg(feature = "std")]
-pub use self::events::{EventBroadcaster, SessionEvent};
-#[cfg(feature = "std")]
 pub use self::choking_policy::{
     BitTyrantPolicy, ChokingDecision, ChokingPolicy, PolicyChokingStrategy, RoundRobinPolicy,
     StandardTitForTatPolicy,
@@ -30,5 +28,7 @@ pub use self::choking_policy::{
 pub use self::client::*;
 #[cfg(feature = "std")]
 pub use self::config::SessionConfig;
+#[cfg(feature = "std")]
+pub use self::events::{EventBroadcaster, SessionEvent};
 #[cfg(feature = "std")]
 pub use self::session::*;

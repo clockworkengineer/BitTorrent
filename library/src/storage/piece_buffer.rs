@@ -84,9 +84,9 @@ pub struct BlockBufferPoolMetrics {
     pub capacity: usize,
 }
 
+use crate::utils::util::LockExt;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
-use crate::utils::util::LockExt;
 
 /// A thread-safe slab allocator and object pool for reusable 16 KiB block buffers.
 ///

@@ -9,11 +9,11 @@ use crate::manual_reset_event::ManualResetEvent;
 use crate::network::announcer::Announcer;
 use crate::tracker::{AnnounceResponse, PeerDetails, ScrapeResponse, TrackerAnnounceContext};
 
+use crate::utils::util::LockExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use crate::utils::util::LockExt;
 use std::time::Duration;
 
 /// State of a WebRTC Data Channel connection.
@@ -161,7 +161,9 @@ impl AsyncSocket for WebRtcSocketAdapter {
                 if !queue.is_empty() {
                     let to_read = std::cmp::min(buf.len(), queue.len());
                     for i in 0..to_read {
-                        if let Some(b) = queue.pop_front() { buf[i] = b; }
+                        if let Some(b) = queue.pop_front() {
+                            buf[i] = b;
+                        }
                     }
                     if queue.is_empty() {
                         self.notifier.reset();
@@ -794,4 +796,3 @@ impl WebTorrentBridge {
         }
     }
 }
-

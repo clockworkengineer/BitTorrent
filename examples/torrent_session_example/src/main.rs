@@ -19,12 +19,9 @@ fn main() {
     println!("Download directory: {}", download_dir.display());
 
     // 1. Build session using fluent typestate builder and subscribe to events
-    let builder = TorrentSession::builder(&torrent_path, &download_dir)
-        .with_seeding(false);
+    let builder = TorrentSession::builder(&torrent_path, &download_dir).with_seeding(false);
 
-    let mut session = builder
-        .build()
-        .expect("Failed to create torrent session");
+    let mut session = builder.build().expect("Failed to create torrent session");
 
     // Subscribe to strongly typed asynchronous events
     let events = session.events();
@@ -64,4 +61,3 @@ fn main() {
     }
     println!("Stopped. Final status={:?}", session.status());
 }
-

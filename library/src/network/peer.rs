@@ -41,13 +41,13 @@ use crate::peer_message::PeerMessage;
 use crate::peer_network::PeerNetwork;
 use crate::tracker::PeerDetails;
 use crate::util::get_bitfield_index_and_mask;
+use crate::utils::util::{LockExt, RwLockExt};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
-use crate::utils::util::{LockExt, RwLockExt};
 
 /// Actions returned by message handling to be executed asynchronously outside locks.
 #[derive(Debug)]
@@ -1505,4 +1505,3 @@ impl Peer {
         Ok(())
     }
 }
-

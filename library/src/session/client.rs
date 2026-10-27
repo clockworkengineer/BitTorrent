@@ -96,8 +96,7 @@ impl TorrentClient {
                         let duration = Duration::from_secs(interval as u64);
                         let mut ended = false;
                         while start_time.elapsed() < duration {
-                            if context_reannounce.lock_safe().status
-                                == crate::TorrentStatus::Ended
+                            if context_reannounce.lock_safe().status == crate::TorrentStatus::Ended
                             {
                                 ended = true;
                                 break;

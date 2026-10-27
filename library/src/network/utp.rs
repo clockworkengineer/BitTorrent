@@ -19,10 +19,10 @@
 
 use crate::error::BitTorrentError;
 use crate::io_traits::AsyncSocket;
+use crate::utils::util::LockExt;
 use std::collections::{BTreeMap, VecDeque};
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
-use crate::utils::util::LockExt;
 
 /// The uTP extension types defined by BEP 29.
 pub const UTP_EXT_SACK: u8 = 1;
@@ -1535,4 +1535,3 @@ impl AsyncSocket for UtpSocketAdapter {
         }
     }
 }
-

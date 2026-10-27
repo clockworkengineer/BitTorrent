@@ -90,7 +90,12 @@ impl PieceManager {
     }
 
     /// Re-initializes piece vectors when torrent metainfo is acquired.
-    pub fn init_pieces(&mut self, number_of_pieces: usize, piece_length: u32, pieces_info_hash: Vec<u8>) {
+    pub fn init_pieces(
+        &mut self,
+        number_of_pieces: usize,
+        piece_length: u32,
+        pieces_info_hash: Vec<u8>,
+    ) {
         self.number_of_pieces = number_of_pieces;
         self.piece_length = piece_length;
         self.pieces_info_hash = pieces_info_hash;
