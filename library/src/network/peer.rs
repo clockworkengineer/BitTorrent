@@ -224,6 +224,7 @@ pub struct Peer {
     pub supports_holepunch: bool,
     pub connection_type: ConnectionType,
     pub peer_is_seed: bool,
+    pub buffer_pool: Arc<crate::storage::piece_buffer::BlockBufferPool>,
 }
 
 impl Peer {
@@ -275,7 +276,23 @@ impl Peer {
             supports_holepunch: false,
             connection_type,
             peer_is_seed: false,
+            buffer_pool: Arc::clone(crate::storage::piece_buffer::BlockBufferPool::global()),
         }
+    }
+
+    /// Sets an explicit shared buffer pool for block operations.
+    pub fn set_buffer_pool(&mut self, pool: Arc<crate::storage::piece_buffer::BlockBufferPool>) {
+        self.buffer_pool = pool;
+    }
+
+    /// Acquires a reusable buffer from the peer's buffer pool.
+    pub fn acquire_buffer(&self, capacity: usize) -> Vec<u8> {
+        self.buffer_pool.acquire(capacity)
+    }
+
+    /// Releases a reusable buffer back to the peer's buffer pool.
+    pub fn release_buffer(&self, buf: Vec<u8>) {
+        self.buffer_pool.release(buf);
     }
 
     /// Creates a new `Peer` representing a remote browser/client connected via WebRTC Data Channel.

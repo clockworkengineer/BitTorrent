@@ -178,6 +178,8 @@ pub use storage::fast_resume::{FastResumeData, FastResumeFileEntry};
 #[cfg(feature = "std")]
 pub use storage::piece_buffer;
 #[cfg(feature = "std")]
+pub use storage::piece_buffer::{BlockBufferPool, BlockBufferPoolMetrics, PieceBuffer, PooledBlockBuffer};
+#[cfg(feature = "std")]
 pub use storage::piece_request;
 #[cfg(feature = "std")]
 pub use storage::stream;

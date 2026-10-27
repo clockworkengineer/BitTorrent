@@ -50,44 +50,31 @@ pub struct CacheMetrics {
     pub pooled_buffers_count: usize,
 }
 
+use crate::storage::piece_buffer::BlockBufferPool;
+
 struct CacheState {
     blocks: BTreeMap<u64, CacheBlock>,
-    buffer_pool: Vec<Vec<u8>>,
-    max_pooled_buffers: usize,
+    pool: Arc<BlockBufferPool>,
     current_cached_bytes: usize,
     current_dirty_bytes: usize,
 }
 
 impl CacheState {
-    fn new(max_pooled_buffers: usize) -> Self {
+    fn new(pool: Arc<BlockBufferPool>) -> Self {
         CacheState {
             blocks: BTreeMap::new(),
-            buffer_pool: Vec::with_capacity(max_pooled_buffers.min(256)),
-            max_pooled_buffers,
+            pool,
             current_cached_bytes: 0,
             current_dirty_bytes: 0,
         }
     }
 
     fn acquire_buffer(&mut self, required_capacity: usize) -> Vec<u8> {
-        Self::acquire_from_pool(&mut self.buffer_pool, required_capacity)
+        self.pool.acquire(required_capacity)
     }
 
-    fn acquire_from_pool(pool: &mut Vec<Vec<u8>>, required_capacity: usize) -> Vec<u8> {
-        while let Some(mut buf) = pool.pop() {
-            if buf.capacity() >= required_capacity {
-                buf.clear();
-                return buf;
-            }
-        }
-        Vec::with_capacity(required_capacity.max(16384))
-    }
-
-    fn return_buffer(&mut self, mut buf: Vec<u8>) {
-        if buf.capacity() >= 16384 && self.buffer_pool.len() < self.max_pooled_buffers {
-            buf.clear();
-            self.buffer_pool.push(buf);
-        }
+    fn return_buffer(&mut self, buf: Vec<u8>) {
+        self.pool.release(buf);
     }
 }
 
@@ -95,6 +82,7 @@ impl CacheState {
 pub struct CachedBlockStorage {
     inner: Arc<dyn BlockStorage>,
     max_cache_bytes: usize,
+    pool: Arc<BlockBufferPool>,
     state: Mutex<CacheState>,
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
@@ -108,10 +96,21 @@ impl CachedBlockStorage {
     /// Wraps an underlying `BlockStorage` with an in-memory write-coalescing cache of `max_cache_bytes` size.
     pub fn new(inner: Arc<dyn BlockStorage>, max_cache_bytes: usize) -> Self {
         let max_pooled_buffers = (max_cache_bytes / 16384).clamp(32, 2048);
+        let pool = Arc::new(BlockBufferPool::new(max_pooled_buffers, 16384));
+        Self::new_with_pool(inner, max_cache_bytes, pool)
+    }
+
+    /// Wraps an underlying `BlockStorage` using an explicit shared [`BlockBufferPool`].
+    pub fn new_with_pool(
+        inner: Arc<dyn BlockStorage>,
+        max_cache_bytes: usize,
+        pool: Arc<BlockBufferPool>,
+    ) -> Self {
         CachedBlockStorage {
             inner,
             max_cache_bytes,
-            state: Mutex::new(CacheState::new(max_pooled_buffers)),
+            state: Mutex::new(CacheState::new(Arc::clone(&pool))),
+            pool,
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             flushes_performed: AtomicU64::new(0),
@@ -126,9 +125,15 @@ impl CachedBlockStorage {
         &self.inner
     }
 
+    /// Returns a reference to the shared buffer pool used by this cache.
+    pub fn pool(&self) -> &Arc<BlockBufferPool> {
+        &self.pool
+    }
+
     /// Retrieves a snapshot of operational metrics from the cache.
     pub fn metrics(&self) -> CacheMetrics {
         let state = self.state.lock_safe();
+        let pool_avail = self.pool.metrics().available_buffers;
         CacheMetrics {
             cache_hits: self.cache_hits.load(Ordering::Relaxed),
             cache_misses: self.cache_misses.load(Ordering::Relaxed),
@@ -138,7 +143,7 @@ impl CachedBlockStorage {
             coalesced_write_operations: self.coalesced_write_operations.load(Ordering::Relaxed),
             current_cached_bytes: state.current_cached_bytes,
             current_dirty_bytes: state.current_dirty_bytes,
-            pooled_buffers_count: state.buffer_pool.len(),
+            pooled_buffers_count: pool_avail,
         }
     }
 
@@ -235,8 +240,7 @@ impl CachedBlockStorage {
                     continue;
                 }
             }
-            let mut chunk_buf =
-                CacheState::acquire_from_pool(&mut state.buffer_pool, block.data.len());
+            let mut chunk_buf = self.pool.acquire(block.data.len());
             chunk_buf.clear();
             chunk_buf.extend_from_slice(&block.data);
             chunks.push((offset, chunk_buf));
@@ -253,7 +257,7 @@ impl CachedBlockStorage {
                 .fetch_add(1, Ordering::Relaxed);
             self.bytes_flushed_to_storage
                 .fetch_add(coalesced_data.len() as u64, Ordering::Relaxed);
-            state.return_buffer(coalesced_data);
+            self.pool.release(coalesced_data);
         }
 
         // Mark flushed blocks as clean in the cache
