@@ -38,8 +38,9 @@ use core::pin::Pin;
 use futures::executor::LocalPool;
 use futures::task::LocalSpawnExt;
 
-pub use super::builder::{TorrentSessionBuilder, TorrentSource};
+pub use super::builder::{Initial, Ready, TorrentSessionBuilder, TorrentSource};
 pub use super::config::SessionConfig;
+pub use super::events::{EventBroadcaster, SessionEvent};
 
 /// Statistics snapshot of an active torrent session.
 #[derive(Debug, Clone)]
@@ -69,6 +70,7 @@ pub struct TorrentSession {
     pub atomic_status: Arc<AtomicU8>,
     pub transfer_metrics: TransferMetrics,
     pub peer_swarm: Arc<RwLock<HashMap<String, Arc<Mutex<Peer>>>>>,
+    pub event_broadcaster: EventBroadcaster,
 }
 
 impl TorrentSession {
@@ -76,7 +78,7 @@ impl TorrentSession {
     pub fn builder(
         torrent_path: impl AsRef<Path>,
         download_path: impl AsRef<Path>,
-    ) -> TorrentSessionBuilder {
+    ) -> TorrentSessionBuilder<Ready> {
         TorrentSessionBuilder::new(torrent_path, download_path)
     }
 
@@ -84,7 +86,7 @@ impl TorrentSession {
     pub fn from_magnet(
         magnet_link: impl Into<String>,
         download_path: impl AsRef<Path>,
-    ) -> TorrentSessionBuilder {
+    ) -> TorrentSessionBuilder<Ready> {
         TorrentSessionBuilder::from_magnet(magnet_link, download_path)
     }
 
@@ -114,6 +116,9 @@ impl TorrentSession {
             spawn_stats_loop_standard(context.clone(), atomic_status.clone(), task_tx.clone());
         }
 
+        let event_broadcaster = EventBroadcaster::new();
+        context.lock_safe().event_broadcaster = Some(event_broadcaster.clone());
+
         let session = TorrentSession {
             context,
             download_path,
@@ -128,6 +133,7 @@ impl TorrentSession {
             atomic_status,
             transfer_metrics,
             peer_swarm,
+            event_broadcaster,
         };
 
         if validate {
@@ -638,6 +644,55 @@ impl TorrentSession {
         Ok(())
     }
 
+    /// Commences active torrent transfer (downloading or seeding) in a single intuitive call.
+    ///
+    /// Automatically coordinates peer discovery, establishes connections, and manages
+    /// protocol transitions. Emits a [`SessionEvent::StateChanged`] event to all active event stream subscribers.
+    ///
+    /// # Errors
+    /// Returns [`BitTorrentError`] if background thread spawning, port mapping, or tracker
+    /// requests fail fatally.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # use bittorrent_rs::TorrentSession;
+    /// # fn run(mut session: TorrentSession) -> Result<(), Box<dyn std::error::Error>> {
+    /// session.start()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn start(&mut self) -> Result<(), BitTorrentError> {
+        let is_seeding = {
+            let ctx = self.context.lock_safe();
+            ctx.status == TorrentStatus::Seeding
+        };
+        let res = if is_seeding {
+            self.start_seeding()
+        } else {
+            self.start_download()
+        };
+        if res.is_ok() {
+            let status = self.status();
+            self.emit_event(SessionEvent::StateChanged(status));
+        }
+        res
+    }
+
+    /// Subscribes to the asynchronous event stream for this session.
+    pub fn subscribe(&self) -> std::sync::mpsc::Receiver<SessionEvent> {
+        self.event_broadcaster.subscribe()
+    }
+
+    /// Returns an asynchronous event stream receiver emitting [`SessionEvent`] notifications.
+    pub fn events(&self) -> std::sync::mpsc::Receiver<SessionEvent> {
+        self.event_broadcaster.subscribe()
+    }
+
+    /// Broadcasts a [`SessionEvent`] notification to all active subscribers.
+    pub fn emit_event(&self, event: SessionEvent) {
+        self.event_broadcaster.emit(event);
+    }
+
     /// Starts the session in seeding mode, serving verified local pieces to peers.
     pub fn start_seeding(&mut self) -> Result<(), BitTorrentError> {
         {
@@ -662,7 +717,11 @@ impl TorrentSession {
     /// # }
     /// ```
     pub fn pause(&mut self) -> Result<(), BitTorrentError> {
-        self.context.lock_safe().pause()
+        let res = self.context.lock_safe().pause();
+        if res.is_ok() {
+            self.emit_event(SessionEvent::StateChanged(TorrentStatus::Paused));
+        }
+        res
     }
 
     /// Resumes the torrent download session from a paused state.
@@ -679,7 +738,12 @@ impl TorrentSession {
     /// # }
     /// ```
     pub fn resume(&mut self) -> Result<(), BitTorrentError> {
-        self.context.lock_safe().resume()
+        let res = self.context.lock_safe().resume();
+        if res.is_ok() {
+            let st = self.status();
+            self.emit_event(SessionEvent::StateChanged(st));
+        }
+        res
     }
 
     /// Stops the session, disconnecting all connected peers and releasing resources.
@@ -713,7 +777,11 @@ impl TorrentSession {
         let context = self.context.lock_safe();
         context.disconnect_all_peers();
         drop(context);
-        self.context.lock_safe().stop()
+        let res = self.context.lock_safe().stop();
+        if res.is_ok() {
+            self.emit_event(SessionEvent::StateChanged(TorrentStatus::Ended));
+        }
+        res
     }
 
     /// Flushes any pending dirty blocks in the in-memory write cache out to disk.

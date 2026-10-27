@@ -26,6 +26,17 @@ impl TorrentContext {
         }
         self.piece_store.mark_piece_local(piece_number, local);
         self.piece_manager.mark_piece_local(piece_number, local);
+
+        if local {
+            if let Some(ref eb) = self.event_broadcaster {
+                let completed = self.piece_manager.completed_pieces_count();
+                eb.emit(crate::session::events::SessionEvent::PieceCompleted {
+                    piece_index: piece_number as usize,
+                    total_completed: completed,
+                    total_pieces: self.number_of_pieces,
+                });
+            }
+        }
     }
 
     /// Checks if a specific piece has been fully downloaded and verified locally.
@@ -472,6 +483,10 @@ impl TorrentContext {
         if self.status == TorrentStatus::Downloading && self.is_download_complete() {
             self.set_status(TorrentStatus::Seeding);
             self.download_finished.set();
+            if let Some(ref eb) = self.event_broadcaster {
+                eb.emit(crate::session::events::SessionEvent::StateChanged(TorrentStatus::Seeding));
+                eb.emit(crate::session::events::SessionEvent::DownloadFinished);
+            }
         }
     }
 

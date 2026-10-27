@@ -58,6 +58,20 @@ pub enum BitTorrentError {
     MessageTooLarge(usize),
     /// Hash verification failed for the given piece index.
     PieceHashMismatch(usize),
+    /// Storage failure on a specific file path.
+    Storage {
+        path: alloc::string::String,
+        reason: alloc::string::String,
+    },
+    /// Tracker communication error.
+    Tracker(alloc::string::String),
+    /// Peer wire protocol violation with peer details.
+    ProtocolViolation {
+        peer: alloc::string::String,
+        reason: alloc::string::String,
+    },
+    /// Torrent session is shut down or closed.
+    SessionClosed,
 }
 
 impl core::fmt::Display for BitTorrentError {
@@ -78,6 +92,14 @@ impl core::fmt::Display for BitTorrentError {
             BitTorrentError::PieceHashMismatch(piece) => {
                 write!(f, "Piece {piece} hash verification failed")
             }
+            BitTorrentError::Storage { path, reason } => {
+                write!(f, "Storage failure on '{path}': {reason}")
+            }
+            BitTorrentError::Tracker(msg) => write!(f, "Tracker error: {msg}"),
+            BitTorrentError::ProtocolViolation { peer, reason } => {
+                write!(f, "Protocol violation from peer {peer}: {reason}")
+            }
+            BitTorrentError::SessionClosed => write!(f, "Torrent session is closed"),
         }
     }
 }
@@ -98,6 +120,13 @@ impl From<io::Error> for BitTorrentError {
     /// Converts a standard `io::Error` into a `BitTorrentError`.
     fn from(err: io::Error) -> Self {
         BitTorrentError::Io(err)
+    }
+}
+
+impl From<BencodeError> for BitTorrentError {
+    /// Converts a `BencodeError` into a `BitTorrentError`.
+    fn from(err: BencodeError) -> Self {
+        BitTorrentError::Bencode(err)
     }
 }
 

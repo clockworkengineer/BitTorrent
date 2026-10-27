@@ -299,7 +299,11 @@ pub use session::client::TorrentClient;
 #[cfg(feature = "std")]
 pub use session::config::{ChokingStrategy, SessionConfig, StandardChoking};
 #[cfg(feature = "std")]
-pub use session::session::{TorrentSession, TorrentSessionBuilder};
+pub use session::builder::{Initial, Ready, TorrentSessionBuilder, TorrentSource};
+#[cfg(feature = "std")]
+pub use session::events::{EventBroadcaster, SessionEvent};
+#[cfg(feature = "std")]
+pub use session::session::TorrentSession;
 #[cfg(feature = "std")]
 pub use storage::erasure_staging::{
     AdaptiveErasureStaging, BlockArrivalOutcome, EndgameStagingMetrics, StagedBlock,

@@ -7,6 +7,8 @@ pub mod client;
 #[cfg(feature = "std")]
 pub mod config;
 #[cfg(feature = "std")]
+pub mod events;
+#[cfg(feature = "std")]
 pub mod manager;
 #[cfg(feature = "std")]
 pub mod session;
@@ -17,6 +19,8 @@ pub mod worker;
 
 #[cfg(feature = "std")]
 pub use self::builder::{TorrentSessionBuilder, TorrentSource};
+#[cfg(feature = "std")]
+pub use self::events::{EventBroadcaster, SessionEvent};
 #[cfg(feature = "std")]
 pub use self::choking_policy::{
     BitTyrantPolicy, ChokingDecision, ChokingPolicy, PolicyChokingStrategy, RoundRobinPolicy,

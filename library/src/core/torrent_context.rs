@@ -174,6 +174,7 @@ pub struct TorrentContext {
     pub swarm_manager: SwarmManager,
     pub storage_manager: StorageManager,
     pub metadata_manager: MetadataManager,
+    pub event_broadcaster: Option<crate::session::events::EventBroadcaster>,
 }
 
 struct TorrentContextParams {
@@ -413,6 +414,7 @@ impl TorrentContext {
             swarm_manager,
             storage_manager,
             metadata_manager,
+            event_broadcaster: None,
         }
     }
 

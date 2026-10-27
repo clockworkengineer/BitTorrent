@@ -16,6 +16,8 @@ use super::config::SessionConfig;
 use super::session::TorrentSession;
 use crate::utils::util::LockExt;
 
+use core::marker::PhantomData;
+
 /// The source of a torrent session (either a `.torrent` file or a magnet link).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TorrentSource {
@@ -23,7 +25,50 @@ pub enum TorrentSource {
     Magnet(String),
 }
 
+impl From<PathBuf> for TorrentSource {
+    fn from(p: PathBuf) -> Self {
+        TorrentSource::File(p)
+    }
+}
+
+impl From<&Path> for TorrentSource {
+    fn from(p: &Path) -> Self {
+        TorrentSource::File(p.to_path_buf())
+    }
+}
+
+impl From<&str> for TorrentSource {
+    fn from(s: &str) -> Self {
+        if s.starts_with("magnet:") {
+            TorrentSource::Magnet(s.to_string())
+        } else {
+            TorrentSource::File(PathBuf::from(s))
+        }
+    }
+}
+
+impl From<String> for TorrentSource {
+    fn from(s: String) -> Self {
+        if s.starts_with("magnet:") {
+            TorrentSource::Magnet(s)
+        } else {
+            TorrentSource::File(PathBuf::from(s))
+        }
+    }
+}
+
+/// Typestate marker indicating the builder is in an uninitialized state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Initial;
+
+/// Typestate marker indicating the builder has all mandatory fields and is ready to configure or build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ready;
+
 /// Fluent builder for configuring and creating a `TorrentSession`.
+///
+/// Supports both typestate initialization (`TorrentSessionBuilder<Initial>` -> `TorrentSessionBuilder<Ready>`)
+/// and direct creation via [`TorrentSessionBuilder::new`] or [`TorrentSession::builder`].
 ///
 /// # Examples
 /// ```no_run
@@ -39,8 +84,13 @@ pub enum TorrentSource {
 /// let magnet_session = TorrentSession::from_magnet("magnet:?xt=urn:btih:...", "/downloads")
 ///     .build()
 ///     .unwrap();
+///
+/// // Create and immediately start in a single call
+/// let running_session = TorrentSession::builder("my.torrent", "/downloads")
+///     .start()
+///     .unwrap();
 /// ```
-pub struct TorrentSessionBuilder {
+pub struct TorrentSessionBuilder<State = Ready> {
     pub(super) source: TorrentSource,
     pub(super) download_path: PathBuf,
     pub(super) seeding: bool,
@@ -52,9 +102,54 @@ pub struct TorrentSessionBuilder {
     pub(super) web_seeds: Vec<String>,
     pub(super) auto_inject_webtorrent: bool,
     pub(super) selected_files: Option<Vec<usize>>,
+    pub(super) _marker: PhantomData<State>,
 }
 
-impl TorrentSessionBuilder {
+impl TorrentSessionBuilder<Initial> {
+    /// Creates a new builder in the uninitialized `Initial` typestate.
+    pub fn initial() -> Self {
+        TorrentSessionBuilder {
+            source: TorrentSource::File(PathBuf::new()),
+            download_path: PathBuf::new(),
+            seeding: false,
+            manager: None,
+            config: SessionConfig::default(),
+            selector: Arc::new(RarestFirstSelector),
+            fast_resume: None,
+            fast_resume_file: None,
+            web_seeds: Vec::new(),
+            auto_inject_webtorrent: true,
+            selected_files: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Sets the source for the torrent session.
+    pub fn with_source(mut self, source: impl Into<TorrentSource>) -> Self {
+        self.source = source.into();
+        self
+    }
+
+    /// Sets the destination download directory and transitions the builder into the `Ready` typestate.
+    pub fn with_download_path(self, download_path: impl AsRef<Path>) -> TorrentSessionBuilder<Ready> {
+        TorrentSessionBuilder {
+            source: self.source,
+            download_path: download_path.as_ref().to_path_buf(),
+            seeding: self.seeding,
+            manager: self.manager,
+            config: self.config,
+            selector: self.selector,
+            fast_resume: self.fast_resume,
+            fast_resume_file: self.fast_resume_file,
+            web_seeds: self.web_seeds,
+            auto_inject_webtorrent: self.auto_inject_webtorrent,
+            selected_files: self.selected_files,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl TorrentSessionBuilder<Ready> {
     /// Creates a new builder with the given torrent file and download directory.
     pub fn new(torrent_path: impl AsRef<Path>, download_path: impl AsRef<Path>) -> Self {
         TorrentSessionBuilder {
@@ -69,6 +164,7 @@ impl TorrentSessionBuilder {
             web_seeds: Vec::new(),
             auto_inject_webtorrent: true,
             selected_files: None,
+            _marker: PhantomData,
         }
     }
 
@@ -86,7 +182,56 @@ impl TorrentSessionBuilder {
             web_seeds: Vec::new(),
             auto_inject_webtorrent: true,
             selected_files: None,
+            _marker: PhantomData,
         }
+    }
+
+    /// Reconfigures the source for the torrent session.
+    pub fn with_source(mut self, source: impl Into<TorrentSource>) -> Self {
+        self.source = source.into();
+        self
+    }
+
+    /// Reconfigures the destination download directory.
+    pub fn with_download_path(mut self, download_path: impl AsRef<Path>) -> Self {
+        self.download_path = download_path.as_ref().to_path_buf();
+        self
+    }
+
+    /// Overrides session configuration via a custom [`SessionConfig`].
+    pub fn with_config(mut self, config: SessionConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Sets a custom piece-selection strategy (default: `RarestFirstSelector`).
+    pub fn with_selector(mut self, selector: Arc<dyn PieceSelector>) -> Self {
+        self.selector = selector;
+        self
+    }
+
+    /// Sets whether the session begins in seeding mode (all pieces already local).
+    pub fn with_seeding(mut self, seeding: bool) -> Self {
+        self.seeding = seeding;
+        self
+    }
+
+    /// Attaches a peer manager registry for dead-peer tracking across sessions.
+    pub fn with_manager(mut self, manager: Arc<Manager>) -> Self {
+        self.manager = Some(manager);
+        self
+    }
+
+    /// Attaches pre-parsed BEP 47 fast-resume data for instant verification and resume.
+    pub fn with_fast_resume(mut self, data: FastResumeData) -> Self {
+        self.fast_resume = Some(data);
+        self
+    }
+
+    /// Attaches a path to a `.resume` or `.fastresume` file for instant verification and resume.
+    pub fn with_fast_resume_file(mut self, path: impl AsRef<Path>) -> Self {
+        self.fast_resume_file = Some(path.as_ref().to_path_buf());
+        self
     }
 
     /// Sets whether the session begins in seeding mode (all pieces already local).
@@ -423,6 +568,26 @@ impl TorrentSessionBuilder {
             }
         };
         session.manager = self.manager;
+        Ok(session)
+    }
+
+    /// Consumes the builder, constructs the `TorrentSession`, and immediately starts downloading
+    /// in a single intuitive call.
+    ///
+    /// # Errors
+    /// Returns [`BitTorrentError`] if session creation or startup fails.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use bittorrent_rs::TorrentSession;
+    ///
+    /// let mut session = TorrentSession::builder("file.torrent", "./downloads")
+    ///     .start()
+    ///     .unwrap();
+    /// ```
+    pub fn start(self) -> Result<TorrentSession, BitTorrentError> {
+        let mut session = self.build()?;
+        session.start()?;
         Ok(session)
     }
 }

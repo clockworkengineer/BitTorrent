@@ -136,6 +136,13 @@ impl PieceManager {
         self.bitfield[byte_index] & bit_mask != 0
     }
 
+    /// Returns the total number of locally completed pieces.
+    pub fn completed_pieces_count(&self) -> usize {
+        (0..self.number_of_pieces as u32)
+            .filter(|&p| self.is_piece_local(p))
+            .count()
+    }
+
     /// Sets or clears a specific piece index in the missing pieces tracking vector.
     pub fn mark_piece_missing(&mut self, piece_number: u32, missing: bool) {
         let (byte_index, bit_mask) = get_bitfield_index_and_mask(piece_number);

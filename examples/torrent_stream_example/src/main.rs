@@ -152,25 +152,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Download Dir:  {}", download_dir.display());
     println!("HTTP Port:     {}", port);
 
-    // Initialize session from .torrent or Magnet link
-    let mut session = if source.starts_with("magnet:") {
+    use bittorrent_rs::LockExt;
+
+    // Initialize and start session from .torrent or Magnet link via single-call start() facade
+    let session = if source.starts_with("magnet:") {
         println!("Bootstrapping session from Magnet URI...");
-        TorrentSession::from_magnet(source, &download_dir).build()?
+        TorrentSession::from_magnet(source, &download_dir).start()?
     } else {
         println!("Loading session from torrent file: {}", source);
         let path = Path::new(source);
-        TorrentSession::builder(path, &download_dir).build()?
+        TorrentSession::builder(path, &download_dir).start()?
     };
 
-    session.start_download()?;
-    println!("Download engine started.");
+    println!("Download engine started via single-call start().");
 
     let session_arc = Arc::new(session);
 
     // Determine target file index to stream (default to largest file)
     let (target_file_index, file_name, file_len) = {
         let ctx = session_arc.context();
-        let guard = ctx.lock().unwrap();
+        let guard = ctx.lock_safe();
         println!(
             "\nAvailable Files in Torrent (Total: {}):",
             guard.files_to_download.len()
