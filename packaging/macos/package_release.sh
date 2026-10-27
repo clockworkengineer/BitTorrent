@@ -4,7 +4,7 @@
 # ==============================================================================
 set -euo pipefail
 
-VERSION="${1:-0.2.0}"
+VERSION="${1:-0.3.0}"
 SKIP_BUILD="${2:-false}"
 ARCH="$(uname -m)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -2,7 +2,7 @@
 ; Generated for BitTorrent-rs
 
 #define MyAppName "BitTorrent Client"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "BitTorrent-rs Contributors"
 #define MyAppURL "https://github.com/clockworkengineer/BitTorrent"
 #define MyAppExeName "torrent_client.exe"

@@ -435,7 +435,7 @@ impl TorrentClientApp {
                             .color(self.settings.theme.accent_color()),
                     );
                     ui.label(
-                        egui::RichText::new("Version 0.2.0 (Next-Gen Rust Edition)")
+                        egui::RichText::new("Version 0.3.0 (Next-Gen Rust Edition)")
                             .small()
                             .color(ui.visuals().weak_text_color()),
                     );

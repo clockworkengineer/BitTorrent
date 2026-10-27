@@ -102,7 +102,7 @@ Run the dispatcher to automatically detect your host OS and invoke the proper pa
 python packaging/package.py
 
 # Package specific version without recompiling (if target/release already exists)
-python packaging/package.py --version 0.2.0 --skip-build
+python packaging/package.py --version 0.3.0 --skip-build
 
 # Force target packaging suite
 python packaging/package.py --target-os linux

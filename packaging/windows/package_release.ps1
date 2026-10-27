@@ -4,12 +4,12 @@
 .DESCRIPTION
     1. Compiles release binaries with optimizations enabled.
     2. Packages binaries and assets into a portable ZIP in dist/.
-    3. If Inno Setup (ISCC) is installed, compiles BitTorrent-Setup-v0.2.0.exe.
+    3. If Inno Setup (ISCC) is installed, compiles BitTorrent-Setup-v0.3.0.exe.
 #>
 
 [CmdletBinding()]
 param (
-    [string]$Version = "0.2.0",
+    [string]$Version = "0.3.0",
     [switch]$SkipBuild
 )
 

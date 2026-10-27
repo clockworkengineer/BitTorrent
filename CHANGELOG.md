@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-10-27
+
+### Added
+- **Cross-Platform Packaging & Distribution Suite**:
+  - Universal Python release dispatcher (`packaging/package.py`) supporting automatic platform detection and configurable target builds.
+  - Windows release packaging automation (`packaging/windows/package_release.ps1`, `packaging/windows/installer.iss`) producing Inno Setup 6 installers and portable `.zip` archives.
+  - Linux release packaging (`packaging/linux/package_release.sh`, `packaging/linux/build_deb.sh`) generating Debian `.deb` packages, portable `.tar.gz` archives, Freedesktop `.desktop` entries, and `systemd` service units.
+  - macOS application bundle packaging (`packaging/macos/package_release.sh`, `packaging/macos/Info.plist`) creating `.app` bundles, `.dmg` disk images, and `launchd` service agents.
+  - Single-command scripted installers: POSIX `install.sh` (Linux, macOS, BSD) and PowerShell `install.ps1` (Windows) with service configuration and desktop launcher generation.
+  - Comprehensive documentation in `docs/PACKAGING-AND-DISTRIBUTION.md`.
+- **Workspace Version Bump**:
+  - Bumped workspace crates, client suites, examples, packaging manifests, and UI dialogs from `0.2.0` to `0.3.0`.
+
 ## [0.2.0] - 2026-10-19
 
 ### Added

@@ -14,7 +14,7 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description="Build BitTorrent distribution packages for the current platform.")
-    parser.add_argument("--version", default="0.2.0", help="Release version string (default: 0.2.0)")
+    parser.add_argument("--version", default="0.3.0", help="Release version string (default: 0.3.0)")
     parser.add_argument("--skip-build", action="store_true", help="Skip cargo release compilation")
     parser.add_argument("--target-os", choices=["auto", "windows", "macos", "linux"], default="auto",
                         help="Target OS packaging suite to execute (default: auto)")
