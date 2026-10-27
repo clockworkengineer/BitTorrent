@@ -11,6 +11,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Mutex;
+use crate::utils::util::LockExt;
 use std::time::Duration;
 
 /// Adapter allowing any [`BlockStorage`] implementation to be used as a [`BlockReader`].
@@ -77,7 +78,7 @@ impl TorrentStream {
         cursor_piece: Option<Arc<AtomicU32>>,
     ) -> Self {
         let piece_length = {
-            let ctx = context.lock().unwrap();
+            let ctx = context.lock_safe();
             ctx.piece_length
         };
         let end_offset = start_offset.saturating_add(length);
@@ -111,7 +112,7 @@ impl TorrentStream {
         cursor_piece: Option<Arc<AtomicU32>>,
     ) -> Result<Self, BitTorrentError> {
         let (storage, start_offset, length) = {
-            let ctx = context.lock().unwrap();
+            let ctx = context.lock_safe();
             let file = ctx.files_to_download.get(file_index).ok_or_else(|| {
                 BitTorrentError::Parse(format!(
                     "File index {} out of bounds (total files: {})",
@@ -143,7 +144,7 @@ impl TorrentStream {
         cursor_piece: Option<Arc<AtomicU32>>,
     ) -> Result<Self, BitTorrentError> {
         let (start_offset, length) = {
-            let ctx = context.lock().unwrap();
+            let ctx = context.lock_safe();
             let file = ctx.files_to_download.get(file_index).ok_or_else(|| {
                 BitTorrentError::Parse(format!(
                     "File index {} out of bounds (total files: {})",
@@ -208,7 +209,7 @@ impl TorrentStream {
 
         loop {
             {
-                let ctx = self.context.lock().unwrap();
+                let ctx = self.context.lock_safe();
                 if ctx.is_piece_local(piece) {
                     return Ok(());
                 }
@@ -271,7 +272,7 @@ impl Read for TorrentStream {
 
             // Check if piece is local. If not, wait for it or return early if partial read done.
             let is_local = {
-                let ctx = self.context.lock().unwrap();
+                let ctx = self.context.lock_safe();
                 ctx.is_piece_local(current_piece)
             };
 
@@ -288,7 +289,7 @@ impl Read for TorrentStream {
             let piece_start = (current_piece as u64) * self.piece_length as u64;
             let piece_offset = current_global_pos.saturating_sub(piece_start);
             let piece_len = {
-                let ctx = self.context.lock().unwrap();
+                let ctx = self.context.lock_safe();
                 ctx.get_piece_length(current_piece) as u64
             };
 
@@ -376,3 +377,4 @@ impl Seek for TorrentStream {
         Ok(self.position)
     }
 }
+

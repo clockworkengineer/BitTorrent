@@ -52,6 +52,12 @@ pub enum BitTorrentError {
     NotParsed(alloc::string::String),
     /// A violation of the BitTorrent peer wire protocol (e.g. bad handshake, malformed message).
     Protocol(alloc::string::String),
+    /// A synchronization lock was poisoned by a panicked thread.
+    LockPoisoned,
+    /// Wire message length exceeds the maximum allowed security threshold.
+    MessageTooLarge(usize),
+    /// Hash verification failed for the given piece index.
+    PieceHashMismatch(usize),
 }
 
 impl core::fmt::Display for BitTorrentError {
@@ -65,6 +71,13 @@ impl core::fmt::Display for BitTorrentError {
             BitTorrentError::Parse(msg) => write!(f, "Parse error: {msg}"),
             BitTorrentError::NotParsed(msg) => write!(f, "BitTorrent Error: {msg}"),
             BitTorrentError::Protocol(msg) => write!(f, "Protocol error: {msg}"),
+            BitTorrentError::LockPoisoned => write!(f, "Lock was poisoned by a panicked thread"),
+            BitTorrentError::MessageTooLarge(len) => {
+                write!(f, "Wire message length {len} exceeds allowed threshold")
+            }
+            BitTorrentError::PieceHashMismatch(piece) => {
+                write!(f, "Piece {piece} hash verification failed")
+            }
         }
     }
 }
@@ -85,6 +98,14 @@ impl From<io::Error> for BitTorrentError {
     /// Converts a standard `io::Error` into a `BitTorrentError`.
     fn from(err: io::Error) -> Self {
         BitTorrentError::Io(err)
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T> From<std::sync::PoisonError<T>> for BitTorrentError {
+    /// Converts a standard lock `PoisonError` into a `BitTorrentError`.
+    fn from(_: std::sync::PoisonError<T>) -> Self {
+        BitTorrentError::LockPoisoned
     }
 }
 

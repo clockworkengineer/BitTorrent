@@ -1,6 +1,7 @@
 use crate::constants::BLOCK_SIZE;
 use crate::core::torrent_context::{TorrentContext, TorrentStatus};
 use crate::error::BitTorrentError;
+use crate::utils::util::LockExt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -12,8 +13,8 @@ pub fn start_webseed_loop(
     std::thread::spawn(move || {
         // Register initial WebSeeds into the context's mirror tracker if not already present
         {
-            let ctx = context.lock().unwrap();
-            let mut tracker = ctx.webseed_tracker.lock().unwrap();
+            let ctx = context.lock_safe();
+            let mut tracker = ctx.webseed_tracker.lock_safe();
             for ws in &web_seeds {
                 tracker.register_mirror(ws);
             }
@@ -21,7 +22,7 @@ pub fn start_webseed_loop(
 
         loop {
             let (status, num_pieces, piece_length, enable_tracker, timeout_secs) = {
-                let ctx = context.lock().unwrap();
+                let ctx = context.lock_safe();
                 (
                     ctx.status,
                     ctx.number_of_pieces,
@@ -42,7 +43,7 @@ pub fn start_webseed_loop(
 
             // Find next missing block to request
             let next_block = {
-                let ctx = context.lock().unwrap();
+                let ctx = context.lock_safe();
                 let mut missing = None;
                 for p in 0..num_pieces as u32 {
                     if !ctx.is_piece_local(p) && ctx.is_piece_wanted(p) {
@@ -64,9 +65,9 @@ pub fn start_webseed_loop(
 
                 // Select ranked mirrors dynamically based on health scores and latency
                 let candidate_mirrors = {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     if enable_tracker {
-                        let ranked = ctx.webseed_tracker.lock().unwrap().select_ranked_mirrors();
+                        let ranked = ctx.webseed_tracker.lock_safe().select_ranked_mirrors();
                         if ranked.is_empty() {
                             ctx.web_seeds.clone()
                         } else {
@@ -89,9 +90,9 @@ pub fn start_webseed_loop(
                     ) {
                         Ok(data) => {
                             let req_duration = req_start.elapsed();
-                            let mut ctx = context.lock().unwrap();
+                            let mut ctx = context.lock_safe();
                             if enable_tracker {
-                                ctx.webseed_tracker.lock().unwrap().record_success(
+                                ctx.webseed_tracker.lock_safe().record_success(
                                     url,
                                     req_duration,
                                     data.len(),
@@ -108,16 +109,16 @@ pub fn start_webseed_loop(
                         }
                         Err(e) => {
                             crate::log_debug!("WebSeed download failed from {}: {}", url, e);
-                            let ctx = context.lock().unwrap();
+                            let ctx = context.lock_safe();
                             if enable_tracker {
-                                ctx.webseed_tracker.lock().unwrap().record_failure(url);
+                                ctx.webseed_tracker.lock_safe().record_failure(url);
                             }
                         }
                     }
                 }
 
                 if !success {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     let block_index = begin / BLOCK_SIZE as u32;
                     ctx.release_block_request(piece, block_index);
                     // Sleep briefly on failure to avoid busy looping
@@ -139,7 +140,7 @@ fn download_block_from_webseed(
     timeout_secs: u64,
 ) -> Result<Vec<u8>, BitTorrentError> {
     let (files, is_multi_file) = {
-        let ctx = context.lock().unwrap();
+        let ctx = context.lock_safe();
         let multi = ctx.files_to_download.len() > 1;
         (ctx.files_to_download.clone(), multi)
     };

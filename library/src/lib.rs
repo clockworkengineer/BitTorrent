@@ -234,6 +234,8 @@ pub use utils::bencode::{BNode, Bencode};
 pub use utils::bencode_tokenizer::{BencodeToken, BencodeTokenizer};
 pub use utils::error::{BencodeError, BitTorrentError};
 #[cfg(feature = "std")]
+pub use utils::util::{LockExt, RwLockExt};
+#[cfg(feature = "std")]
 pub use utils::io_traits::SocketFactory;
 pub use utils::io_traits::{
     AsyncSocket, BlockReader, BlockStorage, BlockWriter, MemStorage, MockReceiver, MockSender,

@@ -37,6 +37,7 @@ This directory contains the comprehensive architectural specifications, public A
 
 ## 4. Developer, Portability, & Refactoring
 
+- [`REFACTOR-LIBRARY-ATTRIBUTES-PLAN.md`](REFACTOR-LIBRARY-ATTRIBUTES-PLAN.md) — **10 Attributes Refactoring Plan**: Concrete roadmap implementing the 10 quality attributes from `notes/ATTRIBUTES.md`.
 - [`PERFORMANCE.md`](PERFORMANCE.md) — **Performance Optimizations**: Zero-copy slice decoders, static buffer pools, and integer arithmetic.
 - [`PORTABILITY.md`](PORTABILITY.md) — **Portability & `#![no_std]`**: Bare-metal compilation, hardware I/O traits, and port-free mock testing.
 - [`UI-LAYOUT.md`](UI-LAYOUT.md) — **GUI Layout Notes**: Layout tokens, color themes, and egui component patterns.

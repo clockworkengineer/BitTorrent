@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use crate::constants::BLOCK_SIZE;
 use crate::error::BitTorrentError;
 use crate::io_traits::BlockStorage;
+use crate::utils::util::LockExt;
 
 /// A piece hash verification job dispatched to the worker pool.
 #[derive(Clone)]
@@ -214,12 +215,12 @@ impl HashVerificationPool {
             let b_verified = total_bytes_verified.clone();
             let t_us = total_verification_time_us.clone();
 
-            let handle = thread::Builder::new()
+            let handle_res = thread::Builder::new()
                 .name(format!("bt-verifier-{}", worker_id))
                 .spawn(move || {
                     loop {
                         let msg = {
-                            let lock = rx.lock().unwrap();
+                            let lock = rx.lock_safe();
                             lock.recv()
                         };
 
@@ -261,10 +262,11 @@ impl HashVerificationPool {
                             }
                         }
                     }
-                })
-                .expect("Failed to spawn verification worker thread");
+                });
 
-            worker_handles.push(handle);
+            if let Ok(handle) = handle_res {
+                worker_handles.push(handle);
+            }
         }
 
         Self {

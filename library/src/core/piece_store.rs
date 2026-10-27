@@ -3,6 +3,7 @@
 //! Encapsulates piece lengths, SHA1 hashes, local bitfields, missing piece tracking,
 //! and priority queue scheduling.
 
+use crate::utils::util::LockExt;
 use alloc::vec::Vec;
 use std::collections::{BinaryHeap, HashSet};
 use std::sync::Mutex;
@@ -115,7 +116,7 @@ impl PieceStore {
             number_of_pieces
         ];
         self.missing_pieces_count = number_of_pieces;
-        let mut pq = self.piece_priority_queue.lock().unwrap();
+        let mut pq = self.piece_priority_queue.lock_safe();
         pq.clear();
         for piece_index in 0..number_of_pieces as u32 {
             pq.push(PieceRarity {

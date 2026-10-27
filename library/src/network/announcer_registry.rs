@@ -8,6 +8,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use std::sync::{OnceLock, RwLock};
+use crate::utils::util::RwLockExt;
 
 use crate::error::BitTorrentError;
 use crate::network::announcer::{Announcer, AnnouncerEnum, UdpAnnouncer};
@@ -217,6 +218,6 @@ pub fn global_registry() -> &'static RwLock<AnnouncerRegistry> {
 
 /// Registers a custom protocol prefix and builder into the global registry.
 pub fn register_global(prefix: impl Into<String>, builder: impl AnnouncerBuilder + 'static) {
-    let mut reg = global_registry().write().unwrap();
+    let mut reg = global_registry().write_safe();
     reg.register(prefix, builder);
 }

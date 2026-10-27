@@ -6,6 +6,7 @@
 use crate::average::Average;
 use crate::manual_reset_event::ManualResetEvent;
 use crate::piece_buffer::PieceBuffer;
+use crate::utils::util::RwLockExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -41,32 +42,28 @@ impl Assembler {
     /// Checks if a block request has been registered in the assembler.
     pub fn is_block_requested(&self, piece_number: u32, block_index: u32) -> bool {
         self.requested_blocks
-            .read()
-            .unwrap()
+            .read_safe()
             .contains(&(piece_number, block_index))
     }
 
     /// Marks a block index as requested/reserved in the assembler.
     pub fn reserve_block_request(&self, piece_number: u32, block_index: u32) -> bool {
         self.requested_blocks
-            .write()
-            .unwrap()
+            .write_safe()
             .insert((piece_number, block_index))
     }
 
     /// Releases a block reservation, allowing other peers to request it.
     pub fn release_block_request(&self, piece_number: u32, block_index: u32) {
         self.requested_blocks
-            .write()
-            .unwrap()
+            .write_safe()
             .remove(&(piece_number, block_index));
     }
 
     /// Drops all block request reservations registered under a given piece index.
     pub fn clear_piece_requests(&self, piece_number: u32) {
         self.requested_blocks
-            .write()
-            .unwrap()
+            .write_safe()
             .retain(|(piece, _)| *piece != piece_number);
     }
 }

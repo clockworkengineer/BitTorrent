@@ -7,6 +7,7 @@
 use crate::core::torrent_context::TorrentContext;
 use crate::error::BitTorrentError;
 use crate::magnet::MagnetLink;
+use crate::utils::util::LockExt;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -206,7 +207,7 @@ impl WebTorrentMagnetInjector {
         context: &Mutex<TorrentContext>,
         auto_inject_defaults: bool,
     ) -> InjectionSummary {
-        let mut guard = context.lock().unwrap();
+        let mut guard = context.lock_safe();
         Self::inject_into_context(magnet, &mut guard, auto_inject_defaults)
     }
 
@@ -217,7 +218,7 @@ impl WebTorrentMagnetInjector {
         context: Arc<Mutex<TorrentContext>>,
         num_offers: usize,
     ) -> Result<usize, BitTorrentError> {
-        let guard = context.lock().unwrap();
+        let guard = context.lock_safe();
         let offers = guard.webrtc_bridge.generate_offers(num_offers);
         Ok(offers.len())
     }

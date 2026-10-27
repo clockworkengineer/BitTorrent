@@ -6,6 +6,7 @@ use crate::peer::{ConnectionType, Peer};
 use crate::peer_message::PeerMessage;
 use crate::tracker::PeerDetails;
 use std::sync::{Arc, Mutex};
+use crate::utils::util::LockExt;
 use std::time::{Duration, Instant};
 
 /// Marks a peer IP address as dead in the peer manager registry.
@@ -35,7 +36,7 @@ pub async fn delay(duration: Duration) {
 /// Checks outstanding block requests for a peer and releases/cancels them on timeout (> 15 seconds).
 async fn check_request_timeouts(peer: &Mutex<Peer>, context: &Mutex<TorrentContext>) {
     let timed_out_requests = {
-        let mut pg = peer.lock().unwrap();
+        let mut pg = peer.lock_safe();
         let mut timed_out = Vec::new();
         pg.reserved_blocks.retain(|&(pn, bi, time)| {
             if time.elapsed() > Duration::from_secs(15) {
@@ -49,10 +50,10 @@ async fn check_request_timeouts(peer: &Mutex<Peer>, context: &Mutex<TorrentConte
     };
 
     if !timed_out_requests.is_empty() {
-        let peer_ip = peer.lock().unwrap().ip.clone();
+        let peer_ip = peer.lock_safe().ip.clone();
         let net_opt = {
-            let ctx = context.lock().unwrap();
-            let mut pg = peer.lock().unwrap();
+            let ctx = context.lock_safe();
+            let mut pg = peer.lock_safe();
             for &(pn, bi) in &timed_out_requests {
                 ctx.release_block_request(pn, bi);
                 pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_sub(1);
@@ -65,7 +66,7 @@ async fn check_request_timeouts(peer: &Mutex<Peer>, context: &Mutex<TorrentConte
             for (pn, bi) in timed_out_requests {
                 let begin = bi * crate::constants::BLOCK_SIZE as u32;
                 let length = {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     std::cmp::min(
                         crate::constants::BLOCK_SIZE as u32,
                         ctx.get_piece_length(pn).saturating_sub(begin),
@@ -105,7 +106,7 @@ pub async fn perform_handshake(
     local_peer_id: &str,
 ) -> Result<HandshakeResult, ()> {
     let config = {
-        let ctx = context.lock().unwrap();
+        let ctx = context.lock_safe();
         ctx.config.clone()
     };
 
@@ -113,7 +114,7 @@ pub async fn perform_handshake(
         #[cfg(feature = "webrtc")]
         {
             let bridge_socket = {
-                let ctx = context.lock().unwrap();
+                let ctx = context.lock_safe();
                 ctx.webrtc_bridge.get_peer_socket(&peer_details.ip)
             };
             match bridge_socket {
@@ -149,14 +150,14 @@ pub async fn perform_handshake(
     )));
 
     if peer_details.is_webrtc() {
-        let mut pg = peer.lock().unwrap();
+        let mut pg = peer.lock_safe();
         pg.connection_type = ConnectionType::WebRtc;
     }
 
     let mut net = {
-        let mut pg = peer.lock().unwrap();
+        let mut pg = peer.lock_safe();
         let (num_pieces, bitfield_len) = {
-            let ctx = context.lock().unwrap();
+            let ctx = context.lock_safe();
             (ctx.number_of_pieces, ctx.bitfield.len())
         };
         pg.init_bitfield(num_pieces, bitfield_len);
@@ -205,7 +206,7 @@ pub async fn perform_handshake(
         let rc4_enc = crate::mse::Rc4::new(&enc_key);
         let rc4_dec = crate::mse::Rc4::new(&dec_key);
         net.set_mse_ciphers(rc4_enc, rc4_dec);
-        peer.lock().unwrap().network = Some(net.clone());
+        peer.lock_safe().network = Some(net.clone());
     }
 
     #[cfg(not(feature = "mse"))]
@@ -249,7 +250,7 @@ pub async fn perform_handshake(
     let supports_extensions = (reserved[5] & 0x10) != 0;
     let supports_fast_extension = (reserved[7] & 0x04) != 0;
     {
-        let mut pg = peer.lock().unwrap();
+        let mut pg = peer.lock_safe();
         pg.connected = true;
         pg.remote_peer_id = Some(remote_peer_id);
         pg.supports_extensions = supports_extensions;
@@ -261,7 +262,7 @@ pub async fn perform_handshake(
     // Send extension handshake advertising ut_metadata, ut_pex, and ut_holepunch support
     if supports_extensions {
         let (is_private, enable_pex, enable_holepunch) = {
-            let ctx = context.lock().unwrap();
+            let ctx = context.lock_safe();
             (
                 ctx.is_private,
                 ctx.config.enable_pex,
@@ -282,12 +283,12 @@ pub async fn perform_handshake(
             mark_peer_dead(manager, &peer_details.ip);
             return Err(());
         }
-        peer.lock().unwrap().update_last_message_sent();
+        peer.lock_safe().update_last_message_sent();
     }
 
     // Send initial piece availability (BEP 6 HaveAll / HaveNone or Bitfield; omitted in super-seeding mode)
     let (bitfield, is_super_seeding, number_of_pieces, is_seed, is_empty) = {
-        let ctx = context.lock().unwrap();
+        let ctx = context.lock_safe();
         let num = ctx.number_of_pieces;
         let seed = ctx.is_download_complete()
             || (num > 0 && (0..num as u32).all(|p| ctx.is_piece_local(p)));
@@ -308,7 +309,7 @@ pub async fn perform_handshake(
                     mark_peer_dead(manager, &peer_details.ip);
                     return Err(());
                 }
-                peer.lock().unwrap().update_last_message_sent();
+                peer.lock_safe().update_last_message_sent();
                 log_debug!(
                     "[peer {}:{}] sent HaveAll",
                     peer_details.ip,
@@ -319,7 +320,7 @@ pub async fn perform_handshake(
                     mark_peer_dead(manager, &peer_details.ip);
                     return Err(());
                 }
-                peer.lock().unwrap().update_last_message_sent();
+                peer.lock_safe().update_last_message_sent();
                 log_debug!(
                     "[peer {}:{}] sent HaveNone",
                     peer_details.ip,
@@ -334,7 +335,7 @@ pub async fn perform_handshake(
                     mark_peer_dead(manager, &peer_details.ip);
                     return Err(());
                 }
-                peer.lock().unwrap().update_last_message_sent();
+                peer.lock_safe().update_last_message_sent();
                 log_debug!(
                     "[peer {}:{}] sent Bitfield",
                     peer_details.ip,
@@ -350,7 +351,7 @@ pub async fn perform_handshake(
                 mark_peer_dead(manager, &peer_details.ip);
                 return Err(());
             }
-            peer.lock().unwrap().update_last_message_sent();
+            peer.lock_safe().update_last_message_sent();
             log_debug!(
                 "[peer {}:{}] sent Bitfield",
                 peer_details.ip,
@@ -376,7 +377,7 @@ pub async fn perform_handshake(
                 mark_peer_dead(manager, &peer_details.ip);
                 return Err(());
             }
-            peer.lock().unwrap().update_last_message_sent();
+            peer.lock_safe().update_last_message_sent();
         }
         log_debug!(
             "[peer {}:{}] sent {} AllowedFast pieces",
@@ -390,8 +391,8 @@ pub async fn perform_handshake(
         mark_peer_dead(manager, &peer_details.ip);
         return Err(());
     }
-    peer.lock().unwrap().update_last_message_sent();
-    peer.lock().unwrap().am_choking = false;
+    peer.lock_safe().update_last_message_sent();
+    peer.lock_safe().am_choking = false;
     log_debug!(
         "[peer {}:{}] sent Unchoke",
         peer_details.ip,
@@ -404,7 +405,7 @@ pub async fn perform_handshake(
             return Err(());
         }
         {
-            let mut pg = peer.lock().unwrap();
+            let mut pg = peer.lock_safe();
             pg.update_last_message_sent();
             pg.am_interested = true;
         }
@@ -438,12 +439,12 @@ pub async fn handle_magnet_bootstrap(
     context: &Arc<Mutex<TorrentContext>>,
     manager: &Option<Arc<Manager>>,
 ) -> bool {
-    let info_hash = context.lock().unwrap().info_hash.clone();
+    let info_hash = context.lock_safe().info_hash.clone();
 
     // Request the next un-fetched metadata piece from this peer
     let request_piece = {
-        let mut ctx = context.lock().unwrap();
-        let pg = peer.lock().unwrap();
+        let mut ctx = context.lock_safe();
+        let pg = peer.lock_safe();
         if pg.supports_extensions {
             if let Some(&peer_ext_id) = pg.extension_ids.get("ut_metadata") {
                 if let Some(size) = ctx.metadata_size {
@@ -521,12 +522,12 @@ pub async fn handle_magnet_bootstrap(
             mark_peer_dead(manager, &peer_details.ip);
             return true; // break
         }
-        peer.lock().unwrap().update_last_message_sent();
+        peer.lock_safe().update_last_message_sent();
     }
 
     // Check if we now have all metadata pieces and can assemble the info dict
     let transition_data = {
-        let mut ctx = context.lock().unwrap();
+        let mut ctx = context.lock_safe();
         if let Some(size) = ctx.metadata_size {
             let num_pieces = (size + 16383) / 16384;
             if ctx.metadata_pieces.len() == num_pieces && ctx.info_dict_bytes.is_none() {
@@ -567,7 +568,7 @@ pub async fn handle_magnet_bootstrap(
     };
 
     if let Some(assembled) = transition_data {
-        let mut ctx = context.lock().unwrap();
+        let mut ctx = context.lock_safe();
         let dl_path = ctx.download_path.clone();
         if let Err(e) = ctx.transition_from_metadata(&assembled, &dl_path) {
             log_debug!(
@@ -608,8 +609,8 @@ pub async fn send_block_requests(
     let mut none_count = 0;
     for _ in 0..to_send {
         let next_req = {
-            let mut ctx = context.lock().unwrap();
-            let pg = peer.lock().unwrap();
+            let mut ctx = context.lock_safe();
+            let pg = peer.lock_safe();
             let is_unchoked = pg.peer_choking.wait_one(0);
             if is_unchoked {
                 ctx.next_block_request_for_peer(&pg)
@@ -634,14 +635,14 @@ pub async fn send_block_requests(
                     return true; // send error → break
                 }
                 {
-                    let mut pg = peer.lock().unwrap();
+                    let mut pg = peer.lock_safe();
                     let bi = begin / crate::constants::BLOCK_SIZE as u32;
                     pg.reserved_blocks.push((pn, bi, Instant::now()));
                     pg.outstanding_requests_count = pg.outstanding_requests_count.saturating_add(1);
                     pg.update_last_message_sent();
                 }
                 {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     ctx.record_peer_request_sent(&peer_details.ip);
                 }
             }
@@ -681,15 +682,15 @@ async fn run_peer_loop(
     let read_buffer_backing = heap_buf.as_mut_slice();
     let mut last_pex_sent = Instant::now();
     let mut sent_peers: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
-    let atomic_status = context.lock().unwrap().atomic_status.clone();
-    let mut post_bootstrap_announced = !context.lock().unwrap().pieces_info_hash.is_empty();
+    let atomic_status = context.lock_safe().atomic_status.clone();
+    let mut post_bootstrap_announced = !context.lock_safe().pieces_info_hash.is_empty();
 
     loop {
         // Pause / ended check
         if atomic_status.load(std::sync::atomic::Ordering::Relaxed) == TorrentStatus::Ended as u8 {
             break;
         }
-        let is_paused = context.lock().unwrap().is_paused();
+        let is_paused = context.lock_safe().is_paused();
         if is_paused {
             delay(Duration::from_millis(100)).await;
             continue;
@@ -697,8 +698,8 @@ async fn run_peer_loop(
 
         // ── Periodic PEX broadcast ────────────────────────────────────────
         let (supports_extensions, is_pex_enabled) = {
-            let ctx = context.lock().unwrap();
-            let pg = peer.lock().unwrap();
+            let ctx = context.lock_safe();
+            let pg = peer.lock_safe();
             (pg.supports_extensions, ctx.is_pex_enabled())
         };
         if supports_extensions
@@ -706,12 +707,12 @@ async fn run_peer_loop(
             && last_pex_sent.elapsed() > Duration::from_secs(60)
         {
             let pex_ext_id = {
-                let pg = peer.lock().unwrap();
+                let pg = peer.lock_safe();
                 pg.extension_ids.get("ut_pex").cloned()
             };
             if let Some(ext_id) = pex_ext_id {
                 let (pex_msg, newly_sent) = {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     ctx.generate_pex_message(&sent_peers, Some(&peer_details.ip))
                 };
                 sent_peers = newly_sent;
@@ -726,7 +727,7 @@ async fn run_peer_loop(
                         .await
                         .is_ok()
                     {
-                        peer.lock().unwrap().update_last_message_sent();
+                        peer.lock_safe().update_last_message_sent();
                     }
                 }
             }
@@ -744,7 +745,7 @@ async fn run_peer_loop(
                         check_request_timeouts(peer, context).await;
 
                         let (last_sent, last_recv) = {
-                            let pg = peer.lock().unwrap();
+                            let pg = peer.lock_safe();
                             (pg.last_message_sent, pg.last_message_received)
                         };
 
@@ -765,7 +766,7 @@ async fn run_peer_loop(
                                 peer_details.port
                             );
                             if net.write_message(PeerMessage::KeepAlive).await.is_ok() {
-                                peer.lock().unwrap().update_last_message_sent();
+                                peer.lock_safe().update_last_message_sent();
                             }
                         }
 
@@ -773,7 +774,7 @@ async fn run_peer_loop(
                             .load(std::sync::atomic::Ordering::Relaxed)
                             == TorrentStatus::Downloading as u8;
                         let is_magnet_bootstrap =
-                            context.lock().unwrap().pieces_info_hash.is_empty();
+                            context.lock_safe().pieces_info_hash.is_empty();
                         if is_magnet_bootstrap && is_downloading {
                             if handle_magnet_bootstrap(peer_details, peer, net, context, manager)
                                 .await
@@ -782,7 +783,7 @@ async fn run_peer_loop(
                             }
                         } else if !is_magnet_bootstrap && is_downloading {
                             let (peer_choking_set, outstanding_count, missing_count, can_fast) = {
-                                let pg = peer.lock().unwrap();
+                                let pg = peer.lock_safe();
                                 (
                                     pg.peer_choking.wait_one(0),
                                     pg.outstanding_requests_count,
@@ -822,8 +823,8 @@ async fn run_peer_loop(
 
         // ── Dispatch message ──────────────────────────────────────────────
         let actions_res = {
-            let mut ctx = context.lock().unwrap();
-            let mut pg = peer.lock().unwrap();
+            let mut ctx = context.lock_safe();
+            let mut pg = peer.lock_safe();
             pg.handle_peer_message(message, &mut ctx)
         };
         let actions = match actions_res {
@@ -844,7 +845,7 @@ async fn run_peer_loop(
 
         // Drain any completed background piece hash verification results
         {
-            let mut ctx = context.lock().unwrap();
+            let mut ctx = context.lock_safe();
             let storage = ctx.storage.clone();
             ctx.drain_verification_results(&*storage);
         }
@@ -857,7 +858,7 @@ async fn run_peer_loop(
             number_of_missing_pieces,
             can_request_fast,
         ) = {
-            let pg = peer.lock().unwrap();
+            let pg = peer.lock_safe();
             (
                 pg.peer_choking.wait_one(0),
                 pg.outstanding_requests_count,
@@ -869,7 +870,7 @@ async fn run_peer_loop(
         let is_downloading = atomic_status.load(std::sync::atomic::Ordering::Relaxed)
             == TorrentStatus::Downloading as u8;
 
-        let is_magnet_bootstrap = context.lock().unwrap().pieces_info_hash.is_empty();
+        let is_magnet_bootstrap = context.lock_safe().pieces_info_hash.is_empty();
 
         // ── Magnet bootstrap ──────────────────────────────────────────────
         if is_magnet_bootstrap && is_downloading {
@@ -883,12 +884,12 @@ async fn run_peer_loop(
             post_bootstrap_announced = true;
             // Send initial piece availability and Interested now that we know the piece layout
             let (bitfield, supports_fast, is_seed, is_empty, num_pieces) = {
-                let ctx = context.lock().unwrap();
+                let ctx = context.lock_safe();
                 let num = ctx.number_of_pieces;
                 let seed = ctx.is_download_complete()
                     || (num > 0 && (0..num as u32).all(|p| ctx.is_piece_local(p)));
                 let empty = num > 0 && (0..num as u32).all(|p| !ctx.is_piece_local(p));
-                let pg = peer.lock().unwrap();
+                let pg = peer.lock_safe();
                 (
                     ctx.bitfield.clone(),
                     pg.supports_fast_extension,
@@ -913,13 +914,13 @@ async fn run_peer_loop(
             }
 
             let is_seed = {
-                let ctx = context.lock().unwrap();
+                let ctx = context.lock_safe();
                 ctx.status == TorrentStatus::Seeding || ctx.is_download_complete()
             };
             if !is_seed {
                 let _ = net.write_message(PeerMessage::Interested).await;
                 {
-                    let mut pg = peer.lock().unwrap();
+                    let mut pg = peer.lock_safe();
                     pg.am_interested = true;
                     pg.update_last_message_sent();
                 }
@@ -962,7 +963,7 @@ pub async fn handle_peer_session(
     context: Arc<Mutex<TorrentContext>>,
     manager: Option<Arc<Manager>>,
 ) {
-    let info_hash = context.lock().unwrap().info_hash.clone();
+    let info_hash = context.lock_safe().info_hash.clone();
     let local_peer_id = crate::peer_id::get();
 
     if let Some(ref mgr) = manager {
@@ -972,8 +973,7 @@ pub async fn handle_peer_session(
     }
 
     if context
-        .lock()
-        .unwrap()
+        .lock_safe()
         .is_peer_blacklisted(&peer_details.ip)
     {
         return;
@@ -995,7 +995,7 @@ pub async fn handle_peer_session(
     let HandshakeResult { peer, mut net, .. } = hs;
 
     {
-        let ctx = context.lock().unwrap();
+        let ctx = context.lock_safe();
         if !ctx.add_peer(peer.clone()) {
             return;
         }
@@ -1009,9 +1009,9 @@ pub async fn handle_peer_session(
         peer_details.port
     );
     {
-        let mut ctx = context.lock().unwrap();
+        let mut ctx = context.lock_safe();
         {
-            let pg = peer.lock().unwrap();
+            let pg = peer.lock_safe();
             for &(pn, bi, _) in &pg.reserved_blocks {
                 ctx.release_block_request(pn, bi);
             }
@@ -1023,3 +1023,4 @@ pub async fn handle_peer_session(
         ctx.remove_peer(&peer_details.ip);
     }
 }
+

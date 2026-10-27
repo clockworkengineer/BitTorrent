@@ -419,6 +419,43 @@ pub fn generate_allowed_fast_set(
     allowed_fast
 }
 
+/// Helper extension trait to lock mutexes safely, recovering from lock poisoning rather than panicking.
+#[cfg(feature = "std")]
+pub trait LockExt<T> {
+    /// Locks the mutex, recovering data if another thread panicked while holding the lock.
+    fn lock_safe(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+#[cfg(feature = "std")]
+impl<T> LockExt<T> for std::sync::Mutex<T> {
+    #[inline]
+    fn lock_safe(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Helper extension trait to lock read/write locks safely, recovering from poisoning rather than panicking.
+#[cfg(feature = "std")]
+pub trait RwLockExt<T> {
+    /// Acquires a shared read lock, recovering if another thread panicked.
+    fn read_safe(&self) -> std::sync::RwLockReadGuard<'_, T>;
+    /// Acquires an exclusive write lock, recovering if another thread panicked.
+    fn write_safe(&self) -> std::sync::RwLockWriteGuard<'_, T>;
+}
+
+#[cfg(feature = "std")]
+impl<T> RwLockExt<T> for std::sync::RwLock<T> {
+    #[inline]
+    fn read_safe(&self) -> std::sync::RwLockReadGuard<'_, T> {
+        self.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[inline]
+    fn write_safe(&self) -> std::sync::RwLockWriteGuard<'_, T> {
+        self.write().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

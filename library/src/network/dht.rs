@@ -28,6 +28,7 @@
 
 use crate::bencode::{BNode, Bencode};
 use crate::error::BitTorrentError;
+use crate::utils::util::LockExt;
 use crate::tracker::PeerDetails;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
@@ -201,7 +202,7 @@ impl Dht {
 
     /// Starts the background UDP socket listener thread.
     pub fn start(&self) -> Result<(), BitTorrentError> {
-        let mut running_guard = self.running.lock().unwrap();
+        let mut running_guard = self.running.lock_safe();
         if *running_guard {
             return Ok(());
         }
@@ -217,7 +218,7 @@ impl Dht {
 
         thread::spawn(move || {
             let mut buf = vec![0u8; 2048];
-            while *running.lock().unwrap() {
+            while *running.lock_safe() {
                 match socket.recv_from(&mut buf) {
                     Ok((n, src_addr)) => {
                         if let Ok(bnode) = Bencode::decode(&buf[..n]) {
@@ -236,7 +237,7 @@ impl Dht {
                                             let mut id = [0u8; 20];
                                             if s_id.len() == 20 {
                                                 id.copy_from_slice(s_id);
-                                                routing_table.lock().unwrap().add_node(DhtNode {
+                                                routing_table.lock_safe().add_node(DhtNode {
                                                     id,
                                                     ip: src_addr.ip().to_string(),
                                                     port: src_addr.port(),
@@ -273,8 +274,7 @@ impl Dht {
                                                     target.copy_from_slice(target_bytes);
                                                 }
                                                 let closest = routing_table
-                                                    .lock()
-                                                    .unwrap()
+                                                    .lock_safe()
                                                     .closest_nodes(&target, 8);
                                                 let mut compact_nodes = Vec::new();
                                                 for node in closest {
@@ -331,8 +331,7 @@ impl Dht {
                                                 encode_bytes(&local_id, &mut reply);
 
                                                 let cached_peers = peer_cache
-                                                    .lock()
-                                                    .unwrap()
+                                                    .lock_safe()
                                                     .get(&target)
                                                     .cloned();
                                                 if let Some(peers) = cached_peers {
@@ -349,8 +348,7 @@ impl Dht {
                                                     reply.push(b'e');
                                                 } else {
                                                     let closest = routing_table
-                                                        .lock()
-                                                        .unwrap()
+                                                        .lock_safe()
                                                         .closest_nodes(&target, 8);
                                                     let mut compact_nodes = Vec::new();
                                                     for node in closest {
@@ -413,7 +411,7 @@ impl Dht {
                                                     if ih.len() == 20 {
                                                         target.copy_from_slice(ih);
                                                     }
-                                                    let mut cache = peer_cache.lock().unwrap();
+                                                    let mut cache = peer_cache.lock_safe();
                                                     let list = cache
                                                         .entry(target)
                                                         .or_insert_with(Vec::new);
@@ -451,7 +449,7 @@ impl Dht {
                                             if s_id.len() == 20 {
                                                 let mut id = [0u8; 20];
                                                 id.copy_from_slice(s_id);
-                                                routing_table.lock().unwrap().add_node(DhtNode {
+                                                routing_table.lock_safe().add_node(DhtNode {
                                                     id,
                                                     ip: src_addr.ip().to_string(),
                                                     port: src_addr.port(),
@@ -462,7 +460,7 @@ impl Dht {
                                             r_node.dict_get(b"nodes").and_then(|n| n.as_string())
                                         {
                                             let nodes = parse_compact_nodes_slice(nodes_bytes);
-                                            let mut rt = routing_table.lock().unwrap();
+                                            let mut rt = routing_table.lock_safe();
                                             for node in nodes {
                                                 rt.add_node(node);
                                             }
@@ -472,7 +470,7 @@ impl Dht {
                                         {
                                             let nodes6 =
                                                 parse_compact_ipv6_nodes_slice(nodes6_bytes);
-                                            let mut rt = routing_table.lock().unwrap();
+                                            let mut rt = routing_table.lock_safe();
                                             for node in nodes6 {
                                                 rt.add_node(node);
                                             }
@@ -480,7 +478,7 @@ impl Dht {
                                     }
 
                                     // Match incoming response to outstanding query
-                                    let mut queries = outstanding_queries.lock().unwrap();
+                                    let mut queries = outstanding_queries.lock_safe();
                                     if let Some(sender) = queries.remove(t) {
                                         let _ = sender.send(buf[..n].to_vec());
                                     }
@@ -497,7 +495,7 @@ impl Dht {
                         // Periodic socket check or Windows WSAECONNRESET (10054) on ICMP unreachable
                     }
                     Err(_) => {
-                        if !*running.lock().unwrap() {
+                        if !*running.lock_safe() {
                             break;
                         }
                     }
@@ -510,7 +508,7 @@ impl Dht {
 
     /// Stops the background listener thread.
     pub fn stop(&self) {
-        *self.running.lock().unwrap() = false;
+        *self.running.lock_safe() = false;
     }
 
     /// Performs bootstrap seeding from common routers.
@@ -546,7 +544,7 @@ impl Dht {
             encode_dict_end(&mut out);
 
             // Seed bootstrap nodes asynchronously
-            let socket = self.socket.try_clone().unwrap();
+            let Ok(socket) = self.socket.try_clone() else { continue; };
             let addr_str = router.to_string();
             thread::spawn(move || {
                 if let Ok(mut resolved) = addr_str.to_socket_addrs() {
@@ -561,18 +559,18 @@ impl Dht {
     /// Recursively queries nodes closer to a target info_hash to discover active peers.
     pub fn lookup_peers(&self, info_hash: NodeId, peer_sender: Sender<PeerDetails>) {
         let routing_table = self.routing_table.clone();
-        let socket_clone = self.socket.try_clone().unwrap();
+        let Ok(socket_clone) = self.socket.try_clone() else { return; };
         let local_id = self.node_id;
         let outstanding_queries = self.outstanding_queries.clone();
 
         thread::spawn(move || {
             let mut queried = Vec::new();
-            let mut candidates = routing_table.lock().unwrap().closest_nodes(&info_hash, 8);
+            let mut candidates = routing_table.lock_safe().closest_nodes(&info_hash, 8);
 
             let mut retries = 0;
             while candidates.is_empty() && retries < 10 {
                 thread::sleep(Duration::from_millis(500));
-                candidates = routing_table.lock().unwrap().closest_nodes(&info_hash, 8);
+                candidates = routing_table.lock_safe().closest_nodes(&info_hash, 8);
                 retries += 1;
             }
 
@@ -607,7 +605,7 @@ impl Dht {
                 encode_dict_end(&mut out);
 
                 let (tx, rx) = channel();
-                outstanding_queries.lock().unwrap().insert(tid.clone(), tx);
+                outstanding_queries.lock_safe().insert(tid.clone(), tx);
 
                 let target_addr = crate::util::format_socket_addr(&node.ip, node.port);
                 if let Ok(mut resolved) = target_addr.to_socket_addrs() {
@@ -624,7 +622,7 @@ impl Dht {
                             // Track nodes we discovered to populate routing table
                             let mut id = [0u8; 20];
                             id.copy_from_slice(&node.id);
-                            routing_table.lock().unwrap().add_node(node.clone());
+                            routing_table.lock_safe().add_node(node.clone());
 
                             // 1. Check if values contains peers list
                             let values = r_node.dict_get(b"values");
@@ -694,7 +692,7 @@ impl Dht {
                         }
                     }
                 }
-                outstanding_queries.lock().unwrap().remove(&tid);
+                outstanding_queries.lock_safe().remove(&tid);
             }
         });
     }
@@ -743,3 +741,4 @@ fn parse_compact_ipv6_nodes_slice(bytes: &[u8]) -> Vec<DhtNode> {
     }
     nodes
 }
+

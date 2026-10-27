@@ -1,4 +1,5 @@
 use crate::tracker::PeerDetails;
+use crate::utils::util::LockExt;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -112,7 +113,7 @@ impl LsdAnnouncer {
 
             loop {
                 {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     if ctx.status == crate::core::torrent_context::TorrentStatus::Ended {
                         break;
                     }

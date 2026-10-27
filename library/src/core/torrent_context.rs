@@ -19,6 +19,7 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use crate::utils::util::{LockExt, RwLockExt};
 
 pub use crate::core::metadata_bootstrap::MetadataBootstrap;
 pub use crate::core::piece_store::{PieceInfo, PieceRarity, PieceStore};
@@ -225,12 +226,16 @@ impl TorrentContext {
                     &cache_dir,
                     params.config.v2_piece_layers_cache_max_mb,
                 )
-                .unwrap_or_else(|_| {
+                .or_else(|_| {
                     crate::storage::piece_layers_cache::PieceLayersDiskCache::new(
                         std::env::temp_dir().join("bt_piece_layers_fallback"),
                         params.config.v2_piece_layers_cache_max_mb,
                     )
-                    .unwrap()
+                })
+                .unwrap_or_else(|_| {
+                    crate::storage::piece_layers_cache::PieceLayersDiskCache::new_in_memory(
+                        params.config.v2_piece_layers_cache_max_mb,
+                    )
                 }),
             );
             if params.config.v2_piece_layers_cache_enabled {
@@ -661,7 +666,7 @@ impl TorrentContext {
         }
 
         {
-            let mut pq = self.piece_priority_queue.lock().unwrap();
+            let mut pq = self.piece_priority_queue.lock_safe();
             pq.clear();
             for piece_index in 0..number_of_pieces as u32 {
                 if self.is_piece_wanted(piece_index) && !self.is_piece_local(piece_index) {
@@ -1065,7 +1070,7 @@ impl TorrentContext {
         let block_index = begin / BLOCK_SIZE as u32;
 
         if self.config.enable_adaptive_endgame {
-            let mut staging = self.endgame_staging.lock().unwrap();
+            let mut staging = self.endgame_staging.lock_safe();
             match staging.on_block_arrived(piece_number, block_index, peer_ip) {
                 crate::storage::erasure_staging::BlockArrivalOutcome::AbsorbDuplicate {
                     ..
@@ -1078,13 +1083,13 @@ impl TorrentContext {
             }
         }
 
-        let mut piece_buffers = self.assembler.piece_buffers.lock().unwrap();
+        let mut piece_buffers = self.assembler.piece_buffers.lock_safe();
         let piece_buffer_arc = piece_buffers
             .entry(piece_number)
             .or_insert_with(|| Arc::new(Mutex::new(PieceBuffer::new(piece_number, piece_length))))
             .clone();
 
-        let mut piece_buffer = piece_buffer_arc.lock().unwrap();
+        let mut piece_buffer = piece_buffer_arc.lock_safe();
         let already_present = piece_buffer.is_block_present(block_index);
         if !already_present {
             #[cfg(feature = "v2")]
@@ -1112,8 +1117,7 @@ impl TorrentContext {
         if piece_complete {
             if self.config.enable_adaptive_endgame {
                 self.endgame_staging
-                    .lock()
-                    .unwrap()
+                    .lock_safe()
                     .clear_piece(piece_number);
             }
             #[cfg(feature = "std")]
@@ -1163,7 +1167,7 @@ impl TorrentContext {
                 self.update_bitfield_status(piece_number, true, piece_length);
                 // Broadcast Have to all connected peers so they know we have this piece.
                 {
-                    let swarm = self.peer_swarm.read().unwrap();
+                    let swarm = self.peer_swarm.read_safe();
                     for peer_arc in swarm.values() {
                         if let Ok(peer_guard) = peer_arc.try_lock() {
                             let _ = peer_guard.send_have(piece_number);
@@ -1238,13 +1242,13 @@ impl TorrentContext {
         let piece_length = self.get_piece_length(piece_number);
         let block_index = begin / BLOCK_SIZE as u32;
 
-        let mut piece_buffers = self.assembler.piece_buffers.lock().unwrap();
+        let mut piece_buffers = self.assembler.piece_buffers.lock_safe();
         let piece_buffer_arc = piece_buffers
             .entry(piece_number)
             .or_insert_with(|| Arc::new(Mutex::new(PieceBuffer::new(piece_number, piece_length))))
             .clone();
 
-        let mut piece_buffer = piece_buffer_arc.lock().unwrap();
+        let mut piece_buffer = piece_buffer_arc.lock_safe();
         let already_present = piece_buffer.is_block_present(block_index);
         if !already_present {
             let block_offset = (block_index as u64) * BLOCK_SIZE as u64;
@@ -1264,7 +1268,7 @@ impl TorrentContext {
             let _ = storage.flush();
             self.update_bitfield_status(piece_number, true, piece_length);
             {
-                let swarm = self.peer_swarm.read().unwrap();
+                let swarm = self.peer_swarm.read_safe();
                 for peer_arc in swarm.values() {
                     if let Ok(peer_guard) = peer_arc.try_lock() {
                         let _ = peer_guard.send_have(piece_number);
@@ -1280,12 +1284,12 @@ impl TorrentContext {
 
     /// Registers a peer connection in the active swarm. Returns `true` if registered, `false` if swarm is full.
     pub fn add_peer(&self, peer: Arc<Mutex<Peer>>) -> bool {
-        let ip = peer.lock().unwrap().ip.clone();
+        let ip = peer.lock_safe().ip.clone();
         if self.is_peer_blacklisted(&ip) {
             return false;
         }
         if self.is_space_in_swarm(&ip) {
-            self.peer_swarm.write().unwrap().insert(ip, peer);
+            self.peer_swarm.write_safe().insert(ip, peer);
             true
         } else {
             false
@@ -1312,7 +1316,7 @@ impl TorrentContext {
 
     /// Checks if a peer IP address is blacklisted (i.e. has 3 or more bad blocks).
     pub fn is_peer_blacklisted(&self, ip: &str) -> bool {
-        let scores = self.bad_peer_scores.lock().unwrap();
+        let scores = self.bad_peer_scores.lock_safe();
         if let Some(&score) = scores.get(ip) {
             score >= 3
         } else {
@@ -1327,7 +1331,7 @@ impl TorrentContext {
     /// `peer_swarm` write lock to avoid a potential lock-ordering deadlock.
     pub fn report_bad_peer(&self, ip: &str) {
         let should_blacklist = {
-            let mut scores = self.bad_peer_scores.lock().unwrap();
+            let mut scores = self.bad_peer_scores.lock_safe();
             let score = scores.entry(ip.to_string()).or_insert(0);
             *score += 1;
             *score >= 3
@@ -1337,7 +1341,7 @@ impl TorrentContext {
                 "[swarm] Blacklisting peer {} due to repeated bad blocks",
                 ip
             );
-            let peer_opt = self.peer_swarm.write().unwrap().remove(ip);
+            let peer_opt = self.peer_swarm.write_safe().remove(ip);
             if let Some(peer_arc) = peer_opt {
                 if let Ok(mut peer_guard) = peer_arc.lock() {
                     if peer_guard.peer_choking.wait_one(0) {
@@ -1375,7 +1379,7 @@ impl TorrentContext {
         if ip.is_empty() {
             return false;
         }
-        let swarm = self.peer_swarm.read().unwrap();
+        let swarm = self.peer_swarm.read_safe();
         !swarm.contains_key(ip) && swarm.len() < self.maximum_swarm_size
     }
 
@@ -1432,7 +1436,7 @@ impl TorrentContext {
         if endgame {
             // Priority 0: Straggler Preemption in Adaptive Endgame
             if self.config.enable_adaptive_endgame {
-                let stalled_blocks = self.endgame_staging.lock().unwrap().detect_stalled_blocks();
+                let stalled_blocks = self.endgame_staging.lock_safe().detect_stalled_blocks();
                 for (stalled_piece, stalled_bi, slow_peer) in stalled_blocks {
                     if slow_peer != peer.ip
                         && (stalled_piece as usize) < self.number_of_pieces
@@ -1449,11 +1453,10 @@ impl TorrentContext {
                         let length = min(block_size as u32, piece_length.saturating_sub(begin));
                         let ect = self
                             .latency_profiler
-                            .lock()
-                            .unwrap()
+                            .lock_safe()
                             .get_or_create(&peer.ip)
                             .estimated_completion_time(block_size);
-                        self.endgame_staging.lock().unwrap().stage_request(
+                        self.endgame_staging.lock_safe().stage_request(
                             stalled_piece,
                             stalled_bi,
                             &peer.ip,
@@ -1488,11 +1491,11 @@ impl TorrentContext {
                 let piece_length = self.get_piece_length(piece_number);
                 let block_count = ((piece_length as usize + block_size - 1) / block_size) as u32;
 
-                let piece_buffers = self.assembler.piece_buffers.lock().unwrap();
+                let piece_buffers = self.assembler.piece_buffers.lock_safe();
                 let present_blocks = piece_buffers
                     .get(&piece_number)
                     .map(|pb| {
-                        let guard = pb.lock().unwrap();
+                        let guard = pb.lock_safe();
                         (0..block_count)
                             .map(|bi| guard.is_block_present(bi))
                             .collect::<Vec<bool>>()
@@ -1514,8 +1517,7 @@ impl TorrentContext {
                     if self.config.enable_adaptive_endgame {
                         if !self
                             .endgame_staging
-                            .lock()
-                            .unwrap()
+                            .lock_safe()
                             .can_clone_block(piece_number, block_index)
                         {
                             continue;
@@ -1526,11 +1528,10 @@ impl TorrentContext {
                     if self.config.enable_adaptive_endgame {
                         let ect = self
                             .latency_profiler
-                            .lock()
-                            .unwrap()
+                            .lock_safe()
                             .get_or_create(&peer.ip)
                             .estimated_completion_time(block_size);
-                        self.endgame_staging.lock().unwrap().stage_request(
+                        self.endgame_staging.lock_safe().stage_request(
                             piece_number,
                             block_index,
                             &peer.ip,
@@ -1711,7 +1712,7 @@ impl TorrentContext {
 
     /// Checks if a peer is in the active connection swarm map.
     pub fn is_peer_in_swarm(&self, ip: &str) -> bool {
-        !ip.is_empty() && self.peer_swarm.read().unwrap().contains_key(ip)
+        !ip.is_empty() && self.peer_swarm.read_safe().contains_key(ip)
     }
 
     /// Counts how many peers in the swarm have unchoked us.
@@ -1756,7 +1757,7 @@ impl TorrentContext {
             let file_block_idx = (file_rel_offset / BLOCK_SIZE as u64) as usize;
 
             // 1. Check if we have a full MerkleTree registered for this file
-            let trees = self.file_merkle_trees.lock().unwrap();
+            let trees = self.file_merkle_trees.lock_safe();
             if let Some(tree) = trees.get(&file_idx) {
                 if !tree.verify_block(file_block_idx, block_data) {
                     return Err(BitTorrentError::Parse(format!(
@@ -1769,7 +1770,7 @@ impl TorrentContext {
 
             // 2. Check if we have an audit path MerkleProof registered for this block
             {
-                let proofs = self.file_merkle_proofs.lock().unwrap();
+                let proofs = self.file_merkle_proofs.lock_safe();
                 if let Some(proof) = proofs.get(&(file_idx, file_block_idx)) {
                     if let Some(expected_root) = file_details.pieces_root {
                         if !proof.verify(block_data, &expected_root) {
@@ -1800,7 +1801,7 @@ impl TorrentContext {
 
             // 4. Check if we have verified leaf hashes cached for this block
             if let Some(expected_root) = file_details.pieces_root {
-                let verified_cache = self.verified_v2_hashes.lock().unwrap();
+                let verified_cache = self.verified_v2_hashes.lock_safe();
                 for (&(root, base_layer, chunk_index), hashes) in verified_cache.iter() {
                     if root == expected_root && base_layer == 0 {
                         let c_idx = chunk_index as usize;
@@ -1837,7 +1838,7 @@ impl TorrentContext {
                 .piece_layers_disk_cache
                 .save_layers(&tree.root(), tree.layers());
         }
-        let mut trees = self.file_merkle_trees.lock().unwrap();
+        let mut trees = self.file_merkle_trees.lock_safe();
         trees.insert(file_index, tree);
     }
 
@@ -1848,7 +1849,7 @@ impl TorrentContext {
         file_index: usize,
         proof: crate::core::merkle::MerkleProof,
     ) {
-        let mut proofs = self.file_merkle_proofs.lock().unwrap();
+        let mut proofs = self.file_merkle_proofs.lock_safe();
         proofs.insert((file_index, proof.block_index), proof);
     }
 
@@ -1861,7 +1862,7 @@ impl TorrentContext {
                 .piece_layers_disk_cache
                 .save_piece_layer(&pieces_root, &layer);
         }
-        let mut layers = self.piece_layers.lock().unwrap();
+        let mut layers = self.piece_layers.lock_safe();
         layers.insert(pieces_root, layer);
     }
 
@@ -1936,7 +1937,7 @@ impl TorrentContext {
             self.update_bitfield_status(piece_number, true, piece_length);
             // Broadcast Have to all connected peers
             {
-                let swarm = self.peer_swarm.read().unwrap();
+                let swarm = self.peer_swarm.read_safe();
                 for peer_arc in swarm.values() {
                     if let Ok(peer_guard) = peer_arc.try_lock() {
                         let _ = peer_guard.send_have(piece_number);
@@ -2037,7 +2038,7 @@ impl TorrentContext {
     ) -> Result<Vec<u8>, ()> {
         // 1. Check in-memory registered trees
         {
-            let trees = self.file_merkle_trees.lock().unwrap();
+            let trees = self.file_merkle_trees.lock_safe();
             for tree in trees.values() {
                 if tree.root() == pieces_root {
                     if let Some(resp) =
@@ -2076,7 +2077,7 @@ impl TorrentContext {
         }
 
         // 3. Fallback: check piece_layers map and attempt reconstruction
-        let piece_layers_guard = self.piece_layers.lock().unwrap();
+        let piece_layers_guard = self.piece_layers.lock_safe();
         if let Some(piece_layer) = piece_layers_guard.get(&pieces_root) {
             #[cfg(all(feature = "std", feature = "v2"))]
             if self.config.v2_piece_layers_cache_enabled {
@@ -2143,7 +2144,7 @@ impl TorrentContext {
 
         // Cache the verified hashes
         {
-            let mut cache = self.verified_v2_hashes.lock().unwrap();
+            let mut cache = self.verified_v2_hashes.lock_safe();
             cache.insert((pieces_root, base_layer, index), verified.clone());
         }
 
@@ -2206,7 +2207,7 @@ impl TorrentContext {
         }
 
         // 2. Check if target peer is connected in the swarm
-        let swarm = self.peer_swarm.read().unwrap();
+        let swarm = self.peer_swarm.read_safe();
         let target_peer_arc = swarm
             .get(&target_ip_str)
             .ok_or(HolepunchErrorCode::NotConnected)?;
@@ -2293,7 +2294,7 @@ impl TorrentContext {
             return (pex_msg, newly_sent);
         }
 
-        let swarm = self.peer_swarm.read().unwrap();
+        let swarm = self.peer_swarm.read_safe();
         let mut added_candidates = Vec::new();
 
         for (ip, p_arc) in swarm.iter() {
@@ -2378,24 +2379,21 @@ impl TorrentContext {
     /// Records an RTT block delivery sample for a peer in the latency profiler.
     pub fn record_peer_block_sample(&self, peer_ip: &str, rtt: std::time::Duration, bytes: usize) {
         self.latency_profiler
-            .lock()
-            .unwrap()
+            .lock_safe()
             .record_sample(peer_ip, rtt, bytes);
     }
 
     /// Records a block timeout for a peer in the latency profiler.
     pub fn record_peer_block_timeout(&self, peer_ip: &str) {
         self.latency_profiler
-            .lock()
-            .unwrap()
+            .lock_safe()
             .record_timeout(peer_ip);
     }
 
     /// Records a block request dispatch for a peer in the latency profiler.
     pub fn record_peer_request_sent(&self, peer_ip: &str) {
         self.latency_profiler
-            .lock()
-            .unwrap()
+            .lock_safe()
             .record_request_sent(peer_ip);
     }
 
@@ -2403,7 +2401,7 @@ impl TorrentContext {
     pub fn endgame_staging_metrics(
         &self,
     ) -> crate::storage::erasure_staging::EndgameStagingMetrics {
-        self.endgame_staging.lock().unwrap().metrics()
+        self.endgame_staging.lock_safe().metrics()
     }
 
     /// Returns a swarm latency profile summary for all connected peers.
@@ -2411,8 +2409,7 @@ impl TorrentContext {
         &self,
     ) -> Vec<crate::network::latency_profiler::PeerLatencySummary> {
         self.latency_profiler
-            .lock()
-            .unwrap()
+            .lock_safe()
             .summary(self.config.endgame_straggler_ratio)
     }
 
@@ -2420,7 +2417,7 @@ impl TorrentContext {
     pub fn webseed_mirror_summary(
         &self,
     ) -> Vec<crate::network::webseed_tracker::MirrorHealthSummary> {
-        self.webseed_tracker.lock().unwrap().summaries()
+        self.webseed_tracker.lock_safe().summaries()
     }
 
     /// Registers a new WebSeed mirror URL at runtime.
@@ -2429,13 +2426,13 @@ impl TorrentContext {
         if !self.web_seeds.contains(&u) {
             self.web_seeds.push(u.clone());
         }
-        self.webseed_tracker.lock().unwrap().register_mirror(u);
+        self.webseed_tracker.lock_safe().register_mirror(u);
     }
 
     /// Removes a WebSeed mirror URL from active tracking and routing.
     pub fn remove_webseed(&mut self, url: &str) -> bool {
         self.web_seeds.retain(|ws| ws != url);
-        self.webseed_tracker.lock().unwrap().remove_mirror(url)
+        self.webseed_tracker.lock_safe().remove_mirror(url)
     }
 
     /// Returns a reference to the `PieceStore` aggregate.
@@ -2502,10 +2499,10 @@ pub trait SessionStatusQuery: Send + Sync {
 
 impl SwarmReadAccess for TorrentContext {
     fn connected_peer_count(&self) -> usize {
-        self.peer_swarm.read().unwrap().len()
+        self.peer_swarm.read_safe().len()
     }
     fn contains_peer(&self, ip: &str) -> bool {
-        self.peer_swarm.read().unwrap().contains_key(ip)
+        self.peer_swarm.read_safe().contains_key(ip)
     }
     fn is_peer_blacklisted(&self, ip: &str) -> bool {
         self.is_peer_blacklisted(ip)
@@ -2567,7 +2564,7 @@ impl crate::core::views::PieceAvailabilityView for TorrentContext {
     }
 
     fn pop_rarest_piece(&self, peer: &dyn crate::core::views::RemotePeerPieceView) -> Option<u32> {
-        let mut pq = self.piece_priority_queue.lock().unwrap();
+        let mut pq = self.piece_priority_queue.lock_safe();
         let mut temporary_list = Vec::new();
         let mut selected = None;
 
@@ -2588,8 +2585,8 @@ impl crate::core::views::PieceAvailabilityView for TorrentContext {
             if peer.is_piece_on_remote_peer(piece) {
                 selected = Some(piece);
                 break;
-            } else {
-                temporary_list.push(pq.pop().unwrap());
+            } else if let Some(popped) = pq.pop() {
+                temporary_list.push(popped);
             }
         }
 
@@ -2603,7 +2600,7 @@ impl crate::core::views::PieceAvailabilityView for TorrentContext {
 
 impl crate::core::views::SwarmView for TorrentContext {
     fn connected_peers_count(&self) -> usize {
-        self.peer_swarm.read().unwrap().len()
+        self.peer_swarm.read_safe().len()
     }
 
     fn unchoked_peers_count(&self) -> usize {
@@ -2652,3 +2649,4 @@ impl crate::core::views::TransferStatsView for TorrentContext {
         self.progress_percent()
     }
 }
+

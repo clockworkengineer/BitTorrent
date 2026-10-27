@@ -11,6 +11,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use crate::utils::util::LockExt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Magic header bytes identifying a binary BitTorrent v2 Layers cache file (`b"BT2L"`).
@@ -159,6 +160,22 @@ impl PieceLayersDiskCache {
         })
     }
 
+    /// Creates an in-memory `PieceLayersDiskCache` fallback when filesystem cache directories cannot be created.
+    pub fn new_in_memory(max_memory_mb: usize) -> Self {
+        let max_hashes = (max_memory_mb.max(1) * 1024 * 1024) / 32;
+        Self {
+            cache_dir: std::env::temp_dir(),
+            memory_tier: Mutex::new(MemoryTier::new(max_hashes)),
+            cache_hits: AtomicUsize::new(0),
+            cache_misses: AtomicUsize::new(0),
+            disk_reads: AtomicUsize::new(0),
+            disk_writes: AtomicUsize::new(0),
+            hash_requests_served: AtomicUsize::new(0),
+            bytes_served: AtomicU64::new(0),
+            evictions: AtomicUsize::new(0),
+        }
+    }
+
     /// Returns the absolute path to the on-disk cache directory.
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
@@ -173,7 +190,7 @@ impl PieceLayersDiskCache {
     /// Returns `true` if layers for the specified `pieces_root` are cached in memory or on disk.
     pub fn has_layers(&self, pieces_root: &[u8; 32]) -> bool {
         {
-            let mem = self.memory_tier.lock().unwrap();
+            let mem = self.memory_tier.lock_safe();
             if mem.layers_by_root.contains_key(pieces_root) {
                 return true;
             }
@@ -184,7 +201,7 @@ impl PieceLayersDiskCache {
     /// Removes cached layers for a given root from both the memory tier and disk.
     pub fn remove(&self, pieces_root: &[u8; 32]) -> bool {
         let mut removed = {
-            let mut mem = self.memory_tier.lock().unwrap();
+            let mut mem = self.memory_tier.lock_safe();
             mem.remove(pieces_root)
         };
         let path = self.path_for_root(pieces_root);
@@ -207,7 +224,7 @@ impl PieceLayersDiskCache {
 
         // 1. Update in-memory tier
         {
-            let mut mem = self.memory_tier.lock().unwrap();
+            let mut mem = self.memory_tier.lock_safe();
             let ev = mem.insert(*pieces_root, layers.to_vec());
             if ev > 0 {
                 self.evictions.fetch_add(ev, Ordering::Relaxed);
@@ -265,7 +282,7 @@ impl PieceLayersDiskCache {
     ) -> Result<Option<Vec<Vec<[u8; 32]>>>, BitTorrentError> {
         // 1. Check memory tier
         {
-            let mut mem = self.memory_tier.lock().unwrap();
+            let mut mem = self.memory_tier.lock_safe();
             if let Some(layers) = mem.get(pieces_root) {
                 self.cache_hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(Some(layers.clone()));
@@ -295,7 +312,7 @@ impl PieceLayersDiskCache {
 
         // Populate memory tier
         {
-            let mut mem = self.memory_tier.lock().unwrap();
+            let mut mem = self.memory_tier.lock_safe();
             let ev = mem.insert(*pieces_root, layers.clone());
             if ev > 0 {
                 self.evictions.fetch_add(ev, Ordering::Relaxed);
@@ -394,7 +411,7 @@ impl PieceLayersDiskCache {
     /// Clears both memory tier and all on-disk cache files.
     pub fn clear(&self) -> Result<(), BitTorrentError> {
         {
-            let mut mem = self.memory_tier.lock().unwrap();
+            let mut mem = self.memory_tier.lock_safe();
             mem.clear();
         }
 
@@ -414,7 +431,7 @@ impl PieceLayersDiskCache {
     /// Takes a snapshot of current telemetry metrics.
     pub fn metrics(&self) -> PieceLayersCacheMetrics {
         let (cached_roots_count, total_cached_hashes) = {
-            let mem = self.memory_tier.lock().unwrap();
+            let mem = self.memory_tier.lock_safe();
             (mem.layers_by_root.len(), mem.total_hashes)
         };
 
@@ -578,8 +595,10 @@ pub fn reconstruct_tree_from_piece_layer(
     let mut layers = Vec::new();
     layers.push(base_layer);
 
-    while layers.last().unwrap().len() > 1 {
-        let prev = layers.last().unwrap();
+    while let Some(prev) = layers.last() {
+        if prev.len() <= 1 {
+            break;
+        }
         let mut next = Vec::with_capacity(prev.len() / 2);
         for pair in prev.chunks_exact(2) {
             let mut hasher = Sha256::new();
@@ -590,7 +609,7 @@ pub fn reconstruct_tree_from_piece_layer(
         layers.push(next);
     }
 
-    let root = layers.last().unwrap()[0];
+    let root = layers.last().and_then(|l| l.first().copied()).unwrap_or([0u8; 32]);
     (layers, root)
 }
 
@@ -660,3 +679,4 @@ pub fn generate_hashes_response_from_layers(
 
     Some(out)
 }
+

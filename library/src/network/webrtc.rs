@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use crate::utils::util::LockExt;
 use std::time::Duration;
 
 /// State of a WebRTC Data Channel connection.
@@ -74,8 +75,8 @@ impl WebRtcSocketAdapter {
         let adapter1 = Self::new(label);
         let adapter2 = Self::new(label);
 
-        *adapter1.tx_sender.lock().unwrap() = Some(tx1);
-        *adapter2.tx_sender.lock().unwrap() = Some(tx2);
+        *adapter1.tx_sender.lock_safe() = Some(tx1);
+        *adapter2.tx_sender.lock_safe() = Some(tx2);
 
         // Spawn relay threads to deliver outgoing messages to counterpart's incoming buffer
         let buf2 = adapter2.read_buffer.clone();
@@ -85,7 +86,7 @@ impl WebRtcSocketAdapter {
             while let Ok(msg) = rx1.recv() {
                 let len = msg.len();
                 {
-                    let mut b = buf2.lock().unwrap();
+                    let mut b = buf2.lock_safe();
                     b.extend(msg);
                 }
                 if let Ok(mut s) = stats2.lock() {
@@ -103,7 +104,7 @@ impl WebRtcSocketAdapter {
             while let Ok(msg) = rx2.recv() {
                 let len = msg.len();
                 {
-                    let mut b = buf1.lock().unwrap();
+                    let mut b = buf1.lock_safe();
                     b.extend(msg);
                 }
                 if let Ok(mut s) = stats1.lock() {
@@ -119,13 +120,13 @@ impl WebRtcSocketAdapter {
 
     /// Returns the current state of the WebRTC Data Channel.
     pub fn state(&self) -> DataChannelState {
-        *self.state.lock().unwrap()
+        *self.state.lock_safe()
     }
 
     /// Injects raw binary payload into this adapter's incoming receive queue.
     pub fn inject_incoming(&self, data: &[u8]) {
         {
-            let mut buf = self.read_buffer.lock().unwrap();
+            let mut buf = self.read_buffer.lock_safe();
             buf.extend(data.iter().copied());
         }
         if let Ok(mut s) = self.stats.lock() {
@@ -137,7 +138,7 @@ impl WebRtcSocketAdapter {
 
     /// Returns a snapshot of data transfer stats.
     pub fn get_stats(&self) -> WebRtcStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock_safe().clone()
     }
 }
 
@@ -149,18 +150,18 @@ impl AsyncSocket for WebRtcSocketAdapter {
 
         let start = std::time::Instant::now();
         loop {
-            if *self.state.lock().unwrap() == DataChannelState::Closed {
+            if *self.state.lock_safe() == DataChannelState::Closed {
                 return Err(BitTorrentError::Protocol(
                     "WebRTC Data Channel closed".into(),
                 ));
             }
 
             {
-                let mut queue = self.read_buffer.lock().unwrap();
+                let mut queue = self.read_buffer.lock_safe();
                 if !queue.is_empty() {
                     let to_read = std::cmp::min(buf.len(), queue.len());
                     for i in 0..to_read {
-                        buf[i] = queue.pop_front().unwrap();
+                        if let Some(b) = queue.pop_front() { buf[i] = b; }
                     }
                     if queue.is_empty() {
                         self.notifier.reset();
@@ -182,13 +183,13 @@ impl AsyncSocket for WebRtcSocketAdapter {
     }
 
     async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
-        if *self.state.lock().unwrap() != DataChannelState::Open {
+        if *self.state.lock_safe() != DataChannelState::Open {
             return Err(BitTorrentError::Protocol(
                 "WebRTC Data Channel is not open".into(),
             ));
         }
 
-        if let Some(ref tx) = *self.tx_sender.lock().unwrap() {
+        if let Some(ref tx) = *self.tx_sender.lock_safe() {
             tx.send(buf.to_vec())
                 .map_err(|e| BitTorrentError::Protocol(format!("WebRTC send failed: {}", e)))?;
         }
@@ -202,7 +203,7 @@ impl AsyncSocket for WebRtcSocketAdapter {
     }
 
     fn close(&self) {
-        *self.state.lock().unwrap() = DataChannelState::Closed;
+        *self.state.lock_safe() = DataChannelState::Closed;
         self.notifier.set();
     }
 }
@@ -318,20 +319,19 @@ impl MockWebSocketSignalingChannel {
 
     pub fn push_response(&self, response_json: &str) {
         self.response_queue
-            .lock()
-            .unwrap()
+            .lock_safe()
             .push_back(response_json.to_string());
     }
 
     pub fn get_sent_messages(&self) -> Vec<String> {
-        self.sent_frames.lock().unwrap().clone()
+        self.sent_frames.lock_safe().clone()
     }
 }
 
 impl WebSocketSignalingClient for MockWebSocketSignalingChannel {
     fn send_message(&self, _url: &str, message: &str) -> Result<String, BitTorrentError> {
-        self.sent_frames.lock().unwrap().push(message.to_string());
-        let mut queue = self.response_queue.lock().unwrap();
+        self.sent_frames.lock_safe().push(message.to_string());
+        let mut queue = self.response_queue.lock_safe();
         if let Some(resp) = queue.pop_front() {
             Ok(resp)
         } else {
@@ -690,7 +690,7 @@ impl WebTorrentBridge {
     /// Generates a batch of unique WebTorrent SDP offers and initializes local paired sockets.
     pub fn generate_offers(&self, count: usize) -> Vec<WebTorrentOffer> {
         let mut offers = Vec::with_capacity(count);
-        let mut pending = self.pending_offers.lock().unwrap();
+        let mut pending = self.pending_offers.lock_safe();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -716,7 +716,7 @@ impl WebTorrentBridge {
         _answer: &SdpDescription,
     ) -> Result<Arc<WebRtcSocketAdapter>, BitTorrentError> {
         let adapter = {
-            let mut pending = self.pending_offers.lock().unwrap();
+            let mut pending = self.pending_offers.lock_safe();
             pending.remove(offer_id).ok_or_else(|| {
                 BitTorrentError::Protocol(format!("No matching offer for offer_id: {}", offer_id))
             })?
@@ -725,8 +725,7 @@ impl WebTorrentBridge {
         let adapter_arc = Arc::new(adapter);
         let peer_ip = format!("webrtc:{}", remote_peer_id);
         self.active_peers
-            .lock()
-            .unwrap()
+            .lock_safe()
             .insert(peer_ip, adapter_arc.clone());
 
         self.answers_received.fetch_add(1, Ordering::Relaxed);
@@ -746,8 +745,7 @@ impl WebTorrentBridge {
 
         let peer_ip = format!("webrtc:{}", remote_peer_id);
         self.active_peers
-            .lock()
-            .unwrap()
+            .lock_safe()
             .insert(peer_ip, adapter_arc.clone());
 
         self.offers_received.fetch_add(1, Ordering::Relaxed);
@@ -758,20 +756,19 @@ impl WebTorrentBridge {
 
     /// Retrieves an active WebRTC socket adapter by virtual peer IP address (e.g. `webrtc:<peer_id>`).
     pub fn get_peer_socket(&self, peer_ip: &str) -> Option<Arc<WebRtcSocketAdapter>> {
-        self.active_peers.lock().unwrap().get(peer_ip).cloned()
+        self.active_peers.lock_safe().get(peer_ip).cloned()
     }
 
     /// Registers an active WebRTC socket adapter for a given peer IP address.
     pub fn register_peer_socket(&self, peer_ip: &str, adapter: Arc<WebRtcSocketAdapter>) {
         self.active_peers
-            .lock()
-            .unwrap()
+            .lock_safe()
             .insert(peer_ip.to_string(), adapter);
     }
 
     /// Removes an active WebRTC socket adapter by virtual peer IP address.
     pub fn remove_peer_socket(&self, peer_ip: &str) {
-        self.active_peers.lock().unwrap().remove(peer_ip);
+        self.active_peers.lock_safe().remove(peer_ip);
     }
 
     /// Records bridge transfer bytes between TCP/uTP swarms and WebRTC swarms.
@@ -785,7 +782,7 @@ impl WebTorrentBridge {
 
     /// Returns a snapshot of WebTorrent bridge statistics.
     pub fn stats(&self) -> WebTorrentBridgeStats {
-        let active_count = self.active_peers.lock().unwrap().len();
+        let active_count = self.active_peers.lock_safe().len();
         WebTorrentBridgeStats {
             offers_sent: self.offers_sent.load(Ordering::Relaxed),
             offers_received: self.offers_received.load(Ordering::Relaxed),
@@ -797,3 +794,4 @@ impl WebTorrentBridge {
         }
     }
 }
+

@@ -15,6 +15,7 @@ use crate::io_traits::{BlockReader, BlockStorage, BlockWriter};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use crate::utils::util::LockExt;
 use std::time::Instant;
 
 /// Individual cached data block with offset and metadata.
@@ -127,7 +128,7 @@ impl CachedBlockStorage {
 
     /// Retrieves a snapshot of operational metrics from the cache.
     pub fn metrics(&self) -> CacheMetrics {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_safe();
         CacheMetrics {
             cache_hits: self.cache_hits.load(Ordering::Relaxed),
             cache_misses: self.cache_misses.load(Ordering::Relaxed),
@@ -148,13 +149,13 @@ impl CachedBlockStorage {
 
     /// Flushes all dirty blocks, coalescing contiguous ranges into sequential writes.
     pub fn flush_all(&self) -> Result<(), BitTorrentError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
         self.flush_internal(&mut state, None)
     }
 
     /// Flushes all dirty blocks falling within a specific byte offset range.
     pub fn flush_range(&self, start: u64, length: u64) -> Result<(), BitTorrentError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
         self.flush_internal(&mut state, Some((start, start.saturating_add(length))))
     }
 
@@ -167,7 +168,7 @@ impl CachedBlockStorage {
     /// Discards cached blocks falling within a specific byte offset range without flushing to disk.
     /// Useful for dropping unverified or corrupted blocks that failed hash checks.
     pub fn discard_range(&self, start: u64, length: u64) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
         let end = start.saturating_add(length);
         let offsets_to_remove: Vec<u64> = state
             .blocks
@@ -197,7 +198,7 @@ impl CachedBlockStorage {
 
     /// Clears all blocks from the cache immediately.
     pub fn clear(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
         let blocks = std::mem::take(&mut state.blocks);
         for (_, block) in blocks {
             state.return_buffer(block.data);
@@ -339,7 +340,7 @@ impl BlockWriter for CachedBlockStorage {
             )));
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
 
         // Check if block already exists at exact offset
         if let Some(existing) = state.blocks.get_mut(&offset) {
@@ -403,7 +404,7 @@ impl BlockReader for CachedBlockStorage {
             }
         };
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
         let now = Instant::now();
 
         // Check for exact match first (standard 16 KiB block read path)
@@ -481,3 +482,4 @@ impl Drop for CachedBlockStorage {
         let _ = self.flush_all();
     }
 }
+

@@ -14,6 +14,7 @@ use crate::storage::fast_resume::FastResumeData;
 
 use super::config::SessionConfig;
 use super::session::TorrentSession;
+use crate::utils::util::LockExt;
 
 /// The source of a torrent session (either a `.torrent` file or a magnet link).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -357,7 +358,7 @@ impl TorrentSessionBuilder {
                     sess.inject_web_seeds(self.web_seeds);
                 }
                 if let Some(ref sel) = self.selected_files {
-                    sess.context.lock().unwrap().set_selected_files(sel);
+                    sess.context.lock_safe().set_selected_files(sel);
                 }
                 sess
             }
@@ -384,7 +385,7 @@ impl TorrentSessionBuilder {
                         fast_resume,
                     )?;
                     if let Ok(magnet) = crate::MagnetLink::parse(link) {
-                        let mut ctx = sess.context.lock().unwrap();
+                        let mut ctx = sess.context.lock_safe();
                         for tr in magnet.trackers {
                             ctx.add_tracker_url(tr);
                         }
@@ -405,7 +406,7 @@ impl TorrentSessionBuilder {
                         sess.inject_web_seeds(self.web_seeds);
                     }
                     if let Some(ref sel) = self.selected_files {
-                        sess.context.lock().unwrap().set_selected_files(sel);
+                        sess.context.lock_safe().set_selected_files(sel);
                     }
                     sess
                 } else {

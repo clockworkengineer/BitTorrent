@@ -47,6 +47,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use crate::utils::util::{LockExt, RwLockExt};
 
 /// Actions returned by message handling to be executed asynchronously outside locks.
 #[derive(Debug)]
@@ -316,7 +317,7 @@ impl Peer {
     /// Links the peer to a specific `TorrentContext`, initializing the peer's remote bitfield capacity.
     pub fn set_torrent_context(&mut self, tc: Arc<Mutex<TorrentContext>>) {
         let (num_pieces, bitfield_len) = {
-            let tc_guard = tc.lock().unwrap();
+            let tc_guard = tc.lock_safe();
             (tc_guard.number_of_pieces, tc_guard.bitfield.len())
         };
         self.init_bitfield(num_pieces, bitfield_len);
@@ -1174,11 +1175,11 @@ impl Peer {
             match action {
                 PeerAction::SendUnchoke => {
                     net.write_message(PeerMessage::Unchoke).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendChoke => {
                     net.write_message(PeerMessage::Choke).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendPiece {
                     index,
@@ -1191,7 +1192,7 @@ impl Peer {
                         block: &block,
                     };
                     net.write_message(msg).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendReject {
                     index,
@@ -1204,23 +1205,23 @@ impl Peer {
                         length,
                     };
                     net.write_message(msg).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendAllowedFast(piece) => {
                     net.write_message(PeerMessage::AllowedFast(piece)).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendSuggest(piece) => {
                     net.write_message(PeerMessage::Suggest(piece)).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendHaveAll => {
                     net.write_message(PeerMessage::HaveAll).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendHaveNone => {
                     net.write_message(PeerMessage::HaveNone).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendExtended { ext_id, payload } => {
                     let msg = PeerMessage::Extended {
@@ -1228,16 +1229,16 @@ impl Peer {
                         payload: &payload,
                     };
                     net.write_message(msg).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendHave(piece) => {
                     net.write_message(PeerMessage::Have(piece)).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendHaveToPeer { target_ip, piece } => {
                     let target_net = {
-                        let ctx_guard = context.lock().unwrap();
-                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        let ctx_guard = context.lock_safe();
+                        let swarm = ctx_guard.peer_swarm.read_safe();
                         swarm
                             .get(&target_ip)
                             .and_then(|p| p.lock().ok())
@@ -1249,8 +1250,8 @@ impl Peer {
                 }
                 PeerAction::SendSuggestToPeer { target_ip, piece } => {
                     let (target_net, supports_fast) = {
-                        let ctx_guard = context.lock().unwrap();
-                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        let ctx_guard = context.lock_safe();
+                        let swarm = ctx_guard.peer_swarm.read_safe();
                         if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok())
                         {
                             (
@@ -1269,8 +1270,8 @@ impl Peer {
                 }
                 PeerAction::SendAllowedFastToPeer { target_ip, piece } => {
                     let (target_net, supports_fast) = {
-                        let ctx_guard = context.lock().unwrap();
-                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        let ctx_guard = context.lock_safe();
+                        let swarm = ctx_guard.peer_swarm.read_safe();
                         if let Some(other_peer) = swarm.get(&target_ip).and_then(|p| p.lock().ok())
                         {
                             (
@@ -1304,7 +1305,7 @@ impl Peer {
                         proof_layers,
                     };
                     net.write_message(msg).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendHashes {
                     pieces_root,
@@ -1323,7 +1324,7 @@ impl Peer {
                         hashes: &hashes,
                     };
                     net.write_message(msg).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendHashReject {
                     pieces_root,
@@ -1340,12 +1341,12 @@ impl Peer {
                         proof_layers,
                     };
                     net.write_message(msg).await?;
-                    peer.lock().unwrap().update_last_message_sent();
+                    peer.lock_safe().update_last_message_sent();
                 }
                 PeerAction::SendHolepunch { target_ip, message } => {
                     let target_info = {
-                        let ctx_guard = context.lock().unwrap();
-                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        let ctx_guard = context.lock_safe();
+                        let swarm = ctx_guard.peer_swarm.read_safe();
                         swarm
                             .get(&target_ip)
                             .and_then(|p| p.lock().ok())
@@ -1368,7 +1369,7 @@ impl Peer {
                     let ip = addr.ip().to_string();
                     let port = addr.port();
                     let (details, should_connect) = {
-                        let ctx = context.lock().unwrap();
+                        let ctx = context.lock_safe();
                         let details = crate::network::tracker::PeerDetails {
                             ip: ip.clone(),
                             port,
@@ -1388,7 +1389,7 @@ impl Peer {
                             .unwrap_or(false);
                         if !is_dead {
                             let tc_arc = {
-                                let p = peer.lock().unwrap();
+                                let p = peer.lock_safe();
                                 #[allow(deprecated)]
                                 p.tc.clone()
                             };
@@ -1412,8 +1413,8 @@ impl Peer {
                     block_index,
                 } => {
                     let peers: Vec<(String, Arc<Mutex<Peer>>)> = {
-                        let ctx_guard = context.lock().unwrap();
-                        let swarm = ctx_guard.peer_swarm.read().unwrap();
+                        let ctx_guard = context.lock_safe();
+                        let swarm = ctx_guard.peer_swarm.read_safe();
                         swarm
                             .iter()
                             .filter(|&(ip, _)| ip != peer_details_ip)
@@ -1452,7 +1453,7 @@ impl Peer {
                 PeerAction::DiscoverPeers(peers) => {
                     for details in peers {
                         let should_connect = {
-                            let ctx = context.lock().unwrap();
+                            let ctx = context.lock_safe();
                             let is_v6_disabled = details.is_ipv6() && !ctx.config.enable_ipv6;
                             !is_v6_disabled
                                 && !ctx.is_peer_in_swarm(&details.ip)
@@ -1465,7 +1466,7 @@ impl Peer {
                                 }
                             }
                             let tc_arc = {
-                                let p = peer.lock().unwrap();
+                                let p = peer.lock_safe();
                                 #[allow(deprecated)]
                                 p.tc.clone()
                             };
@@ -1487,3 +1488,4 @@ impl Peer {
         Ok(())
     }
 }
+

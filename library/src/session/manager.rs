@@ -7,6 +7,7 @@ use crate::core::torrent_context::TorrentContext;
 use crate::peer::Peer;
 use crate::tracker::PeerDetails;
 use crate::util::info_hash_to_string;
+use crate::utils::util::{LockExt, RwLockExt};
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
@@ -46,29 +47,27 @@ impl Manager {
     /// Retrieves an active torrent context matching the provided info hash, if present.
     pub fn get_torrent_context(&self, info_hash: &[u8]) -> Option<Arc<Mutex<TorrentContext>>> {
         let key = info_hash_to_string(info_hash);
-        self.torrents.read().unwrap().get(&key).cloned()
+        self.torrents.read_safe().get(&key).cloned()
     }
 
     /// Adds a new torrent context to the manager's registry. Returns `true` if added successfully (i.e. did not exist).
     pub fn add_torrent_context(&self, tc: Arc<Mutex<TorrentContext>>) -> bool {
-        let key = info_hash_to_string(&tc.lock().unwrap().info_hash);
-        self.torrents.write().unwrap().insert(key, tc).is_none()
+        let key = info_hash_to_string(&tc.lock_safe().info_hash);
+        self.torrents.write_safe().insert(key, tc).is_none()
     }
 
     /// Removes a torrent context from the registry. Returns `true` if it was present.
     pub fn remove_torrent_context(&self, tc: &TorrentContext) -> bool {
         let key = info_hash_to_string(&tc.info_hash);
-        self.torrents.write().unwrap().remove(&key).is_some()
+        self.torrents.write_safe().remove(&key).is_some()
     }
 
     /// Retrieves a peer matching the given info hash and IP address.
     pub fn get_peer(&self, info_hash: &[u8], ip: &str) -> Option<Arc<Mutex<Peer>>> {
         let tc = self.get_torrent_context(info_hash)?;
-        tc.lock()
-            .unwrap()
+        tc.lock_safe()
             .peer_swarm
-            .read()
-            .unwrap()
+            .read_safe()
             .get(ip)
             .cloned()
     }
@@ -76,19 +75,18 @@ impl Manager {
     /// Adds an IP address to the dead peer list to suppress reconnection attempts.
     pub fn add_to_dead_peer_list(&self, ip: &str) {
         self.dead_peers
-            .write()
-            .unwrap()
+            .write_safe()
             .insert(ip.to_string(), Instant::now());
     }
 
     /// Removes an IP address from the dead peer list.
     pub fn remove_from_dead_peer_list(&self, ip: &str) {
-        self.dead_peers.write().unwrap().remove(ip);
+        self.dead_peers.write_safe().remove(ip);
     }
 
     /// Checks if a peer IP is marked as dead.
     pub fn is_peer_dead(&self, ip: &str) -> bool {
-        let mut dead_peers = self.dead_peers.write().unwrap();
+        let mut dead_peers = self.dead_peers.write_safe();
         if let Some(&timestamp) = dead_peers.get(ip) {
             if timestamp.elapsed() > crate::constants::DEAD_PEER_TTL {
                 dead_peers.remove(ip);
@@ -101,12 +99,12 @@ impl Manager {
 
     /// Configures the sender channel for queueing newly discovered peers.
     pub fn set_peer_discovery_queue(&self, sender: Sender<PeerDetails>) {
-        *self.peer_discovery_queue.write().unwrap() = Some(sender);
+        *self.peer_discovery_queue.write_safe() = Some(sender);
     }
 
     /// Clears/disables the peer discovery queue channel.
     pub fn clear_peer_discovery_queue(&self) {
-        *self.peer_discovery_queue.write().unwrap() = None;
+        *self.peer_discovery_queue.write_safe() = None;
     }
 
     /// Pushes a newly discovered peer details block into the discovery queue, ignoring it if marked dead or the queue is full.
@@ -123,7 +121,7 @@ impl Manager {
         {
             return;
         }
-        if let Some(sender) = &*self.peer_discovery_queue.read().unwrap() {
+        if let Some(sender) = &*self.peer_discovery_queue.read_safe() {
             if sender.send(peer_details).is_ok() {
                 self.candidate_count
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

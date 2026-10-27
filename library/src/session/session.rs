@@ -22,6 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use crate::utils::util::{LockExt, RwLockExt};
 use std::thread;
 use std::time::Duration;
 
@@ -99,7 +100,7 @@ impl TorrentSession {
         let executor_thread = spawn_executor(context.clone(), task_rx);
 
         let (atomic_status, transfer_metrics, peer_swarm) = {
-            let ctx = context.lock().unwrap();
+            let ctx = context.lock_safe();
             (
                 ctx.atomic_status.clone(),
                 ctx.transfer_metrics.clone(),
@@ -130,7 +131,7 @@ impl TorrentSession {
         };
 
         if validate {
-            session.context.lock().unwrap().validate()?;
+            session.context.lock_safe().validate()?;
         }
 
         config.choking_strategy.spawn_choking_loop(
@@ -196,7 +197,7 @@ impl TorrentSession {
             }
             if resume.verify_on_disk(&download_path).unwrap_or(false) {
                 if resume
-                    .apply_to_context(&mut context.lock().unwrap())
+                    .apply_to_context(&mut context.lock_safe())
                     .is_ok()
                 {
                     resumed = true;
@@ -206,19 +207,18 @@ impl TorrentSession {
 
         if !resumed {
             if seeding {
-                disk_io.fully_downloaded_torrent_bitfield(&mut context.lock().unwrap())?;
-                let total = context.lock().unwrap().total_bytes_to_download;
+                disk_io.fully_downloaded_torrent_bitfield(&mut context.lock_safe())?;
+                let total = context.lock_safe().total_bytes_to_download;
                 context
-                    .lock()
-                    .unwrap()
+                    .lock_safe()
                     .total_bytes_downloaded
                     .store(total, std::sync::atomic::Ordering::Relaxed);
-                context.lock().unwrap().initial_bytes_downloaded = total;
+                context.lock_safe().initial_bytes_downloaded = total;
             } else {
                 if !config.skip_hash_check {
-                    disk_io.create_torrent_bitfield(&mut context.lock().unwrap())?;
+                    disk_io.create_torrent_bitfield(&mut context.lock_safe())?;
                 } else {
-                    let mut ctx = context.lock().unwrap();
+                    let mut ctx = context.lock_safe();
                     let number_of_pieces = ctx.number_of_pieces;
                     let piece_length = ctx.piece_length;
                     let mut total_bytes_left = ctx.total_bytes_to_download as i64;
@@ -233,11 +233,10 @@ impl TorrentSession {
                     }
                 }
                 let downloaded = context
-                    .lock()
-                    .unwrap()
+                    .lock_safe()
                     .total_bytes_downloaded
                     .load(std::sync::atomic::Ordering::Relaxed);
-                context.lock().unwrap().initial_bytes_downloaded = downloaded;
+                context.lock_safe().initial_bytes_downloaded = downloaded;
             }
         }
 
@@ -280,7 +279,7 @@ impl TorrentSession {
         )?));
 
         {
-            let mut ctx = context.lock().unwrap();
+            let mut ctx = context.lock_safe();
             if let Some(ref name) = magnet.display_name {
                 ctx.file_name = name.clone();
             } else {
@@ -302,11 +301,10 @@ impl TorrentSession {
         );
 
         if let Some(ref sel) = selected_files {
-            context.lock().unwrap().set_selected_files(sel);
+            context.lock_safe().set_selected_files(sel);
         } else if magnet.has_file_selection() {
             context
-                .lock()
-                .unwrap()
+                .lock_safe()
                 .set_selected_files(magnet.selected_indices());
         }
 
@@ -322,7 +320,7 @@ impl TorrentSession {
         let mut added = 0;
         let mut should_spawn_webseed = false;
         {
-            let mut ctx = self.context.lock().unwrap();
+            let mut ctx = self.context.lock_safe();
             for ws in web_seeds {
                 if ctx.add_web_seed(ws) {
                     added += 1;
@@ -334,9 +332,9 @@ impl TorrentSession {
         }
         #[cfg(feature = "webseed")]
         if should_spawn_webseed {
-            let active_seeds = self.context.lock().unwrap().web_seeds.clone();
+            let active_seeds = self.context.lock_safe().web_seeds.clone();
             let handle = crate::webseed::start_webseed_loop(self.context.clone(), active_seeds);
-            self.peer_workers.lock().unwrap().push(handle);
+            self.peer_workers.lock_safe().push(handle);
         }
         added
     }
@@ -348,7 +346,7 @@ impl TorrentSession {
     pub fn inject_websocket_trackers(&mut self, trackers: Vec<String>) -> usize {
         let mut added = 0;
         {
-            let mut ctx = self.context.lock().unwrap();
+            let mut ctx = self.context.lock_safe();
             for tr in trackers {
                 if crate::network::webtorrent_injector::WebTorrentMagnetInjector::is_websocket_tracker(&tr) {
                     if ctx.add_tracker_url(tr) {
@@ -366,14 +364,13 @@ impl TorrentSession {
 
     /// Returns a list of currently active WebSeed mirror URLs registered with this session.
     pub fn web_seeds(&self) -> Vec<String> {
-        self.context.lock().unwrap().web_seeds.clone()
+        self.context.lock_safe().web_seeds.clone()
     }
 
     /// Returns a list of currently active WebTorrent WebSocket tracker URLs registered with this session.
     pub fn websocket_trackers(&self) -> Vec<String> {
         self.context
-            .lock()
-            .unwrap()
+            .lock_safe()
             .tracker_urls
             .iter()
             .filter(|u| {
@@ -392,12 +389,12 @@ impl TorrentSession {
 
     /// Returns true if super-seeding mode (BEP 16) is active.
     pub fn is_super_seeding(&self) -> bool {
-        self.context.lock().unwrap().is_super_seeding()
+        self.context.lock_safe().is_super_seeding()
     }
 
     /// Enables or disables super-seeding mode (BEP 16).
     pub fn set_super_seeding(&mut self, enabled: bool) {
-        self.context.lock().unwrap().set_super_seeding(enabled);
+        self.context.lock_safe().set_super_seeding(enabled);
     }
 
     /// Creates a seekable streaming reader ([`TorrentStream`](crate::storage::stream::TorrentStream)) over the entire torrent.
@@ -406,7 +403,7 @@ impl TorrentSession {
     /// so that active peer downloads dynamically prioritize the streaming cursor piece and lookahead window.
     pub fn create_stream(&self) -> Result<crate::storage::stream::TorrentStream, BitTorrentError> {
         let (storage, total_len, cursor) = {
-            let mut ctx = self.context.lock().unwrap();
+            let mut ctx = self.context.lock_safe();
             let storage = ctx.storage.clone();
             let total_len = ctx.total_bytes_to_download;
             let cursor = Arc::new(core::sync::atomic::AtomicU32::new(0));
@@ -436,7 +433,7 @@ impl TorrentSession {
     ) -> Result<crate::storage::stream::TorrentStream, BitTorrentError> {
         let cursor = Arc::new(core::sync::atomic::AtomicU32::new(0));
         {
-            let mut ctx = self.context.lock().unwrap();
+            let mut ctx = self.context.lock_safe();
             ctx.selector = Arc::new(crate::core::selector::StreamingPieceSelector::new(
                 cursor.clone(),
                 8,
@@ -478,13 +475,13 @@ impl TorrentSession {
     /// ```
     pub fn start_download(&mut self) -> Result<(), BitTorrentError> {
         {
-            let mut context = self.context.lock().unwrap();
+            let mut context = self.context.lock_safe();
             if context.status != TorrentStatus::Seeding {
                 context.start_downloading()?;
             }
         }
 
-        let context = self.context.lock().unwrap();
+        let context = self.context.lock_safe();
         let config = context.config.clone();
         let info_hash = context.info_hash.clone();
         drop(context);
@@ -500,12 +497,12 @@ impl TorrentSession {
         let max_connections = config.max_connections;
         thread::spawn(move || {
             while let Ok(peer_details) = peer_rx.recv() {
-                let pg = context_clone.lock().unwrap();
+                let pg = context_clone.lock_safe();
                 if pg.status != TorrentStatus::Ended && pg.status != TorrentStatus::Paused {
-                    if !pg.peer_swarm.read().unwrap().contains_key(&peer_details.ip) {
+                    if !pg.peer_swarm.read_safe().contains_key(&peer_details.ip) {
                         // Prune finished worker handles and enforce connection limit
                         {
-                            let mut workers_guard = peer_workers.lock().unwrap();
+                            let mut workers_guard = peer_workers.lock_safe();
                             workers_guard.retain(|h| !h.is_finished());
                             if workers_guard.len() >= max_connections {
                                 continue; // At capacity; drop this candidate
@@ -521,7 +518,7 @@ impl TorrentSession {
                                 mgr2,
                             ));
                         });
-                        workers.lock().unwrap().push(handle);
+                        workers.lock_safe().push(handle);
                     }
                 }
             }
@@ -530,7 +527,7 @@ impl TorrentSession {
         // Start LSD (Local Service Discovery) listener and announcer
         #[cfg(feature = "lsd")]
         {
-            let is_private = self.context.lock().unwrap().is_private;
+            let is_private = self.context.lock_safe().is_private;
             if !is_private || config.allow_private_lsd {
                 let lsd_listener = crate::lsd::LsdListener::new(info_hash.clone(), peer_tx.clone());
                 let _lsd_listener_handle = lsd_listener.start();
@@ -543,7 +540,7 @@ impl TorrentSession {
 
         #[cfg(feature = "dht")]
         {
-            let is_private = self.context.lock().unwrap().is_private;
+            let is_private = self.context.lock_safe().is_private;
             if config.dht_enabled && !is_private {
                 if self.dht.is_none() {
                     if let Ok(d) = crate::dht::Dht::new(config.dht_port) {
@@ -564,8 +561,7 @@ impl TorrentSession {
                         loop {
                             if d_arc
                                 .routing_table
-                                .lock()
-                                .unwrap()
+                                .lock_safe()
                                 .closest_nodes(&ih, 1)
                                 .is_empty()
                             {
@@ -596,11 +592,11 @@ impl TorrentSession {
         // Start WebSeeding loop if available
         #[cfg(feature = "webseed")]
         {
-            let web_seeds = self.context.lock().unwrap().web_seeds.clone();
+            let web_seeds = self.context.lock_safe().web_seeds.clone();
             if !web_seeds.is_empty() {
                 let webseed_handle =
                     crate::webseed::start_webseed_loop(self.context.clone(), web_seeds);
-                self.peer_workers.lock().unwrap().push(webseed_handle);
+                self.peer_workers.lock_safe().push(webseed_handle);
             }
         }
 
@@ -645,7 +641,7 @@ impl TorrentSession {
     /// Starts the session in seeding mode, serving verified local pieces to peers.
     pub fn start_seeding(&mut self) -> Result<(), BitTorrentError> {
         {
-            let mut context = self.context.lock().unwrap();
+            let mut context = self.context.lock_safe();
             context.set_status(TorrentStatus::Seeding);
             context.download_finished.set();
         }
@@ -666,7 +662,7 @@ impl TorrentSession {
     /// # }
     /// ```
     pub fn pause(&mut self) -> Result<(), BitTorrentError> {
-        self.context.lock().unwrap().pause()
+        self.context.lock_safe().pause()
     }
 
     /// Resumes the torrent download session from a paused state.
@@ -683,7 +679,7 @@ impl TorrentSession {
     /// # }
     /// ```
     pub fn resume(&mut self) -> Result<(), BitTorrentError> {
-        self.context.lock().unwrap().resume()
+        self.context.lock_safe().resume()
     }
 
     /// Stops the session, disconnecting all connected peers and releasing resources.
@@ -707,22 +703,22 @@ impl TorrentSession {
         #[cfg(feature = "nat-pmp")]
         if let Some(ref nat) = self.nat_pmp {
             let nat_clone = nat.clone();
-            let port = self.context.lock().unwrap().config.listen_port;
+            let port = self.context.lock_safe().config.listen_port;
             thread::spawn(move || {
                 let _ = nat_clone.release_mapping(true, port);
                 let _ = nat_clone.release_mapping(false, port);
             });
         }
         let _ = self.flush_disk_cache();
-        let context = self.context.lock().unwrap();
+        let context = self.context.lock_safe();
         context.disconnect_all_peers();
         drop(context);
-        self.context.lock().unwrap().stop()
+        self.context.lock_safe().stop()
     }
 
     /// Flushes any pending dirty blocks in the in-memory write cache out to disk.
     pub fn flush_disk_cache(&self) -> Result<(), BitTorrentError> {
-        let storage = self.context.lock().unwrap().storage.clone();
+        let storage = self.context.lock_safe().storage.clone();
         storage.flush()
     }
 
@@ -803,7 +799,7 @@ impl TorrentSession {
 
     /// Returns the local piece completion status and swarm-wide piece availability counts.
     pub fn piece_availability(&self) -> (Vec<bool>, Vec<u16>) {
-        self.context.lock().unwrap().get_piece_availability()
+        self.context.lock_safe().get_piece_availability()
     }
 
     /// Exports the session's torrent into BitTorrent v2 or Hybrid `.torrent` format.
@@ -814,7 +810,7 @@ impl TorrentSession {
     ) -> Result<(Vec<u8>, crate::core::torrent_upgrader::TorrentUpgradeReport), BitTorrentError>
     {
         let (files, download_path, name, mut piece_length, trackers, web_seeds, is_private) = {
-            let ctx = self.context.lock().unwrap();
+            let ctx = self.context.lock_safe();
             (
                 ctx.files_to_download.clone(),
                 ctx.download_path.clone(),
@@ -855,7 +851,7 @@ impl TorrentSession {
                 std::fs::read(&path_to_read)?
             } else {
                 let mut buf = vec![0u8; file.length as usize];
-                let ctx = self.context.lock().unwrap();
+                let ctx = self.context.lock_safe();
                 ctx.storage.read_block(file.offset, &mut buf)?;
                 buf
             };
@@ -944,7 +940,7 @@ impl TorrentSession {
 
     /// Validates the presence and integrity (exact sizes) of downloaded files on disk.
     pub fn validate(&self) -> Result<(), BitTorrentError> {
-        let context = self.context.lock().unwrap();
+        let context = self.context.lock_safe();
         context.validate()?;
         for file in &context.files_to_download {
             let path = Path::new(&file.name);
@@ -972,7 +968,7 @@ impl TorrentSession {
     ///
     /// Returns the number of results applied.
     pub fn drain_verification_results(&self) -> usize {
-        let mut ctx = self.context.lock().unwrap();
+        let mut ctx = self.context.lock_safe();
         let storage = ctx.storage.clone();
         ctx.drain_verification_results(&*storage)
     }
@@ -981,7 +977,7 @@ impl TorrentSession {
     pub fn verification_metrics(
         &self,
     ) -> Option<crate::storage::verification_pool::VerificationPoolMetrics> {
-        let ctx = self.context.lock().unwrap();
+        let ctx = self.context.lock_safe();
         Some(ctx.verification_metrics())
     }
 
@@ -989,7 +985,7 @@ impl TorrentSession {
     pub fn recheck_pieces(
         &mut self,
     ) -> Result<Arc<crate::storage::verification_pool::RecheckProgress>, BitTorrentError> {
-        let mut ctx = self.context.lock().unwrap();
+        let mut ctx = self.context.lock_safe();
         ctx.recheck_all_pieces()
     }
 
@@ -1000,7 +996,7 @@ impl TorrentSession {
 
     /// Returns the download priority of a file at the given index, if found.
     pub fn file_priority(&self, index: usize) -> Option<FilePriority> {
-        let ctx = self.context.lock().unwrap();
+        let ctx = self.context.lock_safe();
         ctx.files_to_download.get(index).map(|f| f.priority)
     }
 
@@ -1010,13 +1006,13 @@ impl TorrentSession {
         index: usize,
         priority: FilePriority,
     ) -> Result<(), BitTorrentError> {
-        let mut ctx = self.context.lock().unwrap();
+        let mut ctx = self.context.lock_safe();
         ctx.set_file_priority(index, priority)
     }
 
     /// Returns the currently active BEP 53 selected file indices, if configured.
     pub fn selected_files(&self) -> Option<Vec<usize>> {
-        let ctx = self.context.lock().unwrap();
+        let ctx = self.context.lock_safe();
         ctx.selected_files().map(|s| s.to_vec())
     }
 
@@ -1025,7 +1021,7 @@ impl TorrentSession {
     /// Selected files are elevated to [`FilePriority::Normal`], and unselected files
     /// are set to [`FilePriority::Skip`].
     pub fn select_files(&mut self, indices: &[usize]) -> Result<(), BitTorrentError> {
-        let mut ctx = self.context.lock().unwrap();
+        let mut ctx = self.context.lock_safe();
         ctx.set_selected_files(indices);
         Ok(())
     }
@@ -1034,13 +1030,13 @@ impl TorrentSession {
     pub fn bep53_evaluation(
         &self,
     ) -> Option<crate::network::metadata_fetcher::BEP53SelectionEvaluation> {
-        let ctx = self.context.lock().unwrap();
+        let ctx = self.context.lock_safe();
         ctx.bep53_evaluation()
     }
 
     /// Returns telemetry metrics for the adaptive endgame erasure staging cache.
     pub fn endgame_metrics(&self) -> crate::storage::erasure_staging::EndgameStagingMetrics {
-        let ctx = self.context.lock().unwrap();
+        let ctx = self.context.lock_safe();
         ctx.endgame_staging_metrics()
     }
 
@@ -1048,7 +1044,7 @@ impl TorrentSession {
     pub fn swarm_latency_summary(
         &self,
     ) -> Vec<crate::network::latency_profiler::PeerLatencySummary> {
-        let ctx = self.context.lock().unwrap();
+        let ctx = self.context.lock_safe();
         ctx.swarm_latency_summary()
     }
 
@@ -1056,19 +1052,19 @@ impl TorrentSession {
     pub fn webseed_mirror_summary(
         &self,
     ) -> Vec<crate::network::webseed_tracker::MirrorHealthSummary> {
-        let ctx = self.context.lock().unwrap();
+        let ctx = self.context.lock_safe();
         ctx.webseed_mirror_summary()
     }
 
     /// Registers a new WebSeed mirror URL dynamically at runtime.
     pub fn add_webseed(&mut self, url: impl Into<String>) {
-        let mut ctx = self.context.lock().unwrap();
+        let mut ctx = self.context.lock_safe();
         ctx.add_webseed(url);
     }
 
     /// Removes a WebSeed mirror URL from active tracking and routing.
     pub fn remove_webseed(&mut self, url: &str) -> bool {
-        let mut ctx = self.context.lock().unwrap();
+        let mut ctx = self.context.lock_safe();
         ctx.remove_webseed(url)
     }
 
@@ -1077,7 +1073,7 @@ impl TorrentSession {
         &mut self,
         peer: &mut Peer,
     ) -> Result<Option<(u32, u32, u32)>, BitTorrentError> {
-        let mut context = self.context.lock().unwrap();
+        let mut context = self.context.lock_safe();
         if let Some((piece_number, begin, length)) = context.next_block_request_for_peer(peer) {
             peer.send_request(piece_number, begin, length).await?;
             peer.outstanding_requests_count = peer.outstanding_requests_count.saturating_add(1);
@@ -1109,7 +1105,7 @@ impl TorrentSession {
                 manager_clone,
             ));
         });
-        peer_workers.lock().unwrap().push(handle);
+        peer_workers.lock_safe().push(handle);
 
         Ok(())
     }
@@ -1129,7 +1125,7 @@ impl TorrentSession {
 
     /// Blocks the current thread waiting for the download finish event to be signaled.
     pub fn wait_for_download_finished(&self, timeout_ms: u64) -> bool {
-        let event = self.context.lock().unwrap().download_finished.clone();
+        let event = self.context.lock_safe().download_finished.clone();
         event.wait_one(timeout_ms)
     }
 
@@ -1139,7 +1135,7 @@ impl TorrentSession {
             let _ = self.stop();
         }
         let mut workers = {
-            let mut guard = self.peer_workers.lock().unwrap();
+            let mut guard = self.peer_workers.lock_safe();
             std::mem::take(&mut *guard)
         };
         while let Some(handle) = workers.pop() {
@@ -1152,11 +1148,10 @@ impl TorrentSession {
 
     /// Creates a `TorrentSession` using an already constructed `TorrentContext`.
     /// Bypasses all metainfo file parsing and disk checks.
-    pub fn new_from_context(context: Arc<Mutex<TorrentContext>>) -> Self {
-        let download_path = context.lock().unwrap().download_path.clone();
-        let config = context.lock().unwrap().config.clone();
+    pub fn new_from_context(context: Arc<Mutex<TorrentContext>>) -> Result<Self, BitTorrentError> {
+        let download_path = context.lock_safe().download_path.clone();
+        let config = context.lock_safe().config.clone();
         Self::finalize_assembly(context, download_path, &config, false, false)
-            .expect("Finalizing assembly from context should never fail")
     }
 
     /// Spawns a background thread that re-announces to the tracker at the interval returned by
@@ -1172,12 +1167,11 @@ impl TorrentSession {
             let mut announced_completed = false;
             loop {
                 let min_reannounce = {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     ctx.config.min_reannounce_interval
                 };
                 let has_peers = context
-                    .lock()
-                    .unwrap()
+                    .lock_safe()
                     .peer_swarm
                     .read()
                     .map(|s| !s.is_empty())
@@ -1191,7 +1185,7 @@ impl TorrentSession {
                 let duration = Duration::from_secs(interval as u64);
                 let mut ended = false;
                 while start_time.elapsed() < duration {
-                    if context.lock().unwrap().status == TorrentStatus::Ended {
+                    if context.lock_safe().status == TorrentStatus::Ended {
                         ended = true;
                         break;
                     }
@@ -1202,7 +1196,7 @@ impl TorrentSession {
                 }
 
                 let status = {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     if ctx.status == TorrentStatus::Ended {
                         break;
                     }
@@ -1230,7 +1224,7 @@ impl TorrentSession {
                                     mgr2,
                                 ));
                             });
-                            peer_workers2.lock().unwrap().push(handle);
+                            peer_workers2.lock_safe().push(handle);
                         }
                     }
                     Err(_) => {}
@@ -1252,10 +1246,9 @@ fn spawn_executor(
         let mut pool = LocalPool::new();
         let spawner = pool.spawner();
         let spawner_clone = spawner.clone();
-        spawner
-            .spawn_local(async move {
+        let _ = spawner.spawn_local(async move {
                 loop {
-                    if context.lock().unwrap().status == TorrentStatus::Ended {
+                    if context.lock_safe().status == TorrentStatus::Ended {
                         break;
                     }
                     match task_rx.try_recv() {
@@ -1271,8 +1264,7 @@ fn spawn_executor(
                         }
                     }
                 }
-            })
-            .unwrap();
+            });
         pool.run();
     })
 }
@@ -1380,3 +1372,4 @@ impl super::config::ChokingStrategy for super::config::StandardChoking {
         strategy.spawn_choking_loop(context, task_tx, manager);
     }
 }
+

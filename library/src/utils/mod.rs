@@ -6,3 +6,6 @@ pub mod io_traits;
 #[cfg(feature = "std")]
 pub mod manual_reset_event;
 pub mod util;
+
+#[cfg(feature = "std")]
+pub use util::{LockExt, RwLockExt};

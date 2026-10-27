@@ -3,6 +3,7 @@
 //! A synchronization primitive that allows threads to wait until a signal is set
 //! manually. Similar to Win32's ManualResetEvent or .NET's ManualResetEvent.
 
+use crate::utils::util::LockExt;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,14 +25,14 @@ impl ManualResetEvent {
 
     /// Sets the state of the event to signaled, allowing one or more waiting threads to proceed.
     pub fn set(&self) {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock_safe();
         *guard = true;
         self.condvar.notify_all();
     }
 
     /// Resets the state of the event to non-signaled, causing threads that call `wait_one` to block.
     pub fn reset(&self) {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock_safe();
         *guard = false;
     }
 
@@ -41,10 +42,10 @@ impl ManualResetEvent {
     /// Returns `true` if the event is signaled; otherwise, `false`.
     pub fn wait_one(&self, timeout_ms: u64) -> bool {
         if timeout_ms == 0 {
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock_safe();
             *guard
         } else {
-            let mut guard = self.inner.lock().unwrap();
+            let mut guard = self.inner.lock_safe();
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             while !*guard {
                 let now = Instant::now();
@@ -52,7 +53,10 @@ impl ManualResetEvent {
                     break;
                 }
                 let remaining = deadline - now;
-                let (g, _) = self.condvar.wait_timeout(guard, remaining).unwrap();
+                let (g, _) = self
+                    .condvar
+                    .wait_timeout(guard, remaining)
+                    .unwrap_or_else(|e| e.into_inner());
                 guard = g;
             }
             *guard

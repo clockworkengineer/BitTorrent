@@ -4,6 +4,7 @@
 //! NAT router gateway using either NAT-PMP (RFC 6886) or UPnP (SOAP over SSDP).
 
 use crate::error::BitTorrentError;
+use crate::utils::util::RwLockExt;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream, UdpSocket};
 use std::time::Duration;
@@ -423,13 +424,13 @@ impl UpnpClient {
 
     /// Resolves or retrieves the cached UPnP control endpoint.
     pub fn resolve_endpoint(&self) -> Result<UpnpEndpoint, BitTorrentError> {
-        if let Some(ep) = self.endpoint.read().unwrap().as_ref() {
+        if let Some(ep) = self.endpoint.read_safe().as_ref() {
             return Ok(ep.clone());
         }
 
         // 1. Attempt SSDP multicast discovery
         if let Ok(ep) = discover_upnp_endpoint(Duration::from_millis(500)) {
-            *self.endpoint.write().unwrap() = Some(ep.clone());
+            *self.endpoint.write_safe() = Some(ep.clone());
             return Ok(ep);
         }
 
@@ -441,7 +442,7 @@ impl UpnpClient {
                 control_path: "/xml/wanipc.xml".to_string(),
                 service_type: "urn:schemas-upnp-org:service:WANIPConnection:1".to_string(),
             };
-            *self.endpoint.write().unwrap() = Some(fallback_ep.clone());
+            *self.endpoint.write_safe() = Some(fallback_ep.clone());
             return Ok(fallback_ep);
         }
 

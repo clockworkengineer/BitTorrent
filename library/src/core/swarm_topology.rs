@@ -2,6 +2,7 @@
 
 use crate::network::tracker::PeerDetails;
 use crate::peer::Peer;
+use crate::utils::util::LockExt;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -59,14 +60,14 @@ impl SwarmTopology {
     }
 
     pub fn record_bad_peer(&self, ip: &str) -> usize {
-        let mut scores = self.bad_peer_scores.lock().unwrap();
+        let mut scores = self.bad_peer_scores.lock_safe();
         let entry = scores.entry(ip.to_string()).or_insert(0);
         *entry += 1;
         *entry
     }
 
     pub fn is_bad_peer(&self, ip: &str, threshold: usize) -> bool {
-        let scores = self.bad_peer_scores.lock().unwrap();
+        let scores = self.bad_peer_scores.lock_safe();
         scores.get(ip).copied().unwrap_or(0) >= threshold
     }
 

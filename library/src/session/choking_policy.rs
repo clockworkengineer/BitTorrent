@@ -21,6 +21,7 @@ use crate::manager::Manager;
 use crate::peer::{Peer, PeerAction};
 use crate::session::config::ChokingStrategy;
 use crate::session::worker::delay;
+use crate::utils::util::LockExt;
 
 /// Evaluated output decisions from a choking policy evaluation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -112,9 +113,9 @@ impl ChokingPolicy for StandardTitForTatPolicy {
         let mut optimistic_peer = None;
         if !remaining_interested.is_empty() {
             let round = self.round_counter.fetch_add(1, Ordering::Relaxed);
-            let rotate = (round % 3 == 0) || self.last_optimistic_ip.lock().unwrap().is_none();
+            let rotate = (round % 3 == 0) || self.last_optimistic_ip.lock_safe().is_none();
 
-            let mut last_opt = self.last_optimistic_ip.lock().unwrap();
+            let mut last_opt = self.last_optimistic_ip.lock_safe();
 
             if !rotate {
                 if let Some(ref current_ip) = *last_opt {
@@ -131,7 +132,7 @@ impl ChokingPolicy for StandardTitForTatPolicy {
                 optimistic_peer = Some(picked.ip.clone());
             }
         } else {
-            *self.last_optimistic_ip.lock().unwrap() = None;
+            *self.last_optimistic_ip.lock_safe() = None;
         }
 
         let mut choked_peers = disinterested;
@@ -308,7 +309,7 @@ impl ChokingStrategy for PolicyChokingStrategy {
         let max_slots = self.max_upload_slots;
 
         let atomic_status = {
-            let ctx = context.lock().unwrap();
+            let ctx = context.lock_safe();
             ctx.atomic_status.clone()
         };
 
@@ -331,7 +332,7 @@ impl ChokingStrategy for PolicyChokingStrategy {
                 }
 
                 let (status, is_seeding) = {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
                     (ctx.status, ctx.status == TorrentStatus::Seeding)
                 };
                 if status == TorrentStatus::Ended {
@@ -340,7 +341,7 @@ impl ChokingStrategy for PolicyChokingStrategy {
 
                 let mut peers_to_action = Vec::new();
                 {
-                    let ctx = context.lock().unwrap();
+                    let ctx = context.lock_safe();
 
                     // 1. Update rolling rate windows for peers in the swarm
                     if let Ok(swarm) = ctx.peer_swarm.read() {
@@ -389,9 +390,9 @@ impl ChokingStrategy for PolicyChokingStrategy {
 
                 // 4. Dispatch actions to remote peer network sockets
                 for (peer_arc, action) in peers_to_action {
-                    let net_opt = peer_arc.lock().unwrap().network.clone();
+                    let net_opt = peer_arc.lock_safe().network.clone();
                     if let Some(net) = net_opt {
-                        let peer_ip = peer_arc.lock().unwrap().ip.clone();
+                        let peer_ip = peer_arc.lock_safe().ip.clone();
                         let _ = Peer::execute_actions(
                             &peer_arc,
                             vec![action],

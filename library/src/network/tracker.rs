@@ -26,6 +26,7 @@ use crate::error::BitTorrentError;
 use crate::host;
 use crate::manager::Manager;
 use crate::peer_id;
+use crate::utils::util::LockExt;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -207,7 +208,7 @@ impl Tracker {
 
     /// Creates and configures a new `Tracker` manager by mapping urls, selecting primary announcer protocol handlers, and initializing defaults.
     pub fn new(tc: Arc<Mutex<TorrentContext>>) -> Result<Self, BitTorrentError> {
-        let guard = tc.lock().unwrap();
+        let guard = tc.lock_safe();
         let info_hash = guard.info_hash.clone();
         let tracker_url = guard.tracker_url.clone();
         let tracker_urls = guard.tracker_urls.clone();
@@ -266,7 +267,7 @@ impl Tracker {
         tc: Arc<Mutex<TorrentContext>>,
         announcer: Box<dyn Announcer>,
     ) -> Result<Self, BitTorrentError> {
-        let guard = tc.lock().unwrap();
+        let guard = tc.lock_safe();
         let info_hash = guard.info_hash.clone();
         let tracker_url = guard.tracker_url.clone();
         let tracker_urls = guard.tracker_urls.clone();
@@ -334,7 +335,7 @@ impl Tracker {
 
     /// Computes bytes remaining to download in the torrent.
     pub fn left(&self) -> u64 {
-        let guard = self.tc.lock().unwrap();
+        let guard = self.tc.lock_safe();
         if guard.is_download_complete() {
             0
         } else {
@@ -346,7 +347,7 @@ impl Tracker {
     pub fn build_announce_context(&self) -> TrackerAnnounceContext {
         #[cfg(feature = "http-tracker")]
         let http_client = {
-            let guard = self.tc.lock().unwrap();
+            let guard = self.tc.lock_safe();
             guard.config.http_client.clone()
         };
 
@@ -464,7 +465,7 @@ impl Tracker {
             return;
         }
 
-        let status = self.tc.lock().unwrap().status;
+        let status = self.tc.lock_safe().status;
         if status == crate::core::torrent_context::TorrentStatus::Ended {
             return;
         }
@@ -487,7 +488,7 @@ impl Tracker {
     fn update_running_status_from_announce(&mut self, response: &AnnounceResponse) {
         self.tracker_id = response.tracker_id.clone();
         self.min_interval = response.min_interval;
-        let status = self.tc.lock().unwrap().status;
+        let status = self.tc.lock_safe().status;
         if (status == crate::core::torrent_context::TorrentStatus::Downloading
             || status == crate::core::torrent_context::TorrentStatus::Seeding)
             && response.interval > self.min_interval
@@ -546,7 +547,7 @@ impl Tracker {
         if self.tracker_status == TrackerStatus::Running {
             return Err(BitTorrentError::Parse("Tracker is already running".into()));
         }
-        if self.tc.lock().unwrap().is_download_complete() {
+        if self.tc.lock_safe().is_download_complete() {
             self.announce_completed()
         } else {
             self.announce_started()
@@ -560,7 +561,7 @@ impl Tracker {
 
     /// Adjusts the announcement interval when the client enters seeding state.
     pub fn set_seeding_interval(&mut self, seeding_interval: usize) -> Result<(), BitTorrentError> {
-        if self.tc.lock().unwrap().status == crate::core::torrent_context::TorrentStatus::Seeding {
+        if self.tc.lock_safe().status == crate::core::torrent_context::TorrentStatus::Seeding {
             if seeding_interval > self.min_interval {
                 self.interval = seeding_interval;
             }

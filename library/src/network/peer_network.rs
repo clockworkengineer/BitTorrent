@@ -51,18 +51,20 @@ impl EncryptedSocket {
 #[cfg(all(feature = "std", feature = "mse"))]
 impl AsyncSocket for EncryptedSocket {
     async fn read(&self, buf: &mut [u8]) -> Result<usize, BitTorrentError> {
+        use crate::utils::util::LockExt;
         let n = Box::pin(self.inner.read(buf)).await?;
         if n > 0 {
-            let mut dec_guard = self.rc4_decrypt.lock().unwrap();
+            let mut dec_guard = self.rc4_decrypt.lock_safe();
             dec_guard.encrypt(&mut buf[..n]);
         }
         Ok(n)
     }
 
     async fn write(&self, buf: &[u8]) -> Result<usize, BitTorrentError> {
+        use crate::utils::util::LockExt;
         let mut encrypted = buf.to_vec();
         {
-            let mut enc_guard = self.rc4_encrypt.lock().unwrap();
+            let mut enc_guard = self.rc4_encrypt.lock_safe();
             enc_guard.encrypt(&mut encrypted);
         }
         Box::pin(self.inner.write(&encrypted)).await
@@ -231,6 +233,11 @@ impl PeerNetwork {
         })?;
         if length == 0 {
             return Ok(PeerMessage::KeepAlive);
+        }
+        // Wire security bound: prevent memory exhaustion from oversized message declarations
+        const MAX_WIRE_MESSAGE_LEN: usize = 32 * 1024;
+        if length > MAX_WIRE_MESSAGE_LEN {
+            return Err(BitTorrentError::MessageTooLarge(length));
         }
         if length > read_buffer.len() {
             return Err(BitTorrentError::Parse(alloc::format!(

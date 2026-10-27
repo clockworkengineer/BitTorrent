@@ -137,8 +137,10 @@ impl MerkleTree {
         let mut layers = Vec::new();
         layers.push(leaf_layer);
 
-        while layers.last().unwrap().len() > 1 {
-            let prev_layer = layers.last().unwrap();
+        while let Some(prev_layer) = layers.last() {
+            if prev_layer.len() <= 1 {
+                break;
+            }
             let mut next_layer = Vec::with_capacity(prev_layer.len() / 2);
             for pair in prev_layer.chunks_exact(2) {
                 let mut hasher = Sha256::new();
@@ -149,7 +151,11 @@ impl MerkleTree {
             layers.push(next_layer);
         }
 
-        let root = layers.last().unwrap()[0];
+        let root = layers
+            .last()
+            .and_then(|l| l.first())
+            .copied()
+            .unwrap_or([0u8; 32]);
 
         Self {
             file_length,

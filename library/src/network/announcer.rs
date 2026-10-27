@@ -10,6 +10,7 @@ use crate::tracker::{PeerDetails, TrackerEvent};
 use crate::util::{pack_u32, pack_u64, unpack_u32, unpack_u64};
 use std::net::{ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
+use crate::utils::util::RwLockExt;
 #[cfg(feature = "http-tracker")]
 use urlencoding::encode;
 #[cfg(feature = "http-tracker")]
@@ -607,17 +608,13 @@ pub struct AnnouncerFactory;
 impl AnnouncerFactory {
     /// Instantiates the appropriate `Announcer` trait object for a given URL using the open protocol registry.
     pub fn create_announcer(url: &str) -> Result<Box<dyn Announcer>, BitTorrentError> {
-        let registry = crate::network::announcer_registry::global_registry()
-            .read()
-            .unwrap();
+        let registry = crate::network::announcer_registry::global_registry().read_safe();
         registry.create_announcer(url)
     }
 
     /// Instantiates the appropriate `AnnouncerEnum` variant for a given URL using the open protocol registry.
     pub fn create(url: &str) -> Result<AnnouncerEnum, BitTorrentError> {
-        let registry = crate::network::announcer_registry::global_registry()
-            .read()
-            .unwrap();
+        let registry = crate::network::announcer_registry::global_registry().read_safe();
         registry.create(url)
     }
 

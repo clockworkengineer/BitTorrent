@@ -22,6 +22,7 @@ use crate::io_traits::AsyncSocket;
 use std::collections::{BTreeMap, VecDeque};
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
+use crate::utils::util::LockExt;
 
 /// The uTP extension types defined by BEP 29.
 pub const UTP_EXT_SACK: u8 = 1;
@@ -975,31 +976,30 @@ impl UtpSocketAdapter {
 
     /// Returns a snapshot of the pipeline telemetry metrics.
     pub fn pipeline_metrics(&self) -> UtpPipelineMetrics {
-        let mut m = self.metrics.lock().unwrap().clone();
-        let ctrl = self.controller.lock().unwrap();
+        let mut m = self.metrics.lock_safe().clone();
+        let ctrl = self.controller.lock_safe();
         m.cwnd_bytes = ctrl.cwnd();
         m.rto_us = ctrl.rto_us();
         m.srtt_us = ctrl.srtt_us().unwrap_or(0);
         m.rttvar_us = ctrl.rttvar_us();
-        m.out_of_order_buffered = self.out_of_order_received.lock().unwrap().len();
+        m.out_of_order_buffered = self.out_of_order_received.lock_safe().len();
         m
     }
 
     /// Returns the current loss recovery state of the congestion controller.
     pub fn loss_recovery_state(&self) -> LossRecoveryState {
-        self.controller.lock().unwrap().loss_recovery_state()
+        self.controller.lock_safe().loss_recovery_state()
     }
 
     /// Returns true if the adapter is currently inside an active fast recovery epoch.
     pub fn is_in_loss_recovery(&self) -> bool {
-        self.controller.lock().unwrap().is_in_recovery()
+        self.controller.lock_safe().is_in_recovery()
     }
 
     /// Returns all sequence numbers currently buffered out-of-order on the receiver.
     pub fn out_of_order_sequences(&self) -> Vec<u16> {
         self.out_of_order_received
-            .lock()
-            .unwrap()
+            .lock_safe()
             .keys()
             .cloned()
             .collect()
@@ -1008,7 +1008,7 @@ impl UtpSocketAdapter {
     /// Detects missing sequence ranges currently unreceived between `ack_nr + 1` and buffered packets.
     pub fn detect_receive_gaps(&self) -> Vec<(u16, u16)> {
         let ooo = self.out_of_order_sequences();
-        let ack = *self.ack_nr.lock().unwrap();
+        let ack = *self.ack_nr.lock_safe();
         detect_receive_gaps(ack, &ooo)
     }
 
@@ -1019,29 +1019,28 @@ impl UtpSocketAdapter {
 
     /// Returns the current congestion window (`cwnd`) of the adapter in bytes.
     pub fn cwnd(&self) -> u32 {
-        self.controller.lock().unwrap().cwnd()
+        self.controller.lock_safe().cwnd()
     }
 
     /// Sets the next outgoing sequence number (primarily for testing out-of-order delivery).
     pub fn set_seq_nr(&self, seq: u16) {
-        *self.seq_nr.lock().unwrap() = seq;
+        *self.seq_nr.lock_safe() = seq;
     }
 
     /// Returns the estimated base delay in microseconds.
     pub fn base_delay(&self) -> u32 {
-        self.controller.lock().unwrap().base_delay()
+        self.controller.lock_safe().base_delay()
     }
 
     /// Returns the latest estimated queuing delay in microseconds.
     pub fn queuing_delay(&self) -> u32 {
-        self.controller.lock().unwrap().queuing_delay()
+        self.controller.lock_safe().queuing_delay()
     }
 
     /// Returns the number of bytes currently in flight (excluding SACKed packets).
     pub fn bytes_in_flight(&self) -> u32 {
         self.sent_packets
-            .lock()
-            .unwrap()
+            .lock_safe()
             .iter()
             .filter(|p| !p.sacked)
             .map(|p| p.payload.len() as u32)
@@ -1051,8 +1050,7 @@ impl UtpSocketAdapter {
     /// Returns the number of sent packets currently marked as SACKed by the peer.
     pub fn sacked_packets_count(&self) -> usize {
         self.sent_packets
-            .lock()
-            .unwrap()
+            .lock_safe()
             .iter()
             .filter(|p| p.sacked)
             .count()
@@ -1060,12 +1058,12 @@ impl UtpSocketAdapter {
 
     /// Returns the number of out-of-order packets currently buffered awaiting reassembly.
     pub fn out_of_order_count(&self) -> usize {
-        self.out_of_order_received.lock().unwrap().len()
+        self.out_of_order_received.lock_safe().len()
     }
 
     /// Manually records a sent packet into the unacknowledged queue (for testing loss and pipeline simulation).
     pub fn record_sent_packet(&self, seq: u16, payload: &[u8]) {
-        let mut sent = self.sent_packets.lock().unwrap();
+        let mut sent = self.sent_packets.lock_safe();
         sent.push_back(SentPacket {
             seq,
             timestamp: std::time::Instant::now(),
@@ -1078,7 +1076,7 @@ impl UtpSocketAdapter {
 
     /// Retransmits an unacknowledged data packet without advancing `seq_nr`.
     pub fn retransmit_data_packet(&self, seq: u16, payload: &[u8]) -> Result<(), BitTorrentError> {
-        let ack = *self.ack_nr.lock().unwrap();
+        let ack = *self.ack_nr.lock_safe();
 
         let now_us = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1086,8 +1084,8 @@ impl UtpSocketAdapter {
             .as_micros()
             & 0xFFFFFFFF) as u32;
 
-        let last_ts = *self.last_remote_timestamp_us.lock().unwrap();
-        let last_recv = *self.last_remote_recv_us.lock().unwrap();
+        let last_ts = *self.last_remote_timestamp_us.lock_safe();
+        let last_recv = *self.last_remote_recv_us.lock_safe();
         let timestamp_difference_us = if last_ts > 0 {
             last_recv.wrapping_sub(last_ts)
         } else {
@@ -1111,7 +1109,7 @@ impl UtpSocketAdapter {
         packet.extend_from_slice(payload);
 
         self.udp.send(&packet).map_err(BitTorrentError::Io)?;
-        let mut m = self.metrics.lock().unwrap();
+        let mut m = self.metrics.lock_safe();
         m.packets_sent += 1;
         m.bytes_sent += payload.len() as u64;
         Ok(())
@@ -1119,10 +1117,10 @@ impl UtpSocketAdapter {
 
     /// Checks inflight packets for Retransmission Timeouts (RTO) and retransmits the earliest expired packet.
     pub fn check_timeouts(&self) {
-        let rto = { self.controller.lock().unwrap().current_rto_duration() };
+        let rto = { self.controller.lock_safe().current_rto_duration() };
         let mut timeout_pkt = None;
         {
-            let mut sent = self.sent_packets.lock().unwrap();
+            let mut sent = self.sent_packets.lock_safe();
             for pkt in sent.iter_mut() {
                 if !pkt.sacked && pkt.last_sent_time.elapsed() >= rto {
                     timeout_pkt = Some((pkt.seq, pkt.payload.clone()));
@@ -1135,9 +1133,9 @@ impl UtpSocketAdapter {
 
         if let Some((seq, payload)) = timeout_pkt {
             let _ = self.retransmit_data_packet(seq, &payload);
-            let mut ctrl = self.controller.lock().unwrap();
+            let mut ctrl = self.controller.lock_safe();
             ctrl.on_rto_timeout();
-            let mut m = self.metrics.lock().unwrap();
+            let mut m = self.metrics.lock_safe();
             m.retransmits_timeout += 1;
             m.loss_recovery_events += 1;
         }
@@ -1150,8 +1148,8 @@ impl UtpSocketAdapter {
         payload: &[u8],
         extensions: Vec<UtpExtension>,
     ) -> Result<(), BitTorrentError> {
-        let mut seq = self.seq_nr.lock().unwrap();
-        let ack = self.ack_nr.lock().unwrap();
+        let mut seq = self.seq_nr.lock_safe();
+        let ack = self.ack_nr.lock_safe();
 
         let now_us = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1159,8 +1157,8 @@ impl UtpSocketAdapter {
             .as_micros()
             & 0xFFFFFFFF) as u32;
 
-        let last_ts = *self.last_remote_timestamp_us.lock().unwrap();
-        let last_recv = *self.last_remote_recv_us.lock().unwrap();
+        let last_ts = *self.last_remote_timestamp_us.lock_safe();
+        let last_recv = *self.last_remote_recv_us.lock_safe();
         let timestamp_difference_us = if last_ts > 0 {
             last_recv.wrapping_sub(last_ts)
         } else {
@@ -1187,7 +1185,7 @@ impl UtpSocketAdapter {
         self.udp.send(&packet).map_err(BitTorrentError::Io)?;
 
         {
-            let mut m = self.metrics.lock().unwrap();
+            let mut m = self.metrics.lock_safe();
             m.packets_sent += 1;
             if packet_type == UtpPacketType::Data {
                 m.bytes_sent += payload.len() as u64;
@@ -1201,7 +1199,7 @@ impl UtpSocketAdapter {
         }
 
         if packet_type == UtpPacketType::Data {
-            let mut sent = self.sent_packets.lock().unwrap();
+            let mut sent = self.sent_packets.lock_safe();
             sent.push_back(SentPacket {
                 seq: *seq,
                 timestamp: std::time::Instant::now(),
@@ -1241,7 +1239,7 @@ impl AsyncSocket for UtpSocketAdapter {
 
         // Drain any contiguous buffered payload from out-of-order reassembly first
         {
-            let mut recv = self.recv_buffer.lock().unwrap();
+            let mut recv = self.recv_buffer.lock_safe();
             if !recv.is_empty() {
                 let to_read = buf.len().min(recv.len());
                 for (i, byte) in recv.drain(..to_read).enumerate() {
@@ -1279,7 +1277,7 @@ impl AsyncSocket for UtpSocketAdapter {
             }
 
             {
-                let mut m = self.metrics.lock().unwrap();
+                let mut m = self.metrics.lock_safe();
                 m.packets_recv += 1;
             }
 
@@ -1292,12 +1290,12 @@ impl AsyncSocket for UtpSocketAdapter {
 
                 // Track remote timestamps for our reflected timestamp_difference_us
                 if header.timestamp_us > 0 {
-                    *self.last_remote_timestamp_us.lock().unwrap() = header.timestamp_us;
-                    *self.last_remote_recv_us.lock().unwrap() = now_us;
+                    *self.last_remote_timestamp_us.lock_safe() = header.timestamp_us;
+                    *self.last_remote_recv_us.lock_safe() = now_us;
                 }
 
                 if header.sack_bitmask().is_some() {
-                    let mut m = self.metrics.lock().unwrap();
+                    let mut m = self.metrics.lock_safe();
                     m.sack_packets_recv += 1;
                 }
 
@@ -1307,7 +1305,7 @@ impl AsyncSocket for UtpSocketAdapter {
                 let mut highest_sacked_seq: Option<u16> = None;
 
                 {
-                    let mut sent = self.sent_packets.lock().unwrap();
+                    let mut sent = self.sent_packets.lock_safe();
                     let mut unacked = VecDeque::new();
                     while let Some(mut pkt) = sent.pop_front() {
                         if seq_acked(pkt.seq, header.ack_nr) {
@@ -1315,7 +1313,7 @@ impl AsyncSocket for UtpSocketAdapter {
                                 bytes_acked = bytes_acked.saturating_add(pkt.payload.len() as u32);
                                 if pkt.retransmit_count == 0 {
                                     let sample_rtt_us = pkt.timestamp.elapsed().as_micros() as u32;
-                                    self.controller.lock().unwrap().update_rtt(sample_rtt_us);
+                                    self.controller.lock_safe().update_rtt(sample_rtt_us);
                                 }
                             }
                         } else {
@@ -1372,7 +1370,7 @@ impl AsyncSocket for UtpSocketAdapter {
                     .as_micros() as u64;
 
                 {
-                    let mut ctrl = self.controller.lock().unwrap();
+                    let mut ctrl = self.controller.lock_safe();
                     ctrl.set_remote_window(header.wnd_size);
                     let triggered_dup = ctrl.handle_ack(
                         header.ack_nr,
@@ -1381,7 +1379,7 @@ impl AsyncSocket for UtpSocketAdapter {
                         now_us_u64,
                     );
                     if triggered_dup {
-                        let mut m = self.metrics.lock().unwrap();
+                        let mut m = self.metrics.lock_safe();
                         m.duplicate_acks_count += 3;
                     }
                 }
@@ -1389,11 +1387,11 @@ impl AsyncSocket for UtpSocketAdapter {
                 // Execute any fast retransmissions triggered by SACK analysis
                 if !packets_to_fast_retransmit.is_empty() {
                     let is_burst = packets_to_fast_retransmit.len() >= 2;
-                    let highest_sent = *self.seq_nr.lock().unwrap();
+                    let highest_sent = *self.seq_nr.lock_safe();
                     {
-                        let mut ctrl = self.controller.lock().unwrap();
+                        let mut ctrl = self.controller.lock_safe();
                         if ctrl.enter_recovery(highest_sent, is_burst) {
-                            let mut m = self.metrics.lock().unwrap();
+                            let mut m = self.metrics.lock_safe();
                             m.loss_recovery_events += 1;
                             if is_burst {
                                 m.burst_loss_events += 1;
@@ -1403,7 +1401,7 @@ impl AsyncSocket for UtpSocketAdapter {
 
                     for (seq, payload) in &packets_to_fast_retransmit {
                         let _ = self.retransmit_data_packet(*seq, payload);
-                        let mut m = self.metrics.lock().unwrap();
+                        let mut m = self.metrics.lock_safe();
                         m.retransmits_fast += 1;
                     }
                 }
@@ -1421,40 +1419,40 @@ impl AsyncSocket for UtpSocketAdapter {
                     };
 
                     {
-                        let mut m = self.metrics.lock().unwrap();
+                        let mut m = self.metrics.lock_safe();
                         m.bytes_recv += payload.len() as u64;
                     }
 
                     let cumulative_ack = {
-                        let mut ack_guard = self.ack_nr.lock().unwrap();
+                        let mut ack_guard = self.ack_nr.lock_safe();
                         let current_ack = *ack_guard;
 
                         if current_ack == 0 {
                             // First data packet received
                             *ack_guard = header.seq_nr;
-                            let mut recv = self.recv_buffer.lock().unwrap();
+                            let mut recv = self.recv_buffer.lock_safe();
                             recv.extend(payload);
                         } else if header.seq_nr == current_ack.wrapping_add(1) {
                             // In-order arrival
                             *ack_guard = header.seq_nr;
-                            let mut recv = self.recv_buffer.lock().unwrap();
+                            let mut recv = self.recv_buffer.lock_safe();
                             recv.extend(payload);
 
                             // Stitch any consecutive out-of-order packets buffered
-                            let mut ooo = self.out_of_order_received.lock().unwrap();
+                            let mut ooo = self.out_of_order_received.lock_safe();
                             while let Some(next_p) = ooo.remove(&ack_guard.wrapping_add(1)) {
                                 *ack_guard = ack_guard.wrapping_add(1);
                                 recv.extend(next_p);
                             }
-                            let mut m = self.metrics.lock().unwrap();
+                            let mut m = self.metrics.lock_safe();
                             m.out_of_order_buffered = ooo.len();
                         } else if !seq_acked(header.seq_nr, current_ack) {
                             // Out-of-order packet ahead of expected sequence
-                            let mut ooo = self.out_of_order_received.lock().unwrap();
+                            let mut ooo = self.out_of_order_received.lock_safe();
                             let distance = header.seq_nr.wrapping_sub(current_ack);
                             if distance < 32768 && ooo.len() < self.max_out_of_order_packets {
                                 ooo.insert(header.seq_nr, payload.to_vec());
-                                let mut m = self.metrics.lock().unwrap();
+                                let mut m = self.metrics.lock_safe();
                                 m.out_of_order_buffered = ooo.len();
                                 m.max_out_of_order_depth = m.max_out_of_order_depth.max(ooo.len());
                             }
@@ -1466,8 +1464,7 @@ impl AsyncSocket for UtpSocketAdapter {
                     // Acknowledge receipt with ST_STATE, attaching SACK if out-of-order packets exist
                     let ooo_keys: Vec<u16> = self
                         .out_of_order_received
-                        .lock()
-                        .unwrap()
+                        .lock_safe()
                         .keys()
                         .cloned()
                         .collect();
@@ -1486,7 +1483,7 @@ impl AsyncSocket for UtpSocketAdapter {
                         let _ = self.send_packet(UtpPacketType::State, &[]);
                     }
 
-                    let mut recv = self.recv_buffer.lock().unwrap();
+                    let mut recv = self.recv_buffer.lock_safe();
                     if !recv.is_empty() {
                         let to_read = buf.len().min(recv.len());
                         for (i, byte) in recv.drain(..to_read).enumerate() {
@@ -1517,7 +1514,7 @@ impl AsyncSocket for UtpSocketAdapter {
         let start_wait = std::time::Instant::now();
         loop {
             let in_flight: u32 = self.bytes_in_flight();
-            let can_send = self.controller.lock().unwrap().can_send(in_flight);
+            let can_send = self.controller.lock_safe().can_send(in_flight);
             if can_send || start_wait.elapsed() > std::time::Duration::from_millis(500) {
                 break;
             }
@@ -1538,3 +1535,4 @@ impl AsyncSocket for UtpSocketAdapter {
         }
     }
 }
+

@@ -2,6 +2,7 @@ use crate::error::BitTorrentError;
 use crate::selector::PieceSelector;
 use crate::session::session::{SessionConfig, TorrentSession};
 use crate::tracker::Tracker;
+use crate::utils::util::LockExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
@@ -76,7 +77,7 @@ impl TorrentClient {
                             mgr2,
                         ));
                     });
-                    peer_workers2.lock().unwrap().push(handle);
+                    peer_workers2.lock_safe().push(handle);
                 }
 
                 // Start the reannounce loop
@@ -87,7 +88,7 @@ impl TorrentClient {
                     let mut announced_completed = false;
                     loop {
                         let min_reannounce = {
-                            let ctx = context_reannounce.lock().unwrap();
+                            let ctx = context_reannounce.lock_safe();
                             ctx.config.min_reannounce_interval
                         };
                         let interval = tracker.interval.max(min_reannounce as usize);
@@ -95,7 +96,7 @@ impl TorrentClient {
                         let duration = Duration::from_secs(interval as u64);
                         let mut ended = false;
                         while start_time.elapsed() < duration {
-                            if context_reannounce.lock().unwrap().status
+                            if context_reannounce.lock_safe().status
                                 == crate::TorrentStatus::Ended
                             {
                                 ended = true;
@@ -108,7 +109,7 @@ impl TorrentClient {
                         }
 
                         let status = {
-                            let ctx = context_reannounce.lock().unwrap();
+                            let ctx = context_reannounce.lock_safe();
                             if ctx.status == crate::TorrentStatus::Ended {
                                 break;
                             }
@@ -137,7 +138,7 @@ impl TorrentClient {
                                             ),
                                         );
                                     });
-                                    peer_workers2.lock().unwrap().push(handle);
+                                    peer_workers2.lock_safe().push(handle);
                                 }
                             }
                             Err(_) => {}
